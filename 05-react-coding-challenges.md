@@ -2,7 +2,7 @@
 
 # i have 4 years of experience in frontend development i want 40 react only programming coding questions and answers that i can prepare for interviews
 
-Of course. For a frontend developer with four years of experience, interview questions will move beyond basic concepts and focus on practical application, performance, and advanced patterns. This list of 40 React coding questions is designed to test your ability to build robust, scalable, and optimized components, with a strong emphasis on modern hooks and best practices[^1][^2].
+ Interview questions will move beyond basic concepts and focus on practical application, performance, and advanced patterns. This list of 40 React coding questions is designed to test your ability to build robust, scalable, and optimized components, with a strong emphasis on modern hooks and best practices[^1][^2].
 
 ### Custom Hooks
 

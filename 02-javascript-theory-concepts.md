@@ -81,6 +81,205 @@ Note: These are methods on the `Object` constructor itself, not on `Object.proto
 | **`Set` Object** | A collection of **unique values**. | The absolute fastest way to remove duplicates from an array or check for the existence of an item in a list of unique items. | `const arr = [1, 2, 2, 3];`<br>`const unique = [...new Set(arr)]; // [1, 2, 3]` |
 | **`Map` Object** | A collection of **keyed data items**, just like an `Object`. But keys can be **any type**. | A superior hash map. The go-to solution for many algorithm problems (like "Two Sum") where you need to store and quickly retrieve information. | `const map = new Map();`<br>`map.set('a', 1);`<br>`map.get('a'); // 1`<br>`map.has('a'); // true` |
 
+---
+
+### Looping in JavaScript: A Practical Guide
+
+Understanding how to iterate over different data structures is fundamental for any coding interview. Here are the most common ways to loop through arrays, strings, and objects in JavaScript.
+
+---
+
+#### Looping Over Arrays
+
+Arrays are the most common data structure to loop over.
+
+**1. The Classic `for` Loop**
+
+Still useful when you need access to the index and want the ability to `break` or `continue`.
+
+```javascript
+const fruits = ['apple', 'banana', 'cherry'];
+for (let i = 0; i < fruits.length; i++) {
+  console.log(`Index ${i}: ${fruits[i]}`);
+}
+```
+
+**2. The `forEach` Method**
+
+The most readable way to iterate over every element. You cannot `break` out of a `forEach` loop.
+
+```javascript
+const fruits = ['apple', 'banana', 'cherry'];
+fruits.forEach((fruit, index) => {
+  console.log(`Index ${index}: ${fruit}`);
+});
+```
+
+**3. The `for...of` Loop (ES6)**
+
+The modern, preferred way to loop over the *values* of an iterable like an array. It's clean and readable.
+
+```javascript
+const fruits = ['apple', 'banana', 'cherry'];
+for (const fruit of fruits) {
+  console.log(fruit);
+}
+```
+
+---
+
+#### Looping Over Strings
+
+Strings are also iterables, so you can loop over their characters.
+
+**1. The Classic `for` Loop**
+
+```javascript
+const greeting = 'Hello';
+for (let i = 0; i < greeting.length; i++) {
+  console.log(greeting[i]); // H, e, l, l, o
+}
+```
+
+**2. The `for...of` Loop (ES6)**
+
+This is the cleanest way to iterate over the characters of a string.
+
+```javascript
+const greeting = 'Hello';
+for (const char of greeting) {
+  console.log(char); // H, e, l, l, o
+}
+```
+
+---
+
+#### Looping Over Objects
+
+You cannot use `forEach` or `for...of` directly on an object. Here are the standard patterns.
+
+**1. The `for...in` Loop**
+
+Iterates over the *keys* (or property names) of an object.
+
+**Important:** Always include an `if (obj.hasOwnProperty(key))` check to avoid iterating over inherited properties from the object's prototype chain.
+
+```javascript
+const user = {
+  name: 'Alex',
+  age: 30,
+  isAdmin: true
+};
+
+for (const key in user) {
+  if (Object.prototype.hasOwnProperty.call(user, key)) {
+    console.log(`${key}: ${user[key]}`);
+  }
+}
+```
+
+**2. `Object.keys()`**
+
+Gets an array of the object's keys, which you can then iterate over.
+
+```javascript
+const user = { name: 'Alex', age: 30 };
+const keys = Object.keys(user); // ['name', 'age']
+
+keys.forEach(key => {
+  console.log(`${key}: ${user[key]}`);
+});
+```
+
+**3. `Object.values()`**
+
+Gets an array of the object's values.
+
+```javascript
+const user = { name: 'Alex', age: 30 };
+const values = Object.values(user); // ['Alex', 30]
+
+values.forEach(value => {
+  console.log(value);
+});
+```
+
+**4. `Object.entries()` (Most Powerful)**
+
+Gets an array of `[key, value]` pairs. This is often the most useful method as it gives you both the key and the value in each iteration.
+
+```javascript
+const user = { name: 'Alex', age: 30 };
+
+// Use array destructuring in the loop
+for (const [key, value] of Object.entries(user)) {
+  console.log(`${key}: ${value}`);
+}
+```
+
+---
+
+#### Looping Over Nested Structures
+
+**1. Nested Arrays**
+
+Use nested loops. The outer loop iterates through the main array, and the inner loop iterates through each sub-array.
+
+```javascript
+const matrix = [
+  [1, 2, 3],
+  [4, 5, 6],
+  [7, 8, 9]
+];
+
+for (const row of matrix) {
+  for (const number of row) {
+    console.log(number);
+  }
+}
+```
+
+**2. Nested Objects (Unknown Depth)**
+
+When you have a deeply nested object and don't know the structure, recursion is the best solution.
+
+```javascript
+const userProfile = {
+  name: 'Brenda',
+  settings: {
+    theme: 'dark',
+    notifications: {
+      email: true,
+      push: false
+    }
+  }
+};
+
+function logAllValues(obj) {
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const value = obj[key];
+      if (typeof value === 'object' && value !== null) {
+        // If the value is another object, recurse
+        logAllValues(value);
+      } else {
+        // Otherwise, log the primitive value
+        console.log(value);
+      }
+    }
+  }
+}
+
+logAllValues(userProfile);
+// Output:
+// Brenda
+// dark
+// true
+// false
+```
+
+---
+
 ### Pro Tip for Your Interview:
 
 When you use one of these methods, try to also mention if it's **mutating** (changes the original) or **non-mutating** (returns a new value). This shows a deeper level of understanding, which is critical for a React developer who needs to handle state immutably.
@@ -88,10 +287,371 @@ When you use one of these methods, try to also mention if it's **mutating** (cha
 *   **Mutating:** `splice`, `sort`, `reverse`, `push`, `pop`
 *   **Non-Mutating:** `map`, `filter`, `reduce`, `slice`, `concat`, `Object.keys`
 
+---
 
+## JavaScript Looping Examples
 
+Mastering different looping techniques is crucial for coding interviews. Here are comprehensive examples for strings, arrays, objects, and nested structures.
 
+### String Looping
 
+**1. Traditional for loop (by index):**
+```javascript
+const str = "Hello World";
+for (let i = 0; i < str.length; i++) {
+    console.log(str[i]); // H, e, l, l, o,  , W, o, r, l, d
+}
+```
+
+**2. for...of loop (by character):**
+```javascript
+const str = "Hello World";
+for (const char of str) {
+    console.log(char); // H, e, l, l, o,  , W, o, r, l, d
+}
+```
+
+**3. Array methods (convert to array first):**
+```javascript
+const str = "Hello World";
+// Using split and forEach
+str.split('').forEach(char => console.log(char));
+
+// Using spread operator and map
+[...str].map(char => char.toUpperCase()).join(''); // "HELLO WORLD"
+```
+
+**4. Regular expression with matchAll:**
+```javascript
+const str = "Hello World";
+const regex = /./g;
+for (const match of str.matchAll(regex)) {
+    console.log(match[0]); // Each character
+}
+```
+
+### Array Looping
+
+**1. Traditional for loop:**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+for (let i = 0; i < arr.length; i++) {
+    console.log(arr[i]); // 1, 2, 3, 4, 5
+}
+```
+
+**2. for...of loop (ES6):**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+for (const item of arr) {
+    console.log(item); // 1, 2, 3, 4, 5
+}
+```
+
+**3. forEach method:**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+arr.forEach((item, index) => {
+    console.log(`Index ${index}: ${item}`);
+});
+```
+
+**4. for...in loop (iterates over indices):**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+for (const index in arr) {
+    console.log(`Index ${index}: ${arr[index]}`);
+}
+```
+
+**5. while loop:**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+let i = 0;
+while (i < arr.length) {
+    console.log(arr[i]);
+    i++;
+}
+```
+
+**6. do...while loop:**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+let i = 0;
+do {
+    console.log(arr[i]);
+    i++;
+} while (i < arr.length);
+```
+
+### Object Looping
+
+**1. Object.keys() with forEach:**
+```javascript
+const obj = { name: 'John', age: 30, city: 'NYC' };
+Object.keys(obj).forEach(key => {
+    console.log(`${key}: ${obj[key]}`);
+});
+```
+
+**2. Object.values() with for...of:**
+```javascript
+const obj = { name: 'John', age: 30, city: 'NYC' };
+for (const value of Object.values(obj)) {
+    console.log(value); // John, 30, NYC
+}
+```
+
+**3. Object.entries() with for...of:**
+```javascript
+const obj = { name: 'John', age: 30, city: 'NYC' };
+for (const [key, value] of Object.entries(obj)) {
+    console.log(`${key}: ${value}`);
+}
+```
+
+**4. for...in loop:**
+```javascript
+const obj = { name: 'John', age: 30, city: 'NYC' };
+for (const key in obj) {
+    if (obj.hasOwnProperty(key)) { // Important: check own properties
+        console.log(`${key}: ${obj[key]}`);
+    }
+}
+```
+
+**5. Object.entries() with forEach:**
+```javascript
+const obj = { name: 'John', age: 30, city: 'NYC' };
+Object.entries(obj).forEach(([key, value]) => {
+    console.log(`${key}: ${value}`);
+});
+```
+
+### Nested Array Looping
+
+**1. Nested for loops:**
+```javascript
+const matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+
+for (let i = 0; i < matrix.length; i++) {
+    for (let j = 0; j < matrix[i].length; j++) {
+        console.log(matrix[i][j]);
+    }
+}
+```
+
+**2. forEach with nested forEach:**
+```javascript
+const matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+
+matrix.forEach((row, rowIndex) => {
+    row.forEach((cell, colIndex) => {
+        console.log(`[${rowIndex}][${colIndex}]: ${cell}`);
+    });
+});
+```
+
+**3. for...of with nested for...of:**
+```javascript
+const matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+
+for (const row of matrix) {
+    for (const cell of row) {
+        console.log(cell);
+    }
+}
+```
+
+**4. Flat array processing:**
+```javascript
+const matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9]
+];
+
+// Flatten and process
+matrix.flat().forEach(item => console.log(item));
+
+// Or using reduce to flatten
+matrix.reduce((flat, row) => flat.concat(row), []).forEach(item => console.log(item));
+```
+
+### Nested Object Looping
+
+**1. Recursive function for deep object traversal:**
+```javascript
+const nestedObj = {
+    name: 'John',
+    address: {
+        street: '123 Main St',
+        city: 'NYC',
+        country: 'USA'
+    },
+    hobbies: ['reading', 'gaming']
+};
+
+function traverseObject(obj, prefix = '') {
+    for (const [key, value] of Object.entries(obj)) {
+        const currentPath = prefix ? `${prefix}.${key}` : key;
+        
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            traverseObject(value, currentPath);
+        } else {
+            console.log(`${currentPath}: ${value}`);
+        }
+    }
+}
+
+traverseObject(nestedObj);
+// Output:
+// name: John
+// address.street: 123 Main St
+// address.city: NYC
+// address.country: USA
+// hobbies: reading,gaming
+```
+
+**2. Using Object.entries() with recursion:**
+```javascript
+const nestedObj = {
+    user: {
+        profile: {
+            name: 'John',
+            age: 30
+        },
+        settings: {
+            theme: 'dark',
+            notifications: true
+        }
+    }
+};
+
+function getAllValues(obj) {
+    const values = [];
+    
+    Object.entries(obj).forEach(([key, value]) => {
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            values.push(...getAllValues(value));
+        } else {
+            values.push(value);
+        }
+    });
+    
+    return values;
+}
+
+console.log(getAllValues(nestedObj)); // ['John', 30, 'dark', true]
+```
+
+### Array of Objects Looping
+
+**1. forEach with object destructuring:**
+```javascript
+const users = [
+    { id: 1, name: 'John', age: 30 },
+    { id: 2, name: 'Jane', age: 25 },
+    { id: 3, name: 'Bob', age: 35 }
+];
+
+users.forEach(({ id, name, age }) => {
+    console.log(`User ${id}: ${name} (${age})`);
+});
+```
+
+**2. for...of with object access:**
+```javascript
+const users = [
+    { id: 1, name: 'John', age: 30 },
+    { id: 2, name: 'Jane', age: 25 },
+    { id: 3, name: 'Bob', age: 35 }
+];
+
+for (const user of users) {
+    console.log(`${user.name} is ${user.age} years old`);
+}
+```
+
+**3. Traditional for loop with object properties:**
+```javascript
+const users = [
+    { id: 1, name: 'John', age: 30 },
+    { id: 2, name: 'Jane', age: 25 },
+    { id: 3, name: 'Bob', age: 35 }
+];
+
+for (let i = 0; i < users.length; i++) {
+    const user = users[i];
+    console.log(`User ${i + 1}: ${user.name}`);
+}
+```
+
+### Performance Considerations
+
+**1. Choose the right loop for the job:**
+- **for...of**: Best for simple iteration over iterables
+- **forEach**: Good for functional programming style, but can't break early
+- **Traditional for loop**: Best performance, can break early, control flow
+- **for...in**: Use only when you need to iterate over object properties (not recommended for arrays)
+
+**2. Breaking out of loops:**
+```javascript
+const arr = [1, 2, 3, 4, 5];
+
+// Traditional for loop - can break
+for (let i = 0; i < arr.length; i++) {
+    if (arr[i] === 3) break;
+    console.log(arr[i]);
+}
+
+// for...of - can break
+for (const item of arr) {
+    if (item === 3) break;
+    console.log(item);
+}
+
+// forEach - CANNOT break (use some() instead)
+arr.some(item => {
+    if (item === 3) return true; // breaks
+    console.log(item);
+    return false;
+});
+```
+
+**3. Async operations in loops:**
+```javascript
+const urls = ['url1', 'url2', 'url3'];
+
+// Sequential async operations
+async function processSequentially() {
+    for (const url of urls) {
+        const result = await fetch(url);
+        console.log(result);
+    }
+}
+
+// Parallel async operations
+async function processInParallel() {
+    const promises = urls.map(url => fetch(url));
+    const results = await Promise.all(promises);
+    results.forEach(result => console.log(result));
+}
+```
+
+---
 
 Of course. For a deep dive into JavaScript, your second-round interview will likely move beyond basic syntax and into the core concepts, nuances, and practical applications of the language. Below is a comprehensive list of questions covering a wide range of JavaScript topics to help you prepare.
 

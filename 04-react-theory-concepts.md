@@ -1,4 +1,4 @@
-Of course! With 4.1 years of experience in React, you can expect questions that go beyond the basics and delve into your understanding of architecture, performance, and best practices. Here is a comprehensive list of questions to help you prepare for your second-round interview, covering the entire spectrum of React development. 
+Ad exp developer You can expect questions that go beyond the basics and delve into your understanding of architecture, performance, and best practices. Here is a comprehensive list of questions to help you prepare for your interview, covering the entire spectrum of React development. 
 
  ### Core React Concepts 
 
