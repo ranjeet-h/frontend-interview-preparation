@@ -1998,50 +1998,42 @@ const AccessibleTabs = () => {
   const [activeTabIndex, setActiveTabIndex] = useState(0);
 
   const handleKeyDown = (e, index) => {
-    let newIndex = index;
     if (e.key === 'ArrowRight') {
-      newIndex = (index + 1) % tabsData.length;
+      setActiveTabIndex((activeTabIndex + 1) % tabsData.length);
     } else if (e.key === 'ArrowLeft') {
-      newIndex = (index - 1 + tabsData.length) % tabsData.length;
-    }
-
-    if (newIndex !== index) {
-      setActiveTabIndex(newIndex);
-      // Focus the new tab button for seamless navigation
-      document.getElementById(`tab-${newIndex}`).focus();
+      setActiveTabIndex((activeTabIndex - 1 + tabsData.length) % tabsData.length);
     }
   };
 
   return (
-    <div className="tabs-container">
-      <h3>Accessible Tabs</h3>
-      {/* 1. The tab list container */}
-      <div role="tablist" aria-label="Example Tablist">
+    <div>
+      <div role="tablist" aria-label="Accessible Tabs">
         {tabsData.map((tab, index) => (
           <button
             key={tab.title}
-            id={`tab-${index}`}
             role="tab"
             aria-selected={activeTabIndex === index}
             aria-controls={`tabpanel-${index}`}
+            id={`tab-${index}`}
             onClick={() => setActiveTabIndex(index)}
             onKeyDown={(e) => handleKeyDown(e, index)}
-            tabIndex={activeTabIndex === index ? 0 : -1} // Only active tab is in tab order
+            tabIndex={activeTabIndex === index ? 0 : -1}
           >
             {tab.title}
           </button>
         ))}
       </div>
-
-      {/* 2. The active tab panel */}
-      <div
-        id={`tabpanel-${activeTabIndex}`}
-        role="tabpanel"
-        aria-labelledby={`tab-${activeTabIndex}`}
-        style={{ padding: '20px', border: '1px solid #ccc', marginTop: '-1px' }}
-      >
-        <p>{tabsData[activeTabIndex].content}</p>
-      </div>
+      {tabsData.map((tab, index) => (
+        <div
+          key={tab.title}
+          role="tabpanel"
+          id={`tabpanel-${index}`}
+          aria-labelledby={`tab-${index}`}
+          hidden={activeTabIndex !== index}
+        >
+          <p>{tab.content}</p>
+        </div>
+      ))}
     </div>
   );
 };
@@ -2049,799 +2041,156 @@ const AccessibleTabs = () => {
 export default AccessibleTabs;
 ```
 
-#### The Explanation (Key Concepts to Discuss)
+#### The Explanation
 
-*   **State Management:** "I'm using a single `useState` hook, `activeTabIndex`, to control which tab is currently active. This is the single source of truth for the entire component."
-*   **ARIA Roles & Properties:** "To make this accessible, I've followed the WAI-ARIA pattern for tabs.
-    *   The container for the buttons has `role="tablist"`.
-    *   Each button has `role="tab"`. This tells screen readers they are part of a tab interface.
-    *   The active content area has `role="tabpanel"`.
-    *   Crucially, `aria-selected` is set to `true` on the active tab, which is the primary indicator for screen readers.
-    *   `aria-controls` on the tab links it to its corresponding `tabpanel` by its `id`, creating a semantic connection."
-*   **Keyboard Navigation:** "This is a key accessibility requirement. I've implemented an `onKeyDown` handler that listens for `ArrowRight` and `ArrowLeft`. When a key is pressed, it calculates the new index and calls `setActiveTabIndex`. I also programmatically move focus to the new tab button, which is the expected behavior."
-*   **Focus Management (`tabIndex`):** "Notice the `tabIndex`. The active tab has `tabIndex="0"`, making it reachable via the Tab key. All other tabs have `tabIndex="-1"`, removing them from the natural tab order. The user tabs *once* to the component, then uses the arrow keys to navigate within it. This is the standard practice and is much better than having every single tab be a tab stop."
+*   **State Management:** A single `useState` hook (`activeTabIndex`) is all that's needed to track which tab is currently active.
+*   **ARIA Roles:**
+    *   `role="tablist"`: The container for the tab buttons.
+    *   `role="tab"`: The tab buttons themselves.
+    *   `role="tabpanel"`: The content area for each tab.
+*   **ARIA Properties:**
+    *   `aria-selected="true"`: Placed on the active tab button to indicate its state to screen readers.
+    *   `aria-controls`: Connects a tab button to its corresponding tab panel via the panel's `id`.
+    *   `aria-labelledby`: Connects a tab panel back to its controlling tab button.
+*   **Keyboard Navigation:**
+    *   The `onKeyDown` handler listens for `ArrowRight` and `ArrowLeft` to cycle through the tabs. The modulo operator (`%`) is a clean way to handle wrapping around from the last tab to the first and vice-versa.
+    *   `tabIndex`: The active tab has `tabIndex="0"` to be included in the page's tab sequence. Inactive tabs have `tabIndex="-1"` so they are not focusable with the Tab key, as per the WAI-ARIA authoring practices. The user tabs to the active tab and then uses arrow keys to navigate the others.
+*   **`hidden` Attribute:** The `hidden` attribute is a simple and effective way to hide the content of inactive tab panels from all users, including screen readers.
+
+### Additional Hooks & Concepts
+
+#### **Explain the `useContext` hook and how it solves prop drilling.**
+
+The `useContext` hook is React's primary tool for consuming values from the React Context API. It provides a way to pass data through the component tree without having to pass props down manually at every level.
+
+*   **The Problem: Prop Drilling**
+    Imagine you have a deeply nested component that needs access to the current user's name. Without context, you would have to pass the `user` prop through every intermediate component, even if those components don't use it. This is called "prop drilling" and makes components less reusable and harder to maintain.
+
+*   **The Solution: `useContext`**
+    1.  **Create a Context:** First, you create a Context object using `React.createContext()`.
+    2.  **Provide the Context:** You wrap a parent component in the `Context.Provider` and pass it a `value`. Any component within this provider can now access this value.
+    3.  **Consume the Context:** In any child component, you call `useContext(MyContext)` to read and subscribe to the context value.
+
+*   **Example:**
+
+    ```jsx
+    import React, { useState, useContext, createContext } from 'react';
+
+    // 1. Create a context for the user
+    const UserContext = createContext(null);
+
+    // 2. Create a provider component that will hold the state
+    const UserProvider = ({ children }) => {
+      const [user, setUser] = useState({ name: 'Alice' });
+      return <UserContext.Provider value={{ user, setUser }}>{children}</UserContext.Provider>;
+    };
+
+    // 3. A deeply nested component that consumes the context
+    const UserProfile = () => {
+      const { user } = useContext(UserContext); // No prop drilling!
+      return <p>Welcome, {user.name}!</p>;
+    };
+
+    const App = () => (
+      <UserProvider>
+        <div>
+          <h1>My App</h1>
+          <UserProfile />
+        </div>
+      </UserProvider>
+    );
+    ```
+    In this example, `UserProfile` can access the `user` object directly without its parent components needing to know about or pass down the `user` prop.
 
 ---
 
-### 2. Type-Ahead Search Component with Debouncing & Race Condition Handling
+#### **What is the `useId` hook and what problem does it solve?**
 
-#### The Question
+`useId` is a hook for generating unique IDs that are stable across both the server and client, which is essential for avoiding hydration mismatches in server-rendered applications.
 
-Build a search input that fetches a list of users from an API as the user types.
+*   **The Problem:**
+    When building accessible components, you often need to connect elements using `id` and `aria-` attributes (e.g., linking a `<label>` to an `<input>` with `htmlFor` and `id`). If you generate these IDs randomly (e.g., with `Math.random()`), they will be different between the server-rendered HTML and the client-rendered HTML. This causes a "hydration mismatch" error when React hydrates the app on the client.
 
-**Requirements:**
-1.  Fetch from `https://jsonplaceholder.typicode.com/users?q={searchTerm}`.
-2.  Do not send an API request on every single keystroke. Wait until the user has paused typing.
-3.  Display a "Loading..." message while fetching.
-4.  Handle the case where a network request fails.
-5.  Handle race conditions: if the user types "react" and then quickly backspaces to "re", ensure the results for "re" are shown, even if the "react" request finishes later.
+*   **The Solution: `useId`**
+    `useId` generates a unique, non-random string that is guaranteed to be the same on the server and the client.
 
-#### The Code
+*   **How to Use It:**
+    Call `useId()` at the top level of your component to generate a unique ID string. You can then append your own prefixes to this base ID if you need multiple IDs within the same component.
 
-```jsx
-import React, { useState, useEffect, useCallback } from 'react';
+*   **Example:**
 
-// Custom hook for debouncing
-const useDebounce = (value, delay) => {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  return debouncedValue;
-};
+    ```jsx
+    import React, { useId } from 'react';
 
-const TypeAheadSearch = () => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [results, setResults] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+    function AccessibleForm() {
+      const id = useId(); // Generates a unique ID like ":r0:"
 
-  const debouncedSearchTerm = useDebounce(searchTerm, 500);
+      return (
+        <form>
+          <label htmlFor={`${id}-firstName`}>First Name:</label>
+          <input id={`${id}-firstName`} type="text" />
 
-  const fetchUsers = useCallback(async (term, signal) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `https://jsonplaceholder.typicode.com/users?name_like=${term}`,
-        { signal } // Pass the signal to the fetch request
+          <label htmlFor={`${id}-lastName`}>Last Name:</label>
+          <input id={`${id}-lastName`} type="text" />
+        </form>
       );
-      if (!response.ok) throw new Error('Network response was not ok.');
-      const data = await response.json();
-      setResults(data);
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        setError(err.message);
-      }
-    } finally {
-      setIsLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    if (debouncedSearchTerm) {
-      // Use AbortController to handle race conditions
-      const controller = new AbortController();
-      fetchUsers(debouncedSearchTerm, controller.signal);
-
-      // Cleanup function: aborts the fetch if the component unmounts or the term changes
-      return () => controller.abort();
-    } else {
-      setResults([]);
-    }
-  }, [debouncedSearchTerm, fetchUsers]);
-
-  return (
-    <div>
-      <h3>Type-Ahead Search</h3>
-      <input
-        type="text"
-        placeholder="Search for a user..."
-        value={searchTerm}
-        onChange={(e) => setSearchTerm(e.target.value)}
-        style={{ width: '300px', padding: '8px' }}
-      />
-      {isLoading && <div>Loading...</div>}
-      {error && <div style={{ color: 'red' }}>Error: {error}</div>}
-      {!isLoading && !error && (
-        <ul>
-          {results.map((user) => (
-            <li key={user.id}>{user.name}</li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-};
-
-export default TypeAheadSearch;
-```
-
-#### The Explanation (Key Concepts to Discuss)
-
-*   **Performance (Debouncing):** "To prevent an API call on every keystroke, I've created a `useDebounce` custom hook. It takes the user's input and a delay, and only returns the value after the user has stopped typing for 500ms. The API fetch effect depends on this `debouncedSearchTerm`, not the raw input."
-*   **Race Condition Handling:** "This is a critical problem in this component. To solve it, I use the `AbortController` API.
-    1.  Inside the `useEffect`, I create a new `AbortController`.
-    2.  I pass its `signal` to the `fetch` request.
-    3.  The `useEffect`'s cleanup function calls `controller.abort()`.
-    4.  This means if the user types a new search term before the previous API call has finished, the old request is cancelled, ensuring we never display stale data."
-*   **State Management:** "I'm managing four distinct states: the `searchTerm` from the input, the `results` from the API, a boolean `isLoading` flag, and an `error` object. This allows me to render a different UI for each stage of the component's lifecycle, providing clear feedback to the user."
-*   **Code Organization & Reusability:** "The fetching logic is wrapped in a `useCallback` to memoize it, which is a good practice, though not strictly necessary here since its dependencies don't change. The debouncing logic is in a custom hook, making it reusable across the application."
+    ```
+    This ensures that the generated HTML for the form is identical on both the server and the client, preventing hydration errors while maintaining accessibility.
 
 ---
 
-### 3. Drag-and-Drop Sortable List
+#### **What is Batching in React, and how did it change in React 18?**
 
-#### The Question
+**Batching** is React's mechanism for grouping multiple state updates into a single re-render for better performance. When you call `setState` multiple times in a single function, React "batches" them together and performs only one re-render at the end.
 
-Create a simple list of items that can be reordered by dragging and dropping.
+*   **Before React 18 (Legacy Batching):**
+    React only batched state updates that occurred within **React event handlers** (like `onClick` or `onChange`). If you had state updates inside a `setTimeout`, a Promise, or any other asynchronous callback, they would **not** be batched. Each `setState` call would trigger its own separate re-render, which could lead to performance issues.
 
-**Requirements:**
-1.  Render a list of items.
-2.  Allow the user to click and drag an item.
-3.  As the user drags over other items, provide a visual cue for where the item will be dropped.
-4.  When the item is dropped, update the list's order.
-
-#### The Code
-
-```jsx
-import React, { useState, useRef } from 'react';
-
-const initialItems = ['Item 1 - 🍎', 'Item 2 - 🍌', 'Item 3 - 🍇', 'Item 4 - 🍊'];
-
-const DragAndDropList = () => {
-  const [items, setItems] = useState(initialItems);
-  const dragItemIndex = useRef(null);
-  const dragOverItemIndex = useRef(null);
-
-  const handleDragStart = (e, index) => {
-    dragItemIndex.current = index;
-    // Add a class for visual styling (optional)
-    e.currentTarget.classList.add('dragging');
-  };
-  
-  const handleDragEnter = (e, index) => {
-    dragOverItemIndex.current = index;
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault(); // This is necessary to allow dropping
-  };
-
-  const handleDrop = (e) => {
-    e.currentTarget.classList.remove('dragging');
-
-    // Create a new copy of the items array
-    const newItems = [...items];
-    // Remove the dragged item from its original position
-    const draggedItem = newItems.splice(dragItemIndex.current, 1)[0];
-    // Insert it into the new position
-    newItems.splice(dragOverItemIndex.current, 0, draggedItem);
-    
-    // Reset refs
-    dragItemIndex.current = null;
-    dragOverItemIndex.current = null;
-
-    // Update the state with the new, reordered array
-    setItems(newItems);
-  };
-
-  return (
-    <div>
-      <h3>Drag and Drop List</h3>
-      <style>{`.dragging { opacity: 0.5; }`}</style>
-      <div onDragOver={handleDragOver}>
-        {items.map((item, index) => (
-          <div
-            key={item}
-            draggable
-            onDragStart={(e) => handleDragStart(e, index)}
-            onDragEnter={(e) => handleDragEnter(e, index)}
-            onDrop={handleDrop}
-            style={{ padding: '10px', margin: '5px', border: '1px solid #ccc', cursor: 'grab' }}
-          >
-            {item}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-export default DragAndDropList;
-```
-
-#### The Explanation (Key Concepts to Discuss)
-
-*   **State & Immutability:** "The list order is managed by a single `items` state array. The most critical part of the solution is the `handleDrop` function. I am not mutating the state directly. Instead, I create a shallow copy of the `items` array. I then use `splice` to remove the dragged item and insert it into its new position within this *new* array. Finally, I call `setItems` with the new array. This adheres to React's core principle of immutability."
-*   **Using Refs for DOM State:** "I'm using `useRef` to store the index of the item being dragged (`dragItemIndex`) and the index of the item being dragged over (`dragOverItemIndex`). I use refs here because this information is related to the current browser drag-and-drop operation, and updating it shouldn't trigger a component re-render. It's a temporary state that's only relevant during the drag."
-*   **HTML Drag and Drop API:** "This solution relies on the native HTML5 drag and drop API.
-    *   `draggable="true"` makes an element draggable.
-    *   `onDragStart` is fired when the drag begins. It's where I record *which* item is being moved.
-    *   `onDragEnter` is fired when the dragged item enters the boundary of another element. It's where I record *where* the item is going.
-    *   `onDragOver` fires continuously as you drag over an element. You **must** call `event.preventDefault()` here to signal that this element is a valid drop target.
-    *   `onDrop` is fired when the user releases the mouse, triggering the state update."
-
-
-
-
-    Of course. For a developer with 4.1 years of experience, interviewers expect you to be fluent in the core React patterns and hooks. The goal isn't just to write code, but to write it cleanly, efficiently, and with an understanding of *why* you're choosing a specific hook or pattern.
-
-
-# Cheat sheet
-
-Here is a concise "cheat sheet" of essential React code snippets and patterns. Memorize the structure and the key points for each one. This will give you a solid foundation to build any solution they throw at you.
-
----
-
-### 1. The `useEffect` Hook (For Side Effects)
-
-This is the most critical hook to know inside and out. Master the three common patterns.
-
-**When to use it:** Fetching data, setting up timers (`setInterval`), or manually manipulating the DOM.
-
-**The Snippet (Data Fetching with Cleanup):**
-
-```jsx
-import { useState, useEffect } from 'react';
-
-function MyComponent({ id }) {
-  const [data, setData] = useState(null);
-
-  useEffect(() => {
-    // 1. Create an AbortController for cleanup
-    const controller = new AbortController();
-    const signal = controller.signal;
-
-    const fetchData = async () => {
-      try {
-        const response = await fetch(`/api/data/${id}`, { signal });
-        const result = await response.json();
-        setData(result);
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          console.error("Fetch error:", error);
-        }
-      }
-    };
-
-    fetchData();
-
-    // 2. The cleanup function
-    return () => {
-      // This runs when the component unmounts OR before the effect re-runs
-      controller.abort();
-    };
-  }, [id]); // 3. The dependency array
-
-  // ... render logic
-}
-```
-
-**Key Things to Remember:**
-1.  **The Cleanup Function:** The function you `return` is for cleanup. It's essential for preventing memory leaks (e.g., `clearInterval`, `removeEventListener`, `controller.abort()`).
-2.  **The Dependency Array `[id]`:**
-    *   `[id]`: The effect re-runs *only* if `id` changes.
-    *   `[]` (Empty): The effect runs *only once* after the initial render (like `componentDidMount`).
-    *   *No array*: The effect runs *after every single render* (use this sparingly!).
-
----
-
-### 2. Custom Hooks (For Reusable Logic)
-
-This is the primary way to share stateful logic between components. A custom hook is just a JavaScript function whose name starts with "use".
-
-**When to use it:** When you find yourself writing the same logic (like data fetching, using local storage, or debouncing) in multiple components.
-
-**The Snippet (`useLocalStorage` Hook):**
-
-```jsx
-import { useState, useEffect } from 'react';
-
-// The Custom Hook
-function useLocalStorage(key, initialValue) {
-  // 1. Get initial value from localStorage or use the initialValue
-  const [storedValue, setStoredValue] = useState(() => {
-    try {
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch (error) {
-      console.log(error);
-      return initialValue;
+    ```jsx
+    // Before React 18
+    function handleClick() {
+      // These two updates ARE batched into one re-render.
+      setCount(c => c + 1);
+      setLoading(false);
     }
-  });
 
-  // 2. Create a wrapper function for setting the value
-  const setValue = (value) => {
-    try {
-      // Allow value to be a function so we have same API as useState
-      const valueToStore = value instanceof Function ? value(storedValue) : value;
-      setStoredValue(valueToStore);
-      window.localStorage.setItem(key, JSON.stringify(valueToStore));
-    } catch (error) {
-      console.log(error);
+    setTimeout(() => {
+      // These two updates are NOT batched. Each causes a re-render.
+      setCount(c => c + 1);
+      setLoading(false);
+    }, 1000);
+    ```
+
+*   **In React 18 (Automatic Batching):**
+    With the new Concurrent Renderer, batching is now **automatic** for all state updates, regardless of where they originate. Updates inside of timeouts, promises, native event handlers, or any other asynchronous operation are now batched by default.
+
+    ```jsx
+    // In React 18
+    function handleClick() {
+      // These two updates ARE batched into one re-render.
+      setCount(c => c + 1);
+      setLoading(false);
     }
-  };
-  
-  return [storedValue, setValue];
-}
 
-// How to use it in a component:
-function Settings() {
-  const [theme, setTheme] = useLocalStorage('theme', 'light');
-  
-  // Now `theme` is stateful and synced with localStorage!
-  return (
-    <button onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>
-      Current theme: {theme}
-    </button>
-  );
-}
-```
+    setTimeout(() => {
+      // These two updates ARE NOW batched automatically in React 18!
+      // This results in only one re-render.
+      setCount(c => c + 1);
+      setLoading(false);
+    }, 1000);
+    ```
 
-**Key Things to Remember:**
-1.  **Name must start with `use`**.
-2.  It can call other hooks (`useState`, `useEffect`).
-3.  It doesn't render JSX. It returns state, functions, or whatever the component needs.
+*   **Opting Out with `flushSync`:**
+    If you need to opt out of automatic batching for a specific update (e.g., you need to immediately read from the DOM after a state change), you can wrap the state update in `ReactDOM.flushSync()`. This is an escape hatch and should be used rarely.
 
----
+    ```jsx
+    import { flushSync } from 'react-dom';
 
-### 3. Context API (For "Global" State)
-
-The primary way to avoid "prop drilling" (passing props through many levels).
-
-**When to use it:** For state that many components need, like theme, user authentication status, or language preference.
-
-**The Snippet (Theme Context):**
-
-```jsx
-import { createContext, useContext, useState } from 'react';
-
-// 1. Create the context
-const AuthContext = createContext(null);
-
-// 2. Create a custom hook for easier consumption
-export const useAuth = () => useContext(AuthContext);
-
-// 3. Create the Provider component that will hold the state
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null); // The actual state
-
-  const login = (userData) => setUser(userData);
-  const logout = () => setUser(null);
-
-  // The value prop is what gets passed down
-  const value = { user, login, logout, isAuthenticated: !!user };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
-
-// 4. Wrap your app (or a part of it) in your main App.js or index.js
-// <AuthProvider>
-//   <YourApp />
-// </AuthProvider>
-
-// 5. How to use it in any child component
-function UserProfile() {
-  const { user, logout } = useAuth(); // So much cleaner!
-
-  if (!user) return <p>Please log in.</p>;
-
-  return (
-    <div>
-      <p>Welcome, {user.name}!</p>
-      <button onClick={logout}>Logout</button>
-    </div>
-  );
-}
-```
-
-**Key Things to Remember:**
-1.  **`createContext()`**: Creates the context object.
-2.  **`<MyContext.Provider value={...}>`**: Wraps the part of the component tree that needs access to the state. The `value` prop is crucial.
-3.  **`useContext(MyContext)`**: The hook used in child components to read the value.
-
----
-
-### 4. `useReducer` Hook (For Complex State)
-
-**When to use it:** When you have state that involves multiple sub-values, or when the next state depends on the previous one in a complex way (e.g., forms, state machines). It's an alternative to `useState`.
-
-**The Snippet (Simple Counter):**
-
-```jsx
-import { useReducer } from 'react';
-
-// 1. The reducer function: (currentState, action) => newState
-const counterReducer = (state, action) => {
-  switch (action.type) {
-    case 'INCREMENT':
-      return { count: state.count + 1 };
-    case 'DECREMENT':
-      return { count: state.count - 1 };
-    case 'RESET':
-      return { count: 0 };
-    case 'SET_VALUE':
-      return { count: action.payload };
-    default:
-      throw new Error('Unhandled action type');
-  }
-};
-
-// 2. The component
-function Counter() {
-  const initialState = { count: 0 };
-  const [state, dispatch] = useReducer(counterReducer, initialState);
-
-  return (
-    <div>
-      <p>Count: {state.count}</p>
-      {/* 3. Dispatch actions to update state */}
-      <button onClick={() => dispatch({ type: 'INCREMENT' })}>Increment</button>
-      <button onClick={() => dispatch({ type: 'DECREMENT' })}>Decrement</button>
-      <button onClick={() => dispatch({ type: 'RESET' })}>Reset</button>
-      <button onClick={() => dispatch({ type: 'SET_VALUE', payload: 100 })}>Set to 100</button>
-    </div>
-  );
-}
-```
-
-**Key Things to Remember:**
-1.  The **reducer function** is always a pure function. It receives state and an action, and returns the *new* state.
-2.  `useReducer` returns an array with `[state, dispatch]`.
-3.  You call `dispatch({ type: 'ACTION_NAME', payload: ... })` to trigger state updates.
-
----
-
-### 5. `useRef` and `forwardRef` (For DOM/Imperative Access)
-
-**When to use it:**
-*   **`useRef`**: To get direct access to a DOM element (e.g., to focus an input) or to store a mutable value that does not cause a re-render (like an interval ID).
-*   **`forwardRef`**: To pass a `ref` from a parent component down to a DOM element inside a child component.
-
-**The Snippet (Focusable Input Component):**
-
-```jsx
-import { useRef, forwardRef } from 'react';
-
-// 1. Use forwardRef to receive the ref from the parent
-const FancyInput = forwardRef((props, ref) => {
-  return <input ref={ref} {...props} />;
-});
-
-
-// 2. The parent component that uses the ref
-function Form() {
-  const inputRef = useRef(null);
-
-  const focusInput = () => {
-    // 3. Access the DOM node via the .current property
-    if (inputRef.current) {
-      inputRef.current.focus();
+    function handleUpdate() {
+      flushSync(() => {
+        setCount(c => c + 1);
+      });
+      // React has already re-rendered the DOM at this point.
     }
-  };
-
-  return (
-    <div>
-      <FancyInput ref={inputRef} placeholder="Click the button to focus me" />
-      <button onClick={focusInput}>Focus Input</button>
-    </div>
-  );
-}
-```
-
-**Key Things to Remember:**
-1.  `useRef` returns an object with a `.current` property.
-2.  Changing `ref.current` **does not** trigger a re-render.
-3.  You cannot pass `ref` as a normal prop. The child component *must* be wrapped in `forwardRef` to receive it as the second argument.
-
-
-
-**Analyzing the User's Need**
-
-I'm currently delving into the user's request. My focus now is dissecting their needs, emphasizing the need for more code snippets tailored for a React interview, given their 4.1 years of experience. This will guide my approach to the cheat sheet's construction.
-
-
-**Expanding Snippets' Scope**
-
-I've moved beyond the core hooks and am now examining advanced React topics that would be relevant to a senior interview. Key categories have emerged: component patterns like HOCs, render props, and conditional rendering, along with performance optimization techniques. My goal is to build concise, reusable code skeletons that the user can immediately adapt during an interview.
-
-
-**Refining Snippet Structures**
-
-My thinking has moved on to refining the format for each code snippet. I'm focusing on providing concise explanations for each pattern. I plan to include a basic use case.  Furthermore, the goal is to make these snippets easily adaptable for different interview scenarios. I'm also considering adding notes on common pitfalls.
-
-
-**Expanding the Snippet Structure**
-
-I'm now drafting the structure for each cheat sheet section. Each snippet includes its purpose, a concise code sample, and key takeaways for memorization. I'll start with conditional and list rendering, emphasizing readability and `key`'s importance. A simple HOC example with logging will also be constructed to demonstrate senior-level understanding.
-
-
-**Expanding Performance Snippets**
-
-I'm now zeroing in on advanced performance optimization. Beyond `React.memo`, I'm creating snippets for `useCallback` and `useMemo`, focusing on their role in preventing unnecessary re-renders. I'm also including `React.lazy` and `<Suspense>` to demonstrate code-splitting. Each snippet will have an example and a breakdown, highlighting common pitfalls and their relevance in senior-level React development.
-
-
-**Refining the Snippets**
-
-I've shifted my focus to refining the "Key Things to Remember" section for each snippet. This concise list of takeaways is the heart of the "cheat sheet". I'm striving for bullet points that are easily memorized, acting as mental triggers during the interview. To demonstrate my breadth of React knowledge, the list will include testing and architectural concepts that would be expected of a senior-level candidate.
-
-
-**Sharpening the Focus**
-
-I'm now zeroing in on defining the final sections, which will be the heart of the cheat sheet: code snippet structure, interview preparation guidance, and a reminder that understanding the *why* is more important than memorizing syntax. I will also make sure each section emphasizes concise comments for readability.
-
-
-# Additions for Missing React Topics
-
-These additions fill gaps in the original content, focusing on pure React concepts for mid-senior interviews (4.1+ years). Each includes a sample question, answer, code snippet, and key takeaways.
-
-## React Fragments
-
-**Interview Question**: What are React Fragments? Explain their purpose and how they differ from using a `<div>` wrapper. Provide an example where Fragments optimize rendering.
-
-**Answer**: React Fragments (`<React.Fragment>` or shorthand `<> </>`) allow you to group multiple elements without adding an extra DOM node. They solve the problem of unnecessary wrappers (e.g., `<div>`) that can break CSS layouts or add bloat. Unlike a `<div>`, Fragments don't create a real DOM element, so they're more performant and semantic. They're especially useful in lists or tables where extra nodes could disrupt structure. Fragments can also take a `key` prop for lists, unlike the shorthand syntax.
-
-**Code Snippet**:
-```jsx
-import React from 'react';
-
-function FragmentExample() {
-  return (
-    <>
-      <h1>Title</h1> {/* No extra <div> in the DOM */}
-      <p>Content</p>
-    </>
-  );
-}
-
-// With key for lists (full syntax required)
-function ListWithFragments({ items }) {
-  return (
-    <React.Fragment key="unique-key">
-      {items.map(item => <li key={item.id}>{item.name}</li>)}
-    </React.Fragment>
-  );
-}
-```
-
-**Key Takeaways**:
-- Use Fragments to avoid unnecessary DOM nodes and preserve CSS (e.g., flex/grid layouts).
-- Shorthand `<> </>` can't take props like `key`; use `<React.Fragment key="...">` for keyed lists.
-- Common pitfall: Forgetting Fragments in `return` statements that need multiple roots.
-
-## JSX Internals and Transformations
-
-**Interview Question**: Explain how JSX is transformed under the hood in React. What is the role of `React.createElement`, and when might you use it directly instead of JSX?
-
-**Answer**: JSX is syntactic sugar that Babel transpiles into `React.createElement` calls. For example, `<div className="box">Hello</div>` becomes `React.createElement('div', { className: 'box' }, 'Hello')`. This creates a React element object describing the UI. React then uses this to build the Virtual DOM. Use `createElement` directly for dynamic element creation (e.g., based on props) or in non-JSX environments. It's lower-level but gives fine control, like injecting children dynamically.
-
-**Code Snippet**:
-```jsx
-import React from 'react';
-
-// JSX version
-const jsxElement = <div className="box">Hello, World!</div>;
-
-// Equivalent without JSX
-const createElementVersion = React.createElement(
-  'div', // Type (string for HTML, function for components)
-  { className: 'box' }, // Props
-  'Hello, World!' // Children
-);
-
-// Dynamic usage
-function DynamicElement({ tag = 'div', children }) {
-  return React.createElement(tag, null, children);
-}
-
-// Usage: <DynamicElement tag="span">Dynamic Span</DynamicElement>
-```
-
-**Key Takeaways**:
-- JSX transpiles to `React.createElement(type, props, ...children)`.
-- Use it directly for meta-programming (e.g., generating elements from data).
-- Pitfall: Forgetting to import React in files using `createElement`.
-
-## PureComponent vs. Component
-
-**Interview Question**: What is the difference between `React.Component` and `React.PureComponent`? When would you use PureComponent, and what are its limitations?
-
-**Answer**: `React.PureComponent` is like `React.Component` but with a built-in `shouldComponentUpdate` that does a shallow comparison of props and state. It prevents unnecessary re-renders if props/state haven't changed (by reference). Use it for performance in class components with immutable props/state. Limitations: It only does shallow checks (deep objects/arrays can cause missed updates), and it's irrelevant in functional components (use `React.memo` instead). Avoid if props/state mutate or include functions (reference changes trigger re-renders).
-
-**Code Snippet**:
-```jsx
-import React from 'react';
-
-class RegularComponent extends React.Component {
-  render() {
-    console.log('Regular render');
-    return <div>{this.props.value}</div>;
-  }
-}
-
-class PureComp extends React.PureComponent {
-  render() {
-    console.log('Pure render'); // Won't log if props/state are shallowly equal
-    return <div>{this.props.value}</div>;
-  }
-}
-
-// Parent
-class Parent extends React.Component {
-  state = { value: 1 };
-
-  increment = () => this.setState({ value: this.state.value + 1 });
-
-  render() {
-    return (
-      <>
-        <RegularComponent value={this.state.value} /> {/* Re-renders every time */}
-        <PureComp value={this.state.value} /> {/* Only re-renders if value changes */}
-        <button onClick={this.increment}>Increment</button>
-      </>
-    );
-  }
-}
-```
-
-**Key Takeaways**:
-- `PureComponent` auto-optimizes with shallow `shouldComponentUpdate`.
-- Limitation: Shallow compare fails with deep/nested changes; use immutable data.
-- Modern alternative: `React.memo` for functional components.
-
-## Advanced Lifecycle Methods (getDerivedStateFromProps & getSnapshotBeforeUpdate)
-
-**Interview Question**: Explain `static getDerivedStateFromProps` and `getSnapshotBeforeUpdate`. Provide use cases and why they're rare in modern React.
-
-**Answer**: `static getDerivedStateFromProps(props, state)` is a static lifecycle method that updates state based on prop changes before rendering. It returns an object to update state (or null). Use it for deriving state from props (e.g., resetting form state on prop change). It's rare because hooks (`useEffect` with dependencies) handle this better. `getSnapshotBeforeUpdate(prevProps, prevState)` captures info (e.g., scroll position) before DOM updates and passes it to `componentDidUpdate`. Use for preserving UI state during updates (e.g., chat scroll). Both are class-only and uncommon in functional React.
-
-**Code Snippet** (getSnapshotBeforeUpdate for scroll preservation):
-```jsx
-class ScrollingList extends React.Component {
-  constructor(props) {
-    super(props);
-    this.listRef = React.createRef();
-  }
-
-  getSnapshotBeforeUpdate(prevProps, prevState) {
-    // Capture scroll position before update
-    if (prevProps.items.length < this.props.items.length) {
-      const list = this.listRef.current;
-      return list.scrollHeight - list.scrollTop; // Snapshot: distance from bottom
-    }
-    return null;
-  }
-
-  componentDidUpdate(prevProps, prevState, snapshot) {
-    if (snapshot !== null) {
-      const list = this.listRef.current;
-      list.scrollTop = list.scrollHeight - snapshot; // Restore scroll position
-    }
-  }
-
-  render() {
-    return (
-      <div ref={this.listRef} style={{ height: '200px', overflowY: 'scroll' }}>
-        {this.props.items.map(item => <p key={item}>{item}</p>)}
-      </div>
-    );
-  }
-}
-```
-
-**Key Takeaways**:
-- `getDerivedStateFromProps`: Static, no side effects; derive state from props.
-- `getSnapshotBeforeUpdate`: For pre-update DOM snapshots; pairs with `componentDidUpdate`.
-- Rare in hooks era; prefer `useEffect` for prop-derived state.
-
-## React.Children Utilities
-
-**Interview Question**: What are `React.Children` utilities? Explain `React.Children.map` and a use case for manipulating children in a wrapper component.
-
-**Answer**: `React.Children` provides utilities to work with the opaque `this.props.children` structure (which can be arrays, objects, or single elements). `React.Children.map(children, fn)` iterates over children, applying a function to each (like array.map but handles non-arrays). Use in wrapper components to clone/modify children (e.g., injecting props). It's safer than direct array ops, as it handles edge cases like null/undefined children.
-
-**Code Snippet**:
-```jsx
-import React from 'react';
-
-function Wrapper({ children }) {
-  // Inject a className prop to each child
-  const modifiedChildren = React.Children.map(children, child => 
-    React.cloneElement(child, { className: 'injected-class' })
-  );
-
-  return <div>{modifiedChildren}</div>;
-}
-
-// Usage
-<Wrapper>
-  <p>Child 1</p>
-  <span>Child 2</span>
-</Wrapper>
-// Renders: <div><p class="injected-class">Child 1</p><span class="injected-class">Child 2</span></div>
-```
-
-**Key Takeaways**:
-- Handles non-array children; use with `React.cloneElement` to modify.
-- Other utils: `React.Children.count`, `React.Children.toArray`.
-- Pitfall: Don't mutate children directly; always clone.
-
-## useId Hook (React 18)
-
-**Interview Question**: What is the `useId` hook in React 18? Explain its purpose and how it solves issues in server-rendered apps.
-
-**Answer**: `useId` generates a unique, stable ID string for elements (e.g., form labels/inputs). It ensures IDs are unique across components and consistent between client/server renders, preventing hydration mismatches in SSR. Use it for accessible forms (pairing `id` with `htmlFor`). It's stable across renders but unique per hook call.
-
-**Code Snippet**:
-```jsx
-import { useId } from 'react';
-
-function FormField({ label }) {
-  const id = useId(); // e.g., ":r0:"
-
-  return (
-    <>
-      <label htmlFor={id}>{label}</label>
-      <input id={id} type="text" />
-    </>
-  );
-}
-```
-
-**Key Takeaways**:
-- Solves SSR ID mismatches; prefix ensures uniqueness.
-- Don't use for keys in lists (use data-derived keys).
-
-## React Transition Hooks (startTransition & useTransition)
-
-**Interview Question**: Explain `startTransition` and `useTransition` in React 18. How do they improve UI responsiveness?
-
-**Answer**: These enable "non-urgent" state updates in concurrent mode. `startTransition(callback)` wraps a state update to mark it low-priority, allowing React to interrupt it for urgent tasks (e.g., user input). `useTransition` returns `[isPending, startTransition]` for pending state indicators. Use for heavy updates (e.g., filtering large lists) to keep UI responsive.
-
-**Code Snippet**:
-```jsx
-import { useState, useTransition } from 'react';
-
-function FilterList({ items }) {
-  const [filter, setFilter] = useState('');
-  const [isPending, startTransition] = useTransition();
-
-  const handleChange = (e) => {
-    startTransition(() => {
-      setFilter(e.target.value); // Low-priority update
-    });
-  };
-
-  const filteredItems = items.filter(item => item.includes(filter));
-
-  return (
-    <>
-      <input onChange={handleChange} placeholder="Filter..." />
-      {isPending && <p>Loading...</p>}
-      <ul>{filteredItems.map(item => <li key={item}>{item}</li>)}</ul>
-    </>
-  );
-}
-```
-
-**Key Takeaways**:
-- Improves perceived performance by prioritizing urgent updates.
-- `isPending` from `useTransition` shows loading states.
-- Not for urgent tasks (e.g., typing feedback).
-
-## Deeper Dive into Reconciliation/Fiber
-
-**Interview Question**: Explain React's reconciliation process and Fiber architecture. How does Fiber enable concurrent rendering?
-
-**Answer**: Reconciliation is React's diffing algorithm to update the DOM efficiently: it compares new/old Virtual DOM trees, computes minimal changes, and applies them. Fiber is React's internal reimplementation (since v16) using a linked-list tree of "fibers" (work units). It enables pausing/resuming work, prioritizing updates (e.g., animations over data fetches), and concurrent mode by breaking rendering into interruptible chunks.
-
-**Key Takeaways** (No Code Needed, Conceptual):
-- Reconciliation: Heuristics like assuming same-type elements are stable; uses keys for list efficiency.
-- Fiber: Stackless, cooperative scheduling; enables features like Suspense/time-slicing.
-- Pitfall: Misusing keys can break reconciliation, causing full subtree re-renders.
-
-This completes the additions. Your original content plus these covers ~95% of React interview topics for 4.1 years experience. Practice explaining the "why" behind each—interviewers value reasoning over rote memorization. If you need more depth on any addition, let me know!
-
-
+    ```

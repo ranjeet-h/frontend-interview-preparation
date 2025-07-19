@@ -189,28 +189,6 @@ By preparing for these questions, you will be well-equipped to demonstrate a dee
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 Of course. Here are the solutions and detailed explanations for the comprehensive list of JavaScript interview questions.
 
 ### JavaScript interview questions and Answers start
@@ -697,8 +675,8 @@ The `...` syntax is used for both spread and rest, but they are used in differen
 
 *   **Spread Operator:** "Expands" an iterable (like an array or string) into individual elements. It's used in places where multiple elements are expected, such as in function calls or array literals.
     ```javascript
-    const arr1 =;
-    const arr2 = [...arr1, 3, 4]; //
+    const arr1 = [1, 2];
+    const arr2 = [...arr1, 3, 4]; // [1, 2, 3, 4]
 
     const name = "hi";
     const chars = [...name]; // ['h', 'i']
@@ -728,7 +706,7 @@ function reverseString(str) {
 
 The most reliable way is `Array.isArray()`.
 ```javascript
-const myArray =;
+const myArray = [1, 2];
 const myObject = { a: 1 };
 
 console.log(Array.isArray(myArray));   // true
@@ -819,8 +797,8 @@ function throttle(func, limit) {
 
 ```javascript
 // Modern ES2019+ method
-const nested = [1,, [4,]];
-const flat = nested.flat(Infinity); //
+const nested = [1, [2, 3], [4, [5]]];
+const flat = nested.flat(Infinity); // [1, 2, 3, 4, 5]
 
 // Recursive implementation
 function flatten(arr) {
@@ -1998,1193 +1976,185 @@ Of course. Let's continue with the rest of the questions from your list.
           // Set a timeout to reset the flag after the limit
           setTimeout(() => {
             inThrottle = false;
-            // This part is an enhancement: it runs the very last call that was
-            // attempted during the cooling-down period.
-            if(lastArgs){
-              func.apply(lastThis, lastArgs);
-              lastArgs = null;
-              lastThis = null;
-            }
           }, limit);
-        } else {
-          // If we ARE in the cooling-down period, save the latest arguments.
-          lastArgs = args;
-          lastThis = context;
         }
       };
     }
-
-    // Example (imagine this is tied to a window resize or scroll event)
-    const onScroll = () => console.log("Doing heavy calculation!");
-    const throttledScroll = throttle(onScroll, 1000); // Run at most once per second
-    // window.addEventListener('scroll', throttledScroll);
     ```
 
 *   **The Explanation:**
-    1.  **The Flag:** The `inThrottle` variable (kept alive by a closure) acts as a switch.
-    2.  **First Call:** The first time the throttled function is called, `inThrottle` is `false`, so the original `func` runs immediately. `inThrottle` is then set to `true`.
-    3.  **Cooldown:** A `setTimeout` is scheduled to turn the `inThrottle` flag back to `false` after the `limit` has passed.
-    4.  **Subsequent Calls:** Any calls that happen during this cooldown period see that `inThrottle` is `true` and do nothing.
-    5.  **After Cooldown:** Once the `setTimeout` finishes, the flag is reset, and the next call will be able to execute the function again.
-    *   **Debounce vs. Throttle:** **Debounce** waits for a pause in events before executing (good for search bars). **Throttle** guarantees execution at a regular interval no matter how many events are fired (good for scroll/resize events).
+    1.  The `throttle` function uses a closure to maintain the `inThrottle` flag between calls.
+    2.  When the throttled function is invoked, it first checks if `inThrottle` is `true`.
+    3.  If it's `false`, it means we are not in the "cooling-down" period. The original `func` is executed, `inThrottle` is immediately set to `true`, and a `setTimeout` is scheduled.
+    4.  The `setTimeout` will reset `inThrottle` back to `false` after the `limit` has passed.
+    5.  If the throttled function is called again *during* this cooling-down period, the `if (!inThrottle)` check fails, and nothing happens. This ensures the function only runs once per `limit`.
+
+### Additional Advanced Topics
+
+Here are explanations for a few more advanced, conceptual, and environment-specific topics.
 
 ---
 
-### Category 5: Logic and Algorithms
+#### 66. Illegal Shadowing
 
-#### 13. Memoization
+**Variable shadowing** occurs when a variable declared within a certain scope (e.g., a local variable) has the same name as a variable in an outer scope. When this happens, the inner variable "shadows" the outer variable, and any reference to the variable within the inner scope will resolve to the inner variable.
 
-*   **The Problem:** Write a higher-order function that takes a function as an argument and returns a "memoized" version of it. The memoized function should store the results of previous computations to avoid recalculating them.
+While shadowing is allowed in many cases, there is a specific scenario called **"illegal shadowing"** that results in a `SyntaxError`. This happens when you try to declare a variable with `var` that shadows a variable declared with `let` or `const` in a block scope.
 
-*   **The Code:**
-    ```javascript
-    function memoize(fn) {
-      // The cache is kept alive in the closure.
-      const cache = {};
-
-      return function(...args) {
-        // Create a unique key for the cache based on the arguments.
-        // JSON.stringify is a simple way to do this for complex arguments.
-        const key = JSON.stringify(args);
-
-        // If the result for these arguments is already in the cache, return it.
-        if (cache[key]) {
-          console.log(`Fetching from cache for args: ${key}`);
-          return cache[key];
-        }
-
-        // Otherwise, compute the result by calling the original function.
-        console.log(`Calculating result for args: ${key}`);
-        const result = fn.apply(this, args);
-
-        // Store the new result in the cache before returning it.
-        cache[key] = result;
-        return result;
-      };
-    }
-
-    // --- Example Usage ---
-    const slowFib = (n) => {
-      if (n < 2) return n;
-      return slowFib(n - 1) + slowFib(n - 2);
-    };
-
-    const memoizedFib = memoize(slowFib);
-
-    console.log(memoizedFib(40)); // Will be slow the first time
-    console.log(memoizedFib(40)); // Will be instantaneous the second time
-    ```
-
-*   **The Explanation:**
-    1.  **The Cache:** The `memoize` function creates a `cache` object that persists because it's part of a closure.
-    2.  **The Key:** When the returned function is called, it creates a unique `key` from its arguments. `JSON.stringify` is a simple way to turn an arguments array like `[40]` into a string `"40"`.
-    3.  **Cache Check:** It checks if this `key` already exists in the `cache`. If it does, it skips the expensive computation and returns the stored value immediately.
-    4.  **Compute & Store:** If the key is not in the cache, it calls the original, slow function (`fn`), stores the `result` in the `cache` using the `key`, and then returns the `result`. All subsequent calls with the same arguments will now hit the cache.
-
----
-
-#### 14. Two Sum
-
-*   **The Problem:** Given an array of numbers and a target number, find two numbers in the array that add up to the target. Return their indices.
-
-*   **The Code:**
-    ```javascript
-    function twoSum(nums, target) {
-      // Use a Map to store numbers we've seen and their indices.
-      const numMap = new Map();
-
-      for (let i = 0; i < nums.length; i++) {
-        const currentNum = nums[i];
-        // Calculate the complement needed to reach the target.
-        const complement = target - currentNum;
-
-        // Check if the complement exists in our map.
-        if (numMap.has(complement)) {
-          // If it does, we've found our pair.
-          return [numMap.get(complement), i]; // [index_of_complement, current_index]
-        }
-
-        // If no complement was found, add the current number and its index to the map.
-        numMap.set(currentNum, i);
-      }
-
-      // Return null or an empty array if no solution is found.
-      return null;
-    }
-
-    // Example Usage:
-    console.log(twoSum([2, 7, 11, 15], 9)); // Output: [0, 1]
-    console.log(twoSum([3, 2, 4], 6));      // Output: [1, 2]
-    ```
-
-*   **The Explanation:**
-    This O(n) solution is highly efficient because it only requires one pass through the array.
-    1.  We use a `Map` (or a plain object) to act as a hash map, which gives us very fast O(1) lookups.
-    2.  We loop through the array one element at a time.
-    3.  In each iteration, we calculate the `complement`—the other number we would need to find to sum up to the `target`.
-    4.  The crucial step: We check if this `complement` **already exists** in our map. If it does, it means we saw it in a *previous* iteration, and we have found our pair. We can immediately return the stored index of the complement and the current index `i`.
-    5.  If the complement isn't in the map, we add the `currentNum` and its index `i` to the map so it can be found by a *future* element.
-
----
-
-#### 15. Valid Parentheses
-
-*   **The Problem:** Given a string of brackets `()`, `{}`, `[]`, determine if the order is valid. For example, `"{[]}"` is valid, but `"{[}]"` is not.
-
-*   **The Code:**
-    ```javascript
-    function isValidParentheses(s) {
-      // The stack will hold the opening brackets we expect to close.
-      const stack = [];
-      // A map to hold the valid pairs.
-      const bracketMap = {
-        '(': ')',
-        '{': '}',
-        '[': ']'
-      };
-
-      for (let i = 0; i < s.length; i++) {
-        const char = s[i];
-
-        // If the character is an opening bracket, push it onto the stack.
-        if (bracketMap[char]) {
-          stack.push(char);
-        }
-        // If it's a closing bracket...
-        else {
-          // If the stack is empty, there's no opening bracket to match. Invalid.
-          if (stack.length === 0) {
-            return false;
-          }
-
-          // Pop the last opening bracket from the stack.
-          const lastOpen = stack.pop();
-
-          // Check if the current closing bracket matches the last opening one.
-          if (bracketMap[lastOpen] !== char) {
-            return false; // Mismatched brackets.
-          }
-        }
-      }
-
-      // If the loop finishes, the string is valid only if the stack is empty.
-      // An empty stack means every opening bracket was correctly closed.
-      return stack.length === 0;
-    }
-
-    // Example Usage:
-    console.log(isValidParentheses("()[]{}")); // true
-    console.log(isValidParentheses("([)]"));   // false
-    console.log(isValidParentheses("{[]}"));    // true
-    console.log(isValidParentheses("]"));      // false
-    ```
-
-*   **The Explanation:**
-    This problem is a perfect use case for a **stack** data structure (Last-In, First-Out).
-    1.  **Opening Brackets:** When we see an opening bracket (`(`, `{`, `[`), we don't know if it's valid yet. We push it onto the `stack` to remember that we need to find its matching closing bracket later.
-    2.  **Closing Brackets:** When we see a closing bracket (`)`, `}`, `]`), we know it must match the *most recently opened* bracket. We `pop` the last item from the stack.
-    3.  **Validation:** We then check if the closing bracket we just found is the correct partner for the opening bracket we just popped. If not, the string is invalid.
-    4.  **Final Check:** After the loop finishes, if the `stack` is empty, it means every opening bracket found a matching closer. If the stack is not empty (e.g., for a string like `"("`), it means there are unclosed brackets, and the string is invalid.
-
-
-Of course. We've covered the majority of the list, and now we'll tackle the remaining, more advanced topics. These are excellent questions for demonstrating a deep and nuanced understanding of JavaScript's mechanics.
-
-Here are the explanations and code for the final items on the list.
-
----
-
-### Category 3: Asynchronous JavaScript (Continued)
-
-#### 16. Create a `promisify` function
-
-*   **The Problem:** Write a higher-order function that converts a standard Node.js-style asynchronous function (one that takes a callback as its last argument) into a function that returns a promise.
-
-*   **The Code:**
-    ```javascript
-    /**
-     * Converts a callback-style async function to a promise-based one.
-     * @param {Function} callbackStyleFn The function to convert.
-     * @returns {Function} A new function that returns a promise.
-     */
-    function promisify(callbackStyleFn) {
-      // Return a new function that will be our promise-returning version.
-      return function(...args) {
-        // This new function returns a Promise.
-        return new Promise((resolve, reject) => {
-          // The callback we'll pass to the original function.
-          // It follows the standard (error, result) convention.
-          const callback = (error, result) => {
-            if (error) {
-              return reject(error); // If there's an error, reject the promise.
-            }
-            resolve(result); // Otherwise, resolve the promise with the result.
-          };
-
-          // Call the original function, spreading its arguments and adding
-          // our custom callback as the final argument.
-          callbackStyleFn.apply(this, [...args, callback]);
-        });
-      };
-    }
-
-    // --- Example Usage ---
-    // A fake callback-style function.
-    const readFileMock = (filename, callback) => {
-      if (filename === "data.txt") {
-        setTimeout(() => callback(null, "File content"), 200);
-      } else {
-        setTimeout(() => callback(new Error("File not found")), 200);
-      }
-    };
-
-    const promisedReadFile = promisify(readFileMock);
-
-    promisedReadFile("data.txt")
-      .then(content => console.log("Success:", content)) // Success: File content
-      .catch(err => console.error("Error:", err.message));
-
-    promisedReadFile("fail.txt")
-      .then(content => console.log("Success:", content))
-      .catch(err => console.error("Error:", err.message)); // Error: File not found
-    ```
-
-*   **The Explanation:**
-    This pattern bridges the old and new worlds of asynchronous JavaScript.
-    1.  **Higher-Order Function:** `promisify` accepts a function `callbackStyleFn` and returns a *new function*.
-    2.  **Returns a Promise:** The new function it returns is engineered to always return a `Promise`.
-    3.  **The Executor:** Inside the promise's executor, we do the real work. We call the original `callbackStyleFn`.
-    4.  **Custom Callback:** We pass a custom `callback` to it. This callback is designed to interact with the promise's `resolve` and `reject` functions. If the `error` argument is present (the standard convention), we `reject`. Otherwise, we `resolve` with the `result`. `apply` is used to maintain the correct `this` context.
-
----
-
-#### 17. Sequential vs. Parallel Execution
-
-*   **The Problem:** Write two functions: `series` executes an array of async functions sequentially (one after another), and `parallel` executes them all at once.
-
-*   **The Code:**
-    ```javascript
-    // Helper function that returns a promise after a delay
-    const createAsyncTask = (id, delay) => () => {
-      return new Promise(resolve => {
-        setTimeout(() => {
-          console.log(`Task ${id} complete`);
-          resolve(`Result of task ${id}`);
-        }, delay);
-      });
-    };
-
-    const tasks = [
-      createAsyncTask(1, 300),
-      createAsyncTask(2, 500),
-      createAsyncTask(3, 100),
-    ];
-
-    /**
-     * Executes an array of promise-returning functions in parallel.
-     */
-    async function parallel(tasks) {
-      console.log("--- Starting Parallel Execution ---");
-      // Map the array of functions to an array of started promises.
-      const promises = tasks.map(task => task());
-      // Promise.all waits for all of them to complete.
-      const results = await Promise.all(promises);
-      console.log("Parallel execution finished.");
-      return results;
-    }
-
-
-    /**
-     * Executes an array of promise-returning functions in series.
-     */
-    async function series(tasks) {
-      console.log("--- Starting Series Execution ---");
-      const results = [];
-      // Use a for...of loop to ensure we wait for each promise.
-      // A forEach loop would not work with await as expected.
-      for (const task of tasks) {
-        const result = await task(); // Wait for the current task to finish
-        results.push(result);
-      }
-      console.log("Series execution finished.");
-      return results;
-    }
-
-    // --- Example Usage ---
-    async function run() {
-      await parallel(tasks);
-      /* Output of parallel:
-         --- Starting Parallel Execution ---
-         Task 3 complete (after 100ms)
-         Task 1 complete (after 300ms)
-         Task 2 complete (after 500ms)
-         Parallel execution finished.
-      */
-
-      await series(tasks);
-      /* Output of series:
-         --- Starting Series Execution ---
-         Task 1 complete (after 300ms)
-         Task 2 complete (after another 500ms)
-         Task 3 complete (after another 100ms)
-         Series execution finished.
-      */
-    }
-
-    run();
-    ```
-
-*   **The Explanation:**
-    *   **`parallel`:** This is straightforward. We start all the async tasks at once by calling them in a `.map()`. This gives us an array of pending promises. `Promise.all` is the perfect tool to wait for all of them to complete. The total time taken is determined by the *longest* running task.
-    *   **`series`:** This is more nuanced. The key is using a `for...of` loop with `await`. This type of loop respects the `await` keyword, pausing the loop's execution until the promise from the current `task()` resolves. Only then does it proceed to the next iteration. This ensures only one task is running at any given time. The total time taken is the *sum* of all task durations.
-
----
-
-### Category 4: Functions, Scope, and Closures (Continued)
-
-#### 18. Implement Currying
-
-*   **The Problem:** Write a `curry` function that transforms a function `f(a, b, c)` into a curried function `f(a)(b)(c)` that can be called with one or more arguments at a time until all arguments are supplied.
-
-*   **The Code:**
-    ```javascript
-    /**
-     * Converts a function into a curried function.
-     * @param {Function} fn The function to curry.
-     * @returns {Function} The new curried function.
-     */
-    function curry(fn) {
-      // The arity of a function is its expected number of arguments.
-      const arity = fn.length;
-
-      return function curried(...args) {
-        // If we have enough arguments, call the original function.
-        if (args.length >= arity) {
-          return fn.apply(this, args);
-        }
-
-        // Otherwise, return a new function that waits for more arguments.
-        // It will concatenate the old args with the new ones.
-        return function(...nextArgs) {
-          return curried.apply(this, [...args, ...nextArgs]);
-        };
-      };
-    }
-
-    // --- Example Usage ---
-    const sum = (a, b, c) => a + b + c;
-    const curriedSum = curry(sum);
-
-    console.log(curriedSum(1, 2, 3)); // 6 (called all at once)
-    console.log(curriedSum(1)(2, 3)); // 6 (called with multiple)
-    console.log(curriedSum(1)(2)(3)); // 6 (called one by one)
-
-    const add5 = curriedSum(5); // Create a specialized function
-    console.log(add5(2)(3)); // 10
-    ```
-
-*   **The Explanation:**
-    This demonstrates advanced functional programming concepts.
-    1.  **Arity:** The solution first determines the number of arguments the original function `fn` expects using `fn.length`.
-    2.  **Closure and Recursion:** The `curry` function returns a new function `curried`. `curried` is recursive in a sense; it can return itself (or a new version of itself) until it has enough arguments.
-    3.  **Argument Collection:** Each time `curried` is called, it collects the arguments.
-    4.  **The Check:** It checks if the number of collected arguments (`args.length`) is greater than or equal to the required `arity`.
-    5.  **Execution:** If it has enough arguments, it calls the original `fn`.
-    6.  **Waiting for More:** If it doesn't have enough arguments, it returns *another* function. This new function, when called, will combine the previous arguments with the new ones and call `curried` again, restarting the check.
-
----
-
-#### 19. Implement `Function.prototype.bind`
-
-*   **The Problem:** Create a polyfill for the `bind` method. It should set the `this` context and allow for pre-filling arguments.
-
-*   **The Code:**
-    ```javascript
-    Function.prototype.myBind = function(context, ...boundArgs) {
-      // 'this' is the function that myBind is being called on.
-      const originalFunc = this;
-
-      // Return a new function—the "bound" function.
-      return function(...args) {
-        // Concatenate the arguments provided to myBind with the arguments
-        // provided to the new bound function.
-        const allArgs = [...boundArgs, ...args];
-
-        // Call the original function with the specified context and all arguments.
-        return originalFunc.apply(context, allArgs);
-      };
-    };
-
-    // --- Example Usage ---
-    const person = {
-      name: "Ranjeet",
-      greet(greeting, punctuation) {
-        console.log(`${greeting}, my name is ${this.name}${punctuation}`);
-      }
-    };
-
-    const unboundGreet = person.greet;
-    // unboundGreet("Hi", "!"); // Throws an error because `this` is window or undefined.
-
-    // Use myBind to create a bound function
-    const boundGreet = person.greet.myBind(person, "Hello");
-
-    boundGreet("!"); // 'Hello, my name is Ranjeet!'
-    boundGreet("."); // 'Hello, my name is Ranjeet.'
-    ```
-
-*   **The Explanation:**
-    1.  **The Target Function:** Inside `myBind`, `this` refers to the function `myBind` was called on (e.g., `person.greet`). We store this in `originalFunc`.
-    2.  **Context and Bound Arguments:** The first argument to `myBind` is the desired `context` (`this` value). Any subsequent arguments (`...boundArgs`) are arguments that should be pre-filled.
-    3.  **Return a New Function:** `bind`'s primary job is to return a new function that can be called later.
-    4.  **Combine Arguments:** When this new function is finally called, it may receive its own arguments (`...args`). The core logic is to combine the pre-filled `boundArgs` with these new `args`.
-    5.  **`apply`:** Finally, we use `originalFunc.apply()`. `apply` lets us call a function while explicitly setting its `this` context (`context`) and providing its arguments as an array (`allArgs`). This is the perfect tool to complete the implementation.
-
-
-    Of course. For a React developer interview, object manipulation questions are critical because so much of modern JavaScript revolves around handling data structures like component state, props, and API responses.
-
-Here are the JavaScript object questions with the highest probability of being asked, complete with explanations of *why* they are asked and clean code solutions.
-
----
-
-### Question 1: Deep Clone an Object
-
-This is arguably the most common and important object-related question.
-
-*   **Why It's Asked:** It directly tests your understanding of **value vs. reference**, a core concept that causes countless bugs. In React, you must never mutate state or props directly. To change nested data, you must create a deep copy first. This question reveals if you understand this principle.
-
-*   **The Code:**
-    ```javascript
-    function deepClone(obj) {
-      // 1. Handle non-objects (primitives) and null. This is the base case for recursion.
-      if (obj === null || typeof obj !== 'object') {
-        return obj;
-      }
-
-      // 2. Handle Arrays and Objects differently for initialization.
-      const clone = Array.isArray(obj) ? [] : {};
-
-      // 3. Iterate over all keys in the original object.
-      // Using Object.keys ensures we only iterate over own properties.
-      for (const key of Object.keys(obj)) {
-        // 4. For each key, recursively call deepClone on its value.
-        clone[key] = deepClone(obj[key]);
-      }
-
-      return clone;
-    }
-
-    // --- Example ---
-    const original = {
-      user: "Ranjeet",
-      settings: {
-        theme: "dark",
-        notifications: { daily: true, weekly: false }
-      },
-      projects: ["DeFi App", "E-commerce Site"]
-    };
-
-    const copy = deepClone(original);
-
-    // Mutate the copy
-    copy.settings.theme = "light";
-    copy.projects.push("New Project");
-
-    console.log(original.settings.theme); // "dark" (Unaffected)
-    console.log(original.projects.length); // 2 (Unaffected)
-    ```
-
-*   **Key Concepts to Explain:**
-    *   **Reference vs. Value:** Primitives (string, number) are passed by value. Objects and arrays are passed by reference. A shallow copy (`{...obj}`) only copies the top-level properties; nested objects are still references to the original.
-    *   **Recursion:** Explain that the function calls itself to handle nested structures, with the "base case" being a primitive value.
-    *   **Edge Cases:** Mention handling `null`, arrays, and other object types.
-
----
-
-### Question 2: Deep Compare Two Objects
-
-This is the logical follow-up to deep cloning and is just as important.
-
-*   **Why It's Asked:** In React, this is fundamental to performance optimization. React re-renders components when their props or state change. To prevent unnecessary re-renders (e.g., in `React.memo` or a `useEffect` dependency array), you need to know if an object or array has *actually* changed, which a simple `===` check won't do.
-
-*   **The Code:**
-    ```javascript
-    function isEqual(obj1, obj2) {
-      // 1. Get the keys of both objects.
-      const keys1 = Object.keys(obj1);
-      const keys2 = Object.keys(obj2);
-
-      // 2. If they don't have the same number of keys, they can't be equal.
-      if (keys1.length !== keys2.length) {
-        return false;
-      }
-
-      // 3. Iterate over the keys of one object.
-      for (const key of keys1) {
-        const val1 = obj1[key];
-        const val2 = obj2[key];
-
-        // 4. Check if both values are objects (the recursive case).
-        const areObjects = typeof val1 === 'object' && val1 !== null && typeof val2 === 'object' && val2 !== null;
-
-        if (areObjects) {
-          // If they are objects, recursively call isEqual. If it returns false, we stop.
-          if (!isEqual(val1, val2)) {
-            return false;
-          }
-        }
-        // 5. If they are primitives, compare them directly.
-        else if (val1 !== val2) {
-          return false;
-        }
-      }
-
-      // 6. If the loop completes without finding any inequality, they are equal.
-      return true;
-    }
-
-    // --- Example ---
-    const objA = { a: 1, b: { c: 2 } };
-    const objB = { a: 1, b: { c: 2 } };
-    const objC = { a: 1, b: { c: "2" } }; // Note the string "2"
-
-    console.log(isEqual(objA, objB)); // true
-    console.log(isEqual(objA, objC)); // false
-    ```
-
-*   **Key Concepts to Explain:**
-    *   **Structural Equality:** You are checking if the objects have the same structure and values, not if they are the same object in memory.
-    *   **Recursion:** Again, explain how you dive into nested objects to compare them.
-    *   **Failing Fast:** Point out that your logic returns `false` as soon as it finds the first difference, which is efficient.
-
----
-
-### Question 3: Explain and Use `call`, `apply`, and `bind`
-
-This is a classic question to test your understanding of the `this` keyword, which is crucial for handling event listeners and methods in JavaScript classes.
-
-*   **Why It's Asked:** It proves you understand JavaScript's execution context (`this`). In React class components (and in many other scenarios), you often need to manually set the `this` context for event handler methods. This question verifies you have a deep knowledge of how to control it.
-
-*   **The Code:**
-    ```javascript
-    const user = {
-      name: "Ranjeet",
-      sayHi(greeting, punctuation) {
-        console.log(`${greeting}, my name is ${this.name}${punctuation}`);
-      }
-    };
-
-    const otherUser = {
-      name: "Sonia"
-    };
-
-    // --- .call() ---
-    // Invokes the function immediately, with `this` set to the first argument.
-    // Subsequent arguments are passed in individually.
-    console.log("Using .call():");
-    user.sayHi.call(otherUser, "Hello", "!"); // Hello, my name is Sonia!
-
-    // --- .apply() ---
-    // Invokes the function immediately, just like .call().
-    // The only difference is it takes arguments as an array.
-    console.log("Using .apply():");
-    user.sayHi.apply(otherUser, ["Hi there", "."]); // Hi there, my name is Sonia.
-
-    // --- .bind() ---
-    // Does NOT invoke the function immediately.
-    // It returns a NEW function that is permanently bound to the provided `this` context.
-    console.log("Using .bind():");
-    const soniaSaysHi = user.sayHi.bind(otherUser);
-    soniaSaysHi("Good morning", "..."); // Good morning, my name is Sonia...
-    ```
-
-*   **Key Concepts to Explain:**
-    *   **`this` Context:** Explain that `this` normally refers to the object the function was called on (e.g., `user`). But if you detach the method (`const fn = user.sayHi`), the context is lost.
-    *   **`call`/`apply`:** For immediate invocation with a borrowed `this`. Remember: **C**all takes **c**omma-separated arguments, **A**pply takes an **a**rray.
-    *   **`bind`:** For creating a new, reusable function where `this` is permanently set. This is the most common one used for event handlers in React class components (`this.handleClick = this.handleClick.bind(this)`).
-
----
-
-### Question 4: Iterating Over Objects: `for...in` vs `Object.keys`
-
-This question checks if you are aware of the prototype chain and how to safely iterate over object properties.
-
-*   **Why It's Asked:** A common source of bugs is accidentally iterating over inherited properties from an object's prototype. An interviewer wants to see that you know how to iterate over *only* the object's own properties.
-
-*   **The Code:**
-    ```javascript
-    // Create a parent object
-    const parent = {
-      parentProp: 'I am from the prototype'
-    };
-
-    // Create a child object that inherits from the parent
-    const child = Object.create(parent);
-    child.ownProp = 'I belong to the child';
-
-    console.log("--- Using for...in (DANGEROUS without a check) ---");
-    // `for...in` iterates over own properties AND properties from the prototype chain.
-    for (const key in child) {
-      console.log(`${key}: ${child[key]}`);
-      // Output:
-      // ownProp: I belong to the child
-      // parentProp: I am from the prototype  <-- Unwanted property!
-    }
-
-    console.log("\n--- Using for...in (SAFE with hasOwnProperty) ---");
-    // The correct way to use for...in is with an `hasOwnProperty` check.
-    for (const key in child) {
-      if (Object.prototype.hasOwnProperty.call(child, key)) {
-        console.log(`${key}: ${child[key]}`);
-        // Output:
-        // ownProp: I belong to the child
-      }
-    }
-
-    console.log("\n--- Using Object.keys (MODERN & SAFE) ---");
-    // `Object.keys()` returns an array of an object's OWN keys, so it's safe by default.
-    Object.keys(child).forEach(key => {
-      console.log(`${key}: ${child[key]}`);
-      // Output:
-      // ownProp: I belong to the child
-    });
-    ```
-
-*   **Key Concepts to Explain:**
-    *   **Prototype Chain:** Explain that `for...in` traverses the prototype chain.
-    *   **`hasOwnProperty`:** This is the crucial check to ensure a property belongs directly to the object and is not inherited.
-    *   **Modern Practice:** State that using `Object.keys()`, `Object.values()`, or `Object.entries()` is generally preferred because they are safer and return arrays, which gives you access to powerful array methods like `map`, `filter`, and `reduce`.
-
-### Additional Important Topics
-
-These are extensions to the core list, focusing on common gaps in JavaScript knowledge for mid-senior frontend roles.
-
-#### Event Bubbling and Capturing
-
-**Sample Question:** Explain event bubbling and capturing in JavaScript. How would you stop propagation or use capture mode?
-
-**Answer/Explanation:**  
-Event propagation in the DOM has two phases: **capturing** (top-down, from window to target element) and **bubbling** (bottom-up, from target to window). By default, event listeners use bubbling. Use `{ capture: true }` in `addEventListener` for capturing. To stop propagation, use `event.stopPropagation()` (stops further bubbling/capturing) or `event.preventDefault()` (prevents default behavior like form submission).
-
-**Code Example:**
+**Legal Shadowing Examples:**
 ```javascript
-// HTML: <div id="parent"><button id="child">Click Me</button></div>
-
-const parent = document.getElementById('parent');
-const child = document.getElementById('child');
-
-// Bubbling: Events bubble up from child to parent.
-parent.addEventListener('click', () => console.log('Parent clicked (bubbling)'));
-child.addEventListener('click', (e) => {
-  console.log('Child clicked');
-  e.stopPropagation(); // Stops the event from bubbling to parent.
-});
-
-// Capturing: Events are captured top-down.
-parent.addEventListener('click', () => console.log('Parent clicked (capturing)'), { capture: true });
-child.addEventListener('click', () => console.log('Child clicked (capturing)'), { capture: true });
-
-// Clicking the button logs (with capture first): Parent (capturing) -> Child (capturing) -> Child (bubbling) -> (Parent bubbling stopped)
-```
-
-#### Floating-Point Precision Issues
-
-**Sample Question:** Why is 0.1 + 0.2 not equal to 0.3 in JavaScript? How would you handle precise decimal calculations?
-
-**Answer/Explanation:**  
-JavaScript represents numbers as double-precision floats, which can't accurately represent all decimals (binary fractions). For precision, use `toFixed()`, `BigInt` for integers, or libraries like `decimal.js`. A simple workaround is to multiply/divide by powers of 10 for decimal places.
-
-**Code Example:**
-```javascript
-console.log(0.1 + 0.2); // 0.30000000000000004 (imprecise)
-
-// Workaround: Scale to integers for addition
-function addDecimals(a, b) {
-  const scale = 100; // For 2 decimal places
-  return (a * scale + b * scale) / scale;
+// Shadowing a global variable is legal
+let x = 10;
+function showX() {
+  let x = 20; // This x shadows the global x
+  console.log(x); // 20
 }
-console.log(addDecimals(0.1, 0.2)); // 0.3
-
-// Using toFixed for display
-console.log((0.1 + 0.2).toFixed(1)); // "0.3"
-
-// Using BigInt for large/precise integers (ES2020+)
-const bigA = 9999999999999999n; // Note the 'n' suffix
-const bigB = 1n;
-console.log(bigA + bigB); // 10000000000000000n (no precision loss)
-```
-
-#### Polyfill for Array.prototype.includes
-
-**Sample Question:** Implement a polyfill for `Array.prototype.includes`.
-
-**Answer/Explanation:**  
-`includes` checks if an array contains a value and returns a boolean. A polyfill iterates through the array and uses strict equality (`===`).
-
-**Code Example:**
-```javascript
-if (!Array.prototype.includes) {
-  Array.prototype.includes = function(searchElement, fromIndex = 0) {
-    // Handle negative fromIndex
-    let start = fromIndex >= 0 ? fromIndex : this.length + fromIndex;
-    if (start < 0) start = 0;
-
-    for (let i = start; i < this.length; i++) {
-      if (this[i] === searchElement) {
-        return true;
-      }
-    }
-    return false;
-  };
-}
-
-// Example
-const arr = [1, 2, 3];
-console.log(arr.includes(2)); // true
-console.log(arr.includes(4)); // false
-console.log(arr.includes(3, -1)); // true (starts from last element)
-```
-
-#### Generator Functions in Depth
-
-**Sample Question:** What are generator functions? Provide an example of using one for a custom iterator.
-
-**Answer/Explanation:**  
-Generators are functions that can be paused and resumed using `yield`. They return an iterator object. Useful for creating custom iterables, handling async flows (with async generators), or lazy evaluation.
-
-**Code Example:**
-```javascript
-function* rangeGenerator(start, end) {
-  for (let i = start; i <= end; i++) {
-    yield i; // Pause and yield the value
-  }
-}
-
-const iterator = rangeGenerator(1, 5);
-console.log(iterator.next().value); // 1
-console.log(iterator.next().value); // 2
-console.log(iterator.next().value); // 3
-
-// Using in a for...of loop (iterates until done)
-for (const num of rangeGenerator(1, 3)) {
-  console.log(num); // 1, 2, 3
-}
-```
-
-#### Async Iteration with for await...of
-
-**Sample Question:** Explain async iteration and provide an example using `for await...of`.
-
-**Answer/Explanation:**  
-Async iterators allow iterating over asynchronous data sources. `for await...of` waits for each promise to resolve before continuing.
-
-**Code Example:**
-```javascript
-// Async generator
-async function* asyncGenerator() {
-  yield Promise.resolve(1);
-  yield Promise.resolve(2);
-  yield Promise.resolve(3);
-}
-
-async function run() {
-  for await (const value of asyncGenerator()) {
-    console.log(value); // 1, then 2, then 3 (waits for each)
-  }
-}
-
-run();
-```
-
-#### Strict Mode
-
-**Sample Question:** What is 'use strict' in JavaScript? What does it change?
-
-**Answer/Explanation:**  
-Strict mode is a way to opt into a restricted variant of JavaScript, enabling stricter parsing and error handling. It eliminates silent errors (turning them into thrown errors), prevents accidental globals, disallows duplicate parameter names in functions, and more. Add `'use strict';` at the top of a script or function.
-
-**Code Example:**
-```javascript
-// Without strict mode
-x = 10; // Creates a global variable silently
+showX();
 console.log(x); // 10
 
-function duplicateParams(a, a) { // Allowed, but second 'a' overwrites first
-  console.log(a);
+// Shadowing with `let` in a nested block is also legal
+let y = 5;
+if (true) {
+  let y = 10; // This y shadows the outer y
+  console.log(y); // 10
 }
-duplicateParams(1, 2); // 2
-
-// With strict mode
-'use strict';
-// x = 10; // Throws ReferenceError: x is not defined
-
-function duplicateParamsStrict(a, a) { // Throws SyntaxError: Duplicate parameter name
-  console.log(a);
-}
+console.log(y); // 5
 ```
 
-#### Type Coercion and Truthy/Falsy Values
+**Illegal Shadowing Example:**
+The "Temporal Dead Zone" (TDZ) of `let` and `const` is the reason this is illegal. A block-scoped variable cannot be referenced before it is declared. The engine prevents a `var` from "leaking" into a block and interfering with a `let` declaration of the same name.
 
-**Sample Question:** Explain type coercion in JavaScript. What are truthy and falsy values?
-
-**Answer/Explanation:**  
-Type coercion is when JS automatically converts one type to another (e.g., in `==` comparisons or if statements). Truthy values evaluate to true in a boolean context (e.g., non-empty strings, non-zero numbers, objects). Falsy values evaluate to false (e.g., 0, '', null, undefined, NaN, false). Use `===` to avoid coercion pitfalls.
-
-**Code Example:**
 ```javascript
-console.log('5' == 5); // true (coercion: string to number)
-console.log('5' === 5); // false (no coercion)
-
-if ('hello') { console.log('Truthy!'); } // Truthy!
-if (0) { console.log('Falsy'); } // Doesn't log (falsy)
-
-console.log(Boolean([])); // true (empty array is truthy)
-console.log(Boolean(NaN)); // false (falsy)
-```
-
-#### IIFE (Immediately Invoked Function Expressions) in Depth
-
-**Sample Question:** What is an IIFE? Provide an example and explain its use cases.
-
-**Answer/Explanation:**  
-An IIFE is a function that is defined and executed immediately. It's useful for creating a private scope to avoid polluting the global namespace, encapsulating variables, or running init code without leaving artifacts.
-
-**Code Example:**
-```javascript
-// Basic IIFE
-(function() {
-  const privateVar = 'Hidden';
-  console.log(privateVar); // Hidden
-})(); // Logs immediately
-// console.log(privateVar); // ReferenceError (scoped)
-
-// IIFE with parameters
-(const name = 'Ranjeet';
-(function(greeting) {
-  console.log(`${greeting}, ${name}`);
-})('Hello'); // Hello, Ranjeet
-```
-
-#### Error Handling Patterns
-
-**Sample Question:** How do you handle errors in JavaScript? Explain try/catch and custom errors.
-
-**Answer/Explanation:**  
-Use `try/catch` for synchronous errors and `.catch()` for promises. Custom errors extend the `Error` class for specific error types, improving debugging.
-
-**Code Example:**
-```javascript
-try {
-  throw new Error('Something went wrong');
-} catch (error) {
-  console.error(error.message); // Something went wrong
-}
-
-// Custom Error
-class ValidationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'ValidationError';
+function test() {
+  let a = "hello";
+  if (true) {
+    var a = "goodbye"; // Throws SyntaxError: Identifier 'a' has already been declared
   }
 }
-
-try {
-  throw new ValidationError('Invalid input');
-} catch (error) {
-  console.error(`${error.name}: ${error.message}`); // ValidationError: Invalid input
-}
 ```
+*   **Why is it illegal?** The `var a` declaration is function-scoped, so it's conceptually "hoisted" to the top of the `test` function. However, the `let a` creates a block-scoped binding for `a`. The JavaScript engine detects this conflict during the initial parsing of the code and throws a `SyntaxError` because the `var` declaration would interfere with the block-scoped `let` declaration within the same function.
 
-#### CommonJS vs. ES Modules
+---
 
-**Sample Question:** What are the differences between CommonJS and ES Modules?
+#### 67. Currying
 
-**Answer/Explanation:**  
-CommonJS (Node.js default) uses `require/module.exports` and is synchronous. ES Modules use `import/export`, are asynchronous, support tree-shaking, and are the modern standard for browsers/Node.
+**Currying** is a functional programming technique of transforming a function that takes multiple arguments into a sequence of nested functions, each taking a single argument. Instead of taking all arguments at once, the curried function takes the first argument and returns a new function that takes the second argument, and so on, until all arguments have been supplied.
 
-**Code Example:**
+**Simple Example:**
 ```javascript
-// CommonJS (e.g., utils.js)
-const add = (a, b) => a + b;
-module.exports = { add };
+// A non-curried function
+const add = (a, b, c) => a + b + c;
 
-// Usage: const { add } = require('./utils');
+// The same function, manually curried
+const curriedAdd = (a) => {
+  return (b) => {
+    return (c) => {
+      return a + b + c;
+    };
+  };
+};
 
-// ES Modules (e.g., utils.mjs)
-export const addES = (a, b) => a + b;
+// Usage
+console.log(add(1, 2, 3)); // 6
 
-// Usage: import { addES } from './utils.mjs';
+const add1 = curriedAdd(1);
+const add1and2 = add1(2);
+const result = add1and2(3);
+console.log(result); // 6
+
+// Or call it all at once
+console.log(curriedAdd(1)(2)(3)); // 6
 ```
 
-#### JSON Methods and Gotchas
+**Why is it useful?**
+*   **Creating Specialized Functions:** Currying is excellent for creating specialized, reusable functions. In the example above, `add1` is a new function that will always add `1` to the next two numbers it receives.
+*   **Function Composition:** It is a key concept that makes it easier to compose functions together.
 
-**Sample Question:** What are JSON.parse and JSON.stringify? What are their limitations?
-
-**Answer/Explanation:**  
-`JSON.parse` converts a JSON string to a JS object; `JSON.stringify` does the reverse. Gotchas: Dates become strings, functions/undefined are omitted, circular references throw errors.
-
-**Code Example:**
+**Generic `curry` function implementation:**
 ```javascript
-const obj = { name: 'Ranjeet', date: new Date() };
-const json = JSON.stringify(obj); // {"name":"Ranjeet","date":"2023-10-01T12:00:00.000Z"} (date as string)
-const parsed = JSON.parse(json); // { name: 'Ranjeet', date: '2023-10-01T12:00:00.000Z' } (date is string, not Date object)
-
-// Circular reference error
-const circular = {};
-circular.self = circular;
-// JSON.stringify(circular); // Throws TypeError
-```
-
-#### Regex Basics
-
-**Sample Question:** How do you use regular expressions in JavaScript for pattern matching?
-
-**Answer/Explanation:**  
-Regex (RegExp) matches patterns in strings. Use literals `/pattern/` or `new RegExp`. Common methods: `test()`, `match()`, `replace()`.
-
-**Code Example:**
-```javascript
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-console.log(emailRegex.test('test@example.com')); // true
-console.log(emailRegex.test('invalid')); // false
-
-const str = 'Hello 123 World';
-console.log(str.match(/\d+/g)); // ['123'] (global match digits)
-console.log(str.replace(/\d+/, 'Numbers')); // Hello Numbers World
-```
-
-#### Optional Chaining and Nullish Coalescing
-
-**Sample Question:** Explain optional chaining (?. ) and nullish coalescing (??) operators.
-
-**Answer/Explanation:**  
-Optional chaining short-circuits if a value is null/undefined, preventing errors. Nullish coalescing returns the right operand if the left is null/undefined (not falsy like ||).
-
-**Code Example:**
-```javascript
-const user = { profile: { name: 'Ranjeet' } };
-console.log(user.profile?.age); // undefined (no error)
-// console.log(user.profile.age); // Throws TypeError
-
-console.log(null ?? 'Default'); // 'Default' (nullish)
-console.log('' ?? 'Default'); // '' (not nullish, even though falsy)
-console.log('' || 'Default'); // 'Default' (falsy check)
-```
-
-#### Big O Notation for JS Operations
-
-**Sample Question:** What is the Big O time complexity of common JS operations like array push or object key lookup?
-
-**Answer/Explanation:**  
-Big O describes efficiency. Array: push/pop O(1), shift/unshift O(n). Object: key access/insert O(1). Understanding this helps optimize code (e.g., use objects for fast lookups instead of arrays).
-
-**Code Example:** (No code needed; explain with table)
-| Operation | Big O |
-|-----------|-------|
-| Array push/pop | O(1) |
-| Array shift/unshift | O(n) |
-| Array splice | O(n) |
-| Object key lookup/insert | O(1) |
-| Set/Map add/has | O(1) |
-| forEach/map/filter | O(n) |
-```
-
-#### Higher-Order Functions and Composition
-
-**Sample Question:** What is function composition? Implement a compose function for higher-order functions.
-
-**Answer/Explanation:**  
-Higher-order functions take/return functions. Composition combines functions where the output of one is the input of the next (e.g., f(g(x))). Useful for creating pipelines without intermediates.
-
-**Code Example:**
-```javascript
-function compose(...fns) {
-  return function(x) {
-    return fns.reduceRight((acc, fn) => fn(acc), x);
+function curry(fn) {
+  return function curried(...args) {
+    // If the number of arguments provided is enough for the original function
+    if (args.length >= fn.length) {
+      return fn.apply(this, args);
+    } else {
+      // Otherwise, return a new function that waits for the rest of the arguments
+      return function(...args2) {
+        return curried.apply(this, args.concat(args2));
+      };
+    }
   };
 }
 
-const addOne = x => x + 1;
-const double = x => x * 2;
-const composed = compose(double, addOne);
-console.log(composed(5)); // 12 (double(addOne(5)) = 12)
+// Example with our generic curry function
+const sum = (a, b, c) => a + b + c;
+const curriedSum = curry(sum);
+
+console.log(curriedSum(1, 2, 3)); // 6
+console.log(curriedSum(1)(2, 3)); // 6
+console.log(curriedSum(1)(2)(3)); // 6
 ```
 
-#### Immutability in JavaScript
+---
 
-**Sample Question:** Why is immutability important? How do you create immutable objects/arrays?
+#### 68. Specific Browser Page Lifecycle Events
 
-**Answer/Explanation:**  
-Immutability prevents unintended side effects (e.g., mutating shared state). Use spread (`...`), `Object.assign`, or libraries like Immutable.js. For deep immutability, combine with deep cloning.
+While many events exist, these four are critical for understanding the lifecycle of a web page.
 
-**Code Example:**
+| Event | When It Fires | Common Use Case |
+| :--- | :--- | :--- |
+| **`DOMContentLoaded`** | After the initial HTML document has been completely loaded and parsed, **without** waiting for stylesheets, images, and subframes to finish loading. | The ideal time to run JavaScript that needs to manipulate the DOM, as you can be sure all elements are available. It's the most common event for starting up frameworks and running app logic. `$(document).ready()` in jQuery is similar. |
+| **`load`** | After the whole page, including all dependent resources like stylesheets and images, has **fully loaded**. | Running code that depends on the properties of resources, like getting the dimensions of an image. Also used as a fallback if you need to be absolutely sure everything is available. |
+| **`beforeunload`** | Immediately before the user is about to navigate away from the page (e.g., by closing the tab, clicking a link, or hitting refresh). | To show an "Are you sure you want to leave?" confirmation dialog if the user has unsaved changes. To trigger this dialog, you must return a string from the event listener. |
+| **`unload`** | When the document or a child resource is being unloaded. It fires after `beforeunload`. | Historically used for sending analytics or logging data (e.g., via `navigator.sendBeacon()`). However, this event is unreliable, especially on mobile browsers, and is not guaranteed to fire. `beforeunload` or the Page Visibility API are often better choices. |
+
+**Example:**
 ```javascript
-const obj = { a: 1 };
-const immutableCopy = { ...obj }; // Shallow copy
-immutableCopy.a = 2;
-console.log(obj.a); // 1 (original unchanged)
-
-const arr = [1, 2];
-const newArr = [...arr, 3]; // [1, 2, 3] (immutable add)
-
-// Using Object.assign for objects
-const merged = Object.assign({}, obj, { b: 3 }); // { a: 1, b: 3 }
-```
-
-#### Advanced Promises: Chaining and Error Propagation
-
-**Sample Question:** Explain Promise chaining and how errors propagate.
-
-**Answer/Explanation:**  
-Chaining allows sequencing async operations via `.then()`. Errors bubble through the chain to the nearest `.catch()`. Always end with `.catch()` to handle rejections.
-
-**Code Example:**
-```javascript
-new Promise((resolve) => resolve(1))
-  .then(val => val + 1) // 2
-  .then(val => { throw new Error('Fail'); })
-  .then(val => console.log('Success:', val)) // Skipped
-  .catch(err => console.error('Error:', err.message)) // Error: Fail
-  .finally(() => console.log('Done')); // Done (always runs)
-```
-
-#### Advanced Destructuring
-
-**Sample Question:** Explain destructuring with defaults and renaming.
-
-**Answer/Explanation:**  
-Destructuring unpacks values with optional defaults (for undefined) and renaming for clarity. Useful for function params or object extraction.
-
-**Code Example:**
-```javascript
-const obj = { x: 10 };
-const { x: renamedX, y = 20 } = obj; // renamedX=10, y=20 (default)
-console.log(renamedX, y); // 10 20
-
-function greet({ name = 'Guest', age: userAge = 0 }) {
-  console.log(`Hello, ${name} (age ${userAge})`);
-}
-greet({ name: 'Ranjeet' }); // Hello, Ranjeet (age 0)
-```
-
-#### Tagged Template Literals
-
-**Sample Question:** What are tagged template literals? Provide an example.
-
-**Answer/Explanation:**  
-Tags are functions that process template literals, receiving strings and interpolated values. Useful for custom string formatting (e.g., HTML escaping).
-
-**Code Example:**
-```javascript
-function upper(strings, ...values) {
-  return strings.reduce((acc, str, i) => acc + (values[i] ? values[i].toUpperCase() : '') + str);
-}
-
-const name = 'ranjeet';
-const msg = upper`Hello, ${name}!`; // Hello, RANJEET!
-console.log(msg);
-```
-
-#### Intl API for Internationalization
-
-**Sample Question:** How do you format dates/numbers for different locales using Intl?
-
-**Answer/Explanation:**  
-Intl provides locale-sensitive formatting. Useful for global apps (e.g., currency, dates).
-
-**Code Example:**
-```javascript
-// Date formatting
-const date = new Date();
-console.log(new Intl.DateTimeFormat('en-US').format(date)); // MM/DD/YYYY
-console.log(new Intl.DateTimeFormat('fr-FR').format(date)); // DD/MM/YYYY
-
-// Number formatting (currency)
-const num = 123456.78;
-console.log(new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num)); // $123,456.78
-console.log(new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(num)); // 123.456,78 €
-```
-
-#### Fetch API with AbortController
-
-**Sample Question:** How do you cancel a fetch request?
-
-**Answer/Explanation:**  
-Use AbortController to signal cancellation (e.g., for timeouts or unmounts in React). Pass its signal to fetch.
-
-**Code Example:**
-```javascript
-const controller = new AbortController();
-const signal = controller.signal;
-
-fetch('https://api.example.com/data', { signal })
-  .then(response => response.json())
-  .then(data => console.log(data))
-  .catch(err => {
-    if (err.name === 'AbortError') {
-      console.log('Fetch aborted');
-    } else {
-      console.error(err);
-    }
-  });
-
-// Cancel after 2 seconds
-setTimeout(() => controller.abort(), 2000);
-```
-
-#### MutationObserver
-
-**Sample Question:** What is MutationObserver? Provide a basic example.
-
-**Answer/Explanation:**  
-It observes changes to the DOM (e.g., added/removed nodes, attribute changes) and calls a callback. More efficient than polling for changes.
-
-**Code Example:**
-```javascript
-const target = document.getElementById('target');
-const observer = new MutationObserver(mutations => {
-  mutations.forEach(mutation => console.log(mutation.type)); // e.g., 'attributes'
+// Fires as soon as the DOM tree is ready
+window.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM fully loaded and parsed');
+  // Safe to manipulate the DOM here
 });
 
-observer.observe(target, { attributes: true, childList: true });
+// Fires after all images, CSS, etc., have loaded
+window.addEventListener('load', () => {
+  console.log('Page fully loaded');
+  // Safe to check image dimensions here
+});
 
-target.textContent = 'Changed'; // Triggers 'childList'
-observer.disconnect(); // Stop observing
+// Fires when you try to leave the page
+window.addEventListener('beforeunload', (event) => {
+  // To trigger the confirmation prompt, you must call preventDefault
+  event.preventDefault();
+  // Most browsers no longer display a custom message for security reasons.
+  // They show a generic message instead.
+  event.returnValue = '';
+});
 ```
 
-#### Shadow DOM Basics
+---
 
-**Sample Question:** What is Shadow DOM? Why is it useful?
+#### 69. How a JavaScript Engine Works (High-Level)
 
-**Answer/Explanation:**  
-Shadow DOM encapsulates a subtree of DOM elements (e.g., in web components) with scoped styles/scripts, preventing external interference. Useful for reusable components without style leaks.
+The JavaScript engine is a program that executes JavaScript code. Every major browser has one (e.g., **V8** in Chrome and Node.js, **SpiderMonkey** in Firefox). While we write JS, the computer's processor only understands machine code. The engine's job is to translate our JS into machine code.
 
-**Code Example:**
-```javascript
-// Create a custom element with Shadow DOM
-const elem = document.createElement('div');
-const shadow = elem.attachShadow({ mode: 'open' });
-shadow.innerHTML = '<p>Encapsulated content</p><style>p { color: red; }</style>';
-document.body.appendChild(elem); // <p> is red, but external styles don't affect it
-```
+Here is a simplified overview of the process, focusing on a modern engine like V8:
 
-#### Common JavaScript Pitfalls and Gotchas
+1.  **Parsing:**
+    *   The engine takes the raw JavaScript code as a string.
+    *   The **Parser** reads the code token by token and checks it for correct syntax.
+    *   If the syntax is valid, the parser produces an **Abstract Syntax Tree (AST)**. An AST is a tree-like structure that represents the grammatical structure of the code. Each node in the tree denotes a construct occurring in the code (e.g., a variable declaration, a function call).
 
-**Sample Question:** What are some common JS pitfalls? Explain with examples.
+2.  **Interpretation & Compilation:**
+    *   The AST is passed to an **Interpreter**. The interpreter reads the AST and quickly generates unoptimized bytecode, which can be executed. This allows the code to start running almost immediately.
+    *   While the interpreter is running, the engine's **Profiler** (also called a monitor) is watching the code. It identifies "hot" code—parts of the code that are run frequently, like a function inside a loop.
 
-**Answer/Explanation:**  
-Pitfalls include NaN comparisons, parseInt base issues, floating-point errors (already covered), and loose equality gotchas. Always test edge cases.
+3.  **Just-In-Time (JIT) Compilation:**
+    *   When a piece of code is marked as "hot," it is sent to the **Optimizing Compiler**.
+    *   The compiler takes the bytecode and information from the profiler (e.g., what data types have been used in a function) and compiles it into highly optimized machine code. This machine code can be executed directly by the computer's CPU, making it much faster than interpreted bytecode.
+    *   The engine may also perform **de-optimization**. If the assumptions made by the compiler turn out to be wrong (e.g., a function that was always called with numbers is suddenly called with a string), the engine will discard the optimized code and fall back to the interpreter.
 
-**Code Example:**
-```javascript
-console.log(NaN === NaN); // false (use Number.isNaN)
-console.log(Number.isNaN(NaN)); // true
+**In summary, the pipeline is:**
+**JS Code -> Parser -> AST -> Interpreter -> (Profiler finds hot spots) -> Optimizing Compiler -> Optimized Machine Code**
 
-console.log(parseInt('10', 10)); // 10
-console.log(parseInt('10', 8)); // 8 (octal base)
-console.log(parseInt('FF', 16)); // 255 (hex)
-
-console.log([] == false); // true (coercion: [] to 0, false to 0)
-console.log([] === false); // false
-```
-
-</rewritten_file>
+This combination of an interpreter (for fast startup) and a compiler (for optimizing frequently run code) is why this process is called **Just-In-Time (JIT) compilation**. It gives JavaScript performance that can rival more traditional compiled languages in many scenarios.
