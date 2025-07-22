@@ -511,7 +511,8 @@ function traverseObject(obj, prefix = '') {
         if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
             traverseObject(value, currentPath);
         } else {
-            console.log(`${currentPath}: ${value}`);
+            // Otherwise, log the primitive value
+            console.log(value);
         }
     }
 }
@@ -2718,3 +2719,56 @@ Here is a simplified overview of the process, focusing on a modern engine like V
 **JS Code -> Parser -> AST -> Interpreter -> (Profiler finds hot spots) -> Optimizing Compiler -> Optimized Machine Code**
 
 This combination of an interpreter (for fast startup) and a compiler (for optimizing frequently run code) is why this process is called **Just-In-Time (JIT) compilation**. It gives JavaScript performance that can rival more traditional compiled languages in many scenarios.
+
+---
+
+#### 70. Web Vitals
+
+Web Vitals are a set of metrics introduced by Google to measure the real-world user experience of web pages, focusing on performance and usability. They are critical for modern web development and are often discussed in interviews for front-end and full-stack roles.
+
+*   **What are Core Web Vitals? Name and briefly describe each.**
+    *   **Largest Contentful Paint (LCP):** Measures loading performance. It marks the point when the main content of the page is visible to the user. Good LCP is under 2.5 seconds.
+    *   **First Input Delay (FID):** Measures interactivity. It tracks the time from when a user first interacts with a page to the time when the browser is able to respond. Good FID is under 100ms.
+    *   **Cumulative Layout Shift (CLS):** Measures visual stability. It quantifies how much the page layout shifts unexpectedly. Good CLS is less than 0.1.
+
+*   **Why do Web Vitals matter for web applications?**
+    *   They directly impact user experience, SEO rankings, and conversion rates. Poor Web Vitals can lead to higher bounce rates and lower engagement.
+
+*   **How can you measure Web Vitals in a project?**
+    *   Use tools like Google Lighthouse, Chrome DevTools, PageSpeed Insights, or the Web Vitals JavaScript library. You can also monitor them in production using analytics tools or custom scripts.
+
+*   **What are some ways to improve LCP, FID, and CLS?**
+    *   **LCP:** Optimize images, use efficient server-side rendering, reduce render-blocking resources.
+    *   **FID:** Minimize JavaScript execution time, break up long tasks, use web workers.
+    *   **CLS:** Always include size attributes for images and videos, avoid inserting content above existing content, use CSS to reserve space.
+
+*   **How do Web Vitals relate to JavaScript performance?**
+    *   Heavy JavaScript can delay interactivity (worsening FID) and cause layout shifts (worsening CLS). Optimizing JS bundles, deferring non-critical scripts, and using code-splitting can help.
+
+---
+
+#### 71. JavaScript Polyfills
+
+A polyfill is code (usually JavaScript) that implements a feature on web browsers that do not natively support it. Polyfills are essential for ensuring compatibility across different browsers and environments.
+
+*   **What is a polyfill? Why are polyfills important?**
+    *   A polyfill is a piece of code that provides modern functionality on older browsers that do not natively support it. They allow developers to use new features without breaking support for users on legacy browsers.
+
+*   **Give an example of a common JavaScript polyfill.**
+    *   `Array.prototype.includes` is not supported in IE11. A polyfill can be added so that this method works in all browsers.
+    ```javascript
+    if (!Array.prototype.includes) {
+      Array.prototype.includes = function(searchElement, fromIndex) {
+        return this.indexOf(searchElement, fromIndex) !== -1;
+      };
+    }
+    ```
+
+*   **How do you decide when to use a polyfill versus a transpiler (like Babel)?**
+    *   Use a polyfill for features that require new global objects or prototype methods (e.g., `Promise`, `fetch`, `Array.prototype.flat`). Use a transpiler for new syntax (e.g., arrow functions, classes) that can be rewritten to older syntax.
+
+*   **How can you include polyfills in a modern web project?**
+    *   Use core-js, polyfill.io, or include specific polyfill scripts in your HTML. Many build tools (like Babel) can automatically inject required polyfills based on your target browsers.
+
+*   **What are the risks of using polyfills?**
+    *   Polyfills can increase bundle size and may not perfectly match native implementations. They can also introduce performance overhead or edge-case bugs if not carefully tested.

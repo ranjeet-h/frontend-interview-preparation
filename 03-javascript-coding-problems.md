@@ -3162,3 +3162,26 @@ C
 ```
 
 **Explanation:** When multiple `.then()` handlers are attached to the same promise, they are queued up and executed in the order they were attached. Each one is a separate microtask.
+
+## Array Pair Sum
+
+**Find all pairs of elements whose sum equals n**
+
+```javascript
+function findPairsWithSum(arr, n) {
+  const seen = new Set();
+  const pairs = [];
+  for (const num of arr) {
+    const complement = n - num;
+    if (seen.has(complement)) {
+      pairs.push([complement, num]);
+    }
+    seen.add(num);
+  }
+  return pairs;
+}
+// Example usage:
+const arr = [1, 2, 3, 4, 5, 6];
+const n = 7;
+console.log(findPairsWithSum(arr, n)); // Output: [ [ 3, 4 ], [ 2, 5 ], [ 1, 6 ] ]
+```
