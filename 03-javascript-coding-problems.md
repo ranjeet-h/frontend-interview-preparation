@@ -3185,3 +3185,27 @@ const arr = [1, 2, 3, 4, 5, 6];
 const n = 7;
 console.log(findPairsWithSum(arr, n)); // Output: [ [ 3, 4 ], [ 2, 5 ], [ 1, 6 ] ]
 ```
+
+## Common Characters in Three Strings
+
+**Find common characters among three strings**
+
+```javascript
+function commonChars(str1, str2, str3) {
+  const set1 = new Set(str1);
+  const set2 = new Set(str2);
+  const set3 = new Set(str3);
+  const result = [];
+  for (const char of set1) {
+    if (set2.has(char) && set3.has(char)) {
+      result.push(char);
+    }
+  }
+  return result;
+}
+// Example usage:
+const a = "apple";
+const b = "ample";
+const c = "maple";
+console.log(commonChars(a, b, c)); // Output: [ 'a', 'p', 'l', 'e' ]
+```
