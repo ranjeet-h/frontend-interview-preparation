@@ -1834,3 +1834,48 @@ function InfiniteScrollComponent() {
   );
 }
 ```
+
+**51. Check for Balanced Brackets in a String: Given a string containing only brackets (parentheses `()`, square `[]`, and curly `{}`), determine if the brackets are balanced and properly nested.**
+
+```javascript
+function isBalanced(str) {
+  // Stack to keep track of opening brackets
+  const stack = [];
+  // Map of opening to corresponding closing brackets
+  const brackets = {
+    '(': ')',
+    '[': ']',
+    '{': '}'
+  };
+
+  // Loop through each character in the string
+  for (const char of str) {
+    // If it's an opening bracket, push to stack
+    if (brackets[char]) {
+      stack.push(char);
+    } else if (Object.values(brackets).includes(char)) {
+      // If it's a closing bracket, check for a match
+      if (stack.length === 0) {
+        // No opening bracket to match
+        return false;
+      }
+      const lastOpen = stack.pop();
+      if (brackets[lastOpen] !== char) {
+        // Mismatched closing bracket
+        return false;
+      }
+    }
+    // Ignore any non-bracket characters (optional, based on requirements)
+  }
+
+  // If stack is empty, all brackets were matched
+  return stack.length === 0;
+}
+
+// Example usage:
+let testS = "[{([])}]{}()"; // true
+console.log("isBalanced:", isBalanced(testS));
+
+let testS2 = "[{]}"; // false
+console.log("isBalanced:", isBalanced(testS2));
+```
