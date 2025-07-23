@@ -3209,3 +3209,1047 @@ const b = "ample";
 const c = "maple";
 console.log(commonChars(a, b, c)); // Output: [ 'a', 'p', 'l', 'e' ]
 ```
+Of course. This is an excellent list that thoroughly tests a developer's understanding of JavaScript's core mechanics. Here are the detailed implementations for each polyfill question, complete with comments to explain the process.
+
+---
+
+### **Array Method Polyfills**
+
+These are the most common polyfill questions, as array methods are used extensively in frontend development.
+
+#### **Write a polyfill for `Array.prototype.map()`**
+
+```javascript
+// Check if the 'map' method already exists on the Array prototype.
+if (!Array.prototype.map) {
+  // Define the 'map' method.
+  Array.prototype.map = function(callback, thisArg) {
+    // Check if 'this' is null or undefined, as per the spec.
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    // Ensure the callback provided is a function.
+    if (typeof callback !== 'function') {
+      throw new TypeError(callback + ' is not a function');
+    }
+
+    // Coerce 'this' to an object so we can work with it.
+    const obj = Object(this);
+    // Get the length of the array-like object. '>>> 0' ensures it's an unsigned 32-bit integer.
+    const len = obj.length >>> 0;
+    // Create a new array to store the results, with the same length.
+    const newArray = new Array(len);
+
+    // Loop through each item of the original array.
+    for (let i = 0; i < len; i++) {
+      // For sparse arrays, only process indices that actually have a value.
+      if (i in obj) {
+        // Call the callback function.
+        // Use .call() to set the 'this' context for the callback (thisArg).
+        // Pass the element, its index, and the original array.
+        newArray[i] = callback.call(thisArg, obj[i], i, obj);
+      }
+    }
+
+    // Return the new array with the mapped values.
+    return newArray;
+  };
+}
+```
+
+#### **Implement a polyfill for `Array.prototype.filter()`**
+
+```javascript
+// Check if the 'filter' method already exists.
+if (!Array.prototype.filter) {
+  // Define the 'filter' method.
+  Array.prototype.filter = function(callback, thisArg) {
+    // Perform initial checks for 'this' value and callback type.
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError(callback + ' is not a function');
+    }
+
+    // Coerce 'this' to an object and get its length.
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+    // Create an empty array to store the filtered items.
+    const newArray = [];
+
+    // Loop through each item of the original array.
+    for (let i = 0; i < len; i++) {
+      // Check for existence in sparse arrays.
+      if (i in obj) {
+        // Call the callback function.
+        // If the callback returns a truthy value...
+        if (callback.call(thisArg, obj[i], i, obj)) {
+          // ...push the original element into our new array.
+          newArray.push(obj[i]);
+        }
+      }
+    }
+
+    // Return the new array containing only the elements that passed the test.
+    return newArray;
+  };
+}
+```
+
+#### **Create a polyfill for `Array.prototype.reduce()`**
+
+```javascript
+// Check if the 'reduce' method already exists.
+if (!Array.prototype.reduce) {
+  // Define the 'reduce' method.
+  Array.prototype.reduce = function(callback, initialValue) {
+    // Perform initial checks.
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError(callback + ' is not a function');
+    }
+
+    // Coerce 'this' to an object and get its length.
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+    // Initialize a pointer for the loop.
+    let i = 0;
+    // This will hold our accumulated value.
+    let accumulator;
+
+    // Check if an initialValue was provided.
+    if (arguments.length >= 2) {
+      // If so, use it as the starting accumulator.
+      accumulator = initialValue;
+    } else {
+      // If no initialValue, we need to find the first actual element in the array.
+      while (i < len && !(i in obj)) {
+        i++;
+      }
+      // If the array is empty and no initialValue was given, throw an error.
+      if (i >= len) {
+        throw new TypeError('Reduce of empty array with no initial value');
+      }
+      // The first element becomes the initial accumulator.
+      accumulator = obj[i];
+      // Start the loop from the next element.
+      i++;
+    }
+
+    // Loop through the rest of the array.
+    for (; i < len; i++) {
+      // For sparse arrays, only process indices with values.
+      if (i in obj) {
+        // Call the callback with the accumulator, current value, index, and array.
+        // The return value of the callback becomes the new accumulator.
+        accumulator = callback(accumulator, obj[i], i, obj);
+      }
+    }
+
+    // Return the final accumulated value.
+    return accumulator;
+  };
+}
+```
+
+#### **Write a polyfill for `Array.prototype.forEach()`**
+```javascript
+// Check if the 'forEach' method already exists.
+if (!Array.prototype.forEach) {
+  // Define the 'forEach' method.
+  Array.prototype.forEach = function(callback, thisArg) {
+    // Perform initial checks.
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError(callback + ' is not a function');
+    }
+
+    // Coerce 'this' to an object and get its length.
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+
+    // Loop through each item of the array.
+    for (let i = 0; i < len; i++) {
+      // Check for existence in sparse arrays.
+      if (i in obj) {
+        // Call the callback for each item. Unlike map, forEach does not return a value.
+        callback.call(thisArg, obj[i], i, obj);
+      }
+    }
+  };
+}
+```
+
+#### **Implement a polyfill for `Array.prototype.flat()`**
+
+```javascript
+// Check if the 'flat' method already exists.
+if (!Array.prototype.flat) {
+  // Define the 'flat' method.
+  Array.prototype.flat = function(depth) {
+    // 'depth' specifies how deep a nested array structure should be flattened. Defaults to 1.
+    // If depth is undefined or not a number, default to 1.
+    const maxDepth = depth === undefined ? 1 : Math.floor(depth);
+
+    // If depth is 0 or negative, return a shallow copy of the original array.
+    if (maxDepth < 1) {
+      return Array.prototype.slice.call(this);
+    }
+    
+    // This will hold our flattened array.
+    const flattened = [];
+
+    // A recursive inner function to perform the flattening.
+    function flatten(arr, currentDepth) {
+      // Loop through each element of the array passed to the function.
+      for (let i = 0; i < arr.length; i++) {
+        const el = arr[i];
+        // Check if the element is an array and we haven't reached the max depth.
+        if (Array.isArray(el) && currentDepth < maxDepth) {
+          // If so, recurse deeper into this subarray.
+          flatten(el, currentDepth + 1);
+        } else {
+          // Otherwise, if the element exists, push it to our result array.
+          if (i in arr) {
+            flattened.push(el);
+          }
+        }
+      }
+    }
+
+    // Start the recursive process on the main array.
+    flatten(this, 0);
+
+    // Return the final flattened array.
+    return flattened;
+  };
+}
+```
+
+---
+*More answers will follow. Continuing with the rest of the array methods.*
+
+---
+#### **Write a polyfill for `Array.prototype.includes()`**
+```javascript
+// Check if the 'includes' method already exists.
+if (!Array.prototype.includes) {
+  // Define the 'includes' method.
+  Array.prototype.includes = function(searchElement, fromIndex) {
+    // Perform initial check.
+    if (this == null) {
+      throw new TypeError('"this" is null or not defined');
+    }
+
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+
+    // If the array is empty, it can't include anything.
+    if (len === 0) {
+      return false;
+    }
+
+    // Calculate the starting index 'n'.
+    const n = fromIndex | 0;
+    // Determine the starting point 'k'.
+    let k = Math.max(n >= 0 ? n : len - Math.abs(n), 0);
+
+    // Loop from the starting point 'k' to the end of the array.
+    while (k < len) {
+      // Compare the current element with the searchElement.
+      // It uses the SameValueZero algorithm, which correctly handles NaN === NaN.
+      if (obj[k] === searchElement || (searchElement !== searchElement && obj[k] !== obj[k])) {
+        return true;
+      }
+      k++;
+    }
+
+    // If the loop completes without finding a match, return false.
+    return false;
+  };
+}
+```
+
+#### **Create a polyfill for `Array.prototype.find()`**
+```javascript
+// Check if the 'find' method already exists.
+if (!Array.prototype.find) {
+  // Define the 'find' method.
+  Array.prototype.find = function(predicate, thisArg) {
+    // Perform initial checks.
+    if (this == null) {
+      throw new TypeError('"this" is null or not defined');
+    }
+    if (typeof predicate !== 'function') {
+      throw new TypeError('predicate must be a function');
+    }
+
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+
+    // Loop through each item of the array.
+    for (let i = 0; i < len; i++) {
+      // Check for existence in sparse arrays.
+      if (i in obj) {
+        // Call the predicate function with the element, index, and array.
+        if (predicate.call(thisArg, obj[i], i, obj)) {
+          // If the predicate returns a truthy value, return the element immediately.
+          return obj[i];
+        }
+      }
+    }
+
+    // If the loop completes and no element satisfies the predicate, return undefined.
+    return undefined;
+  };
+}
+```
+
+#### **Implement a polyfill for `Array.prototype.findIndex()`**
+```javascript
+// Check if the 'findIndex' method already exists.
+if (!Array.prototype.findIndex) {
+  // Define the 'findIndex' method.
+  Array.prototype.findIndex = function(predicate, thisArg) {
+    // Perform initial checks.
+    if (this == null) {
+      throw new TypeError('"this" is null or not defined');
+    }
+    if (typeof predicate !== 'function') {
+      throw new TypeError('predicate must be a function');
+    }
+
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+
+    // Loop through each item of the array.
+    for (let i = 0; i < len; i++) {
+      // Check for existence in sparse arrays.
+      if (i in obj) {
+        // Call the predicate function.
+        if (predicate.call(thisArg, obj[i], i, obj)) {
+          // If the predicate returns a truthy value, return the index immediately.
+          return i;
+        }
+      }
+    }
+
+    // If the loop completes and no element satisfies the predicate, return -1.
+    return -1;
+  };
+}
+```
+
+#### **Write a polyfill for `Array.prototype.some()`**
+```javascript
+// Check if the 'some' method already exists.
+if (!Array.prototype.some) {
+  // Define the 'some' method.
+  Array.prototype.some = function(callback, thisArg) {
+    // Perform initial checks.
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError(callback + ' is not a function');
+    }
+
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+
+    // Loop through each item of the array.
+    for (let i = 0; i < len; i++) {
+      // Check for existence in sparse arrays.
+      if (i in obj) {
+        // If the callback returns a truthy value for any element...
+        if (callback.call(thisArg, obj[i], i, obj)) {
+          // ...return true immediately.
+          return true;
+        }
+      }
+    }
+
+    // If the loop completes without the callback ever returning true, return false.
+    return false;
+  };
+}
+```
+
+#### **Create a polyfill for `Array.prototype.every()`**
+```javascript
+// Check if the 'every' method already exists.
+if (!Array.prototype.every) {
+  // Define the 'every' method.
+  Array.prototype.every = function(callback, thisArg) {
+    // Perform initial checks.
+    if (this == null) {
+      throw new TypeError('this is null or not defined');
+    }
+    if (typeof callback !== 'function') {
+      throw new TypeError(callback + ' is not a function');
+    }
+
+    const obj = Object(this);
+    const len = obj.length >>> 0;
+
+    // Loop through each item of the array.
+    for (let i = 0; i < len; i++) {
+      // Check for existence in sparse arrays.
+      if (i in obj) {
+        // If the callback returns a falsy value for any element...
+        if (!callback.call(thisArg, obj[i], i, obj)) {
+          // ...return false immediately.
+          return false;
+        }
+      }
+    }
+
+    // If the loop completes without the callback ever returning false, it means all elements passed. Return true.
+    return true;
+  };
+}
+```
+
+---
+### **Function Method Polyfills**
+
+These questions test your understanding of function invocation, context (`this`), and arguments.
+
+#### **Write a polyfill for `Function.prototype.bind()`**
+```javascript
+// Check if the 'bind' method already exists.
+if (!Function.prototype.bind) {
+  // Define the 'bind' method.
+  Function.prototype.bind = function(thisArg) {
+    // The function being bound is 'this'.
+    const originalFunc = this;
+    
+    // Check that what we are trying to bind is actually a function.
+    if (typeof originalFunc !== 'function') {
+      throw new TypeError('Function.prototype.bind - what is trying to be bound is not callable');
+    }
+
+    // Capture any arguments that were passed to bind() after the 'thisArg'.
+    // These are known as "partially applied" or "bound" arguments.
+    const boundArgs = Array.prototype.slice.call(arguments, 1);
+
+    // Return a new function. This is the core of bind().
+    const boundFunction = function() {
+      // Capture the arguments that are passed when the new (bound) function is called.
+      const newArgs = Array.prototype.slice.call(arguments);
+      
+      // Concatenate the original bind-time arguments with the new call-time arguments.
+      const allArgs = boundArgs.concat(newArgs);
+
+      // Call the original function using .apply().
+      // The context ('this') will be the 'thisArg' we captured earlier.
+      // Pass the complete list of arguments.
+      // Note: A full polyfill also needs to handle the case where the bound function is used as a constructor with 'new', but this is the core logic.
+      return originalFunc.apply(thisArg, allArgs);
+    };
+    
+    // Return the new function that, when called, will execute the original function with the correct context and arguments.
+    return boundFunction;
+  };
+}
+```
+
+#### **Implement a polyfill for `Function.prototype.call()`**
+
+*Self-Correction:* A true polyfill for `.call()` is not possible in the same way as other methods. `.call()` and `.apply()` are fundamental, low-level operations of the JavaScript engine. You cannot redefine their behavior with JavaScript itself because you would need to use `.call()` or `.apply()` to implement them, creating a circular dependency.
+
+However, an interview question on this topic is usually designed to test your understanding of *what it does*. You can demonstrate this by creating a *similar* function.
+
+```javascript
+// This is a demonstration of how .call() works, not a true polyfill.
+// We add a new method, e.g., 'customCall', to demonstrate the principle.
+if (!Function.prototype.customCall) {
+  Function.prototype.customCall = function(thisArg) {
+    // The function to be called is 'this'.
+    const originalFunc = this;
+
+    // Get the arguments passed to customCall, excluding the first one (thisArg).
+    const args = [];
+    for (let i = 1; i < arguments.length; i++) {
+      args.push(arguments[i]);
+    }
+
+    // A common trick to set the 'this' context is to temporarily attach
+    // the function to the 'thisArg' object.
+    const tempProp = Symbol(); // Use a unique Symbol to avoid property name collisions.
+    thisArg[tempProp] = originalFunc;
+    
+    // Call the function as a method of 'thisArg', which sets the 'this' context correctly.
+    // Spread the arguments into the function call.
+    const result = thisArg[tempProp](...args);
+    
+    // Clean up by deleting the temporary property.
+    delete thisArg[tempProp];
+    
+    // Return the result of the function call.
+    return result;
+  };
+}
+```
+
+#### **Create a polyfill for `Function.prototype.apply()`**
+Similar to `.call()`, a true polyfill is not feasible. The interview question tests your understanding of the difference between `.call()` and `.apply()`, which is how they handle arguments.
+
+```javascript
+// This is a demonstration of how .apply() works, not a true polyfill.
+if (!Function.prototype.customApply) {
+  Function.prototype.customApply = function(thisArg, argsArray) {
+    // The function to be called is 'this'.
+    const originalFunc = this;
+
+    // The core difference: .apply() accepts an array-like object for arguments.
+    
+    // Use the same temporary property trick to set the context.
+    const tempProp = Symbol();
+    thisArg[tempProp] = originalFunc;
+    
+    // Call the function as a method of 'thisArg'.
+    // If an array of arguments was provided, spread it. Otherwise, call with no arguments.
+    const result = argsArray ? thisArg[tempProp](...argsArray) : thisArg[tempProp]();
+    
+    // Clean up the temporary property.
+    delete thisArg[tempProp];
+    
+    // Return the result.
+    return result;
+  };
+}
+```
+
+---
+### **Promise and Asynchronous Polyfills**
+
+*Self-Correction:* These are highly complex. A full, spec-compliant polyfill for `Promise` is hundreds of lines long. The goal in an interview is to demonstrate you understand the core concepts: **states (pending, fulfilled, rejected), the `then` method for queuing callbacks, and the `resolve`/`reject` functions for state transitions.**
+
+#### **How would you implement a polyfill for `Promise`?**
+Here is a simplified `Promise` polyfill that covers the core logic.
+
+```javascript
+// Check if the Promise object exists.
+if (typeof Promise === 'undefined') {
+  // Define the three possible states of a promise.
+  const PENDING = 'pending';
+  const FULFILLED = 'fulfilled';
+  const REJECTED = 'rejected';
+
+  function MyPromise(executor) {
+    // A promise starts in the 'pending' state.
+    this.state = PENDING;
+    // It has no value or reason initially.
+    this.value = undefined;
+    this.reason = undefined;
+    // It has queues to hold callbacks for when it settles.
+    this.onFulfilledCallbacks = [];
+    this.onRejectedCallbacks = [];
+
+    // The 'resolve' function transitions the state to 'fulfilled'.
+    const resolve = (value) => {
+      // A promise can only be settled once.
+      if (this.state === PENDING) {
+        this.state = FULFILLED;
+        this.value = value;
+        // Execute all the 'then' callbacks that were waiting.
+        this.onFulfilledCallbacks.forEach(callback => callback(this.value));
+      }
+    };
+
+    // The 'reject' function transitions the state to 'rejected'.
+    const reject = (reason) => {
+      // A promise can only be settled once.
+      if (this.state === PENDING) {
+        this.state = REJECTED;
+        this.reason = reason;
+        // Execute all the 'catch' callbacks that were waiting.
+        this.onRejectedCallbacks.forEach(callback => callback(this.reason));
+      }
+    };
+
+    // The executor function is called immediately with resolve and reject.
+    try {
+      executor(resolve, reject);
+    } catch (error) {
+      // If the executor throws an error, the promise is rejected.
+      reject(error);
+    }
+  }
+
+  // The 'then' method is used to schedule callbacks.
+  MyPromise.prototype.then = function(onFulfilled, onRejected) {
+    // If the promise is already fulfilled, call the onFulfilled callback immediately.
+    // We use setTimeout to make it asynchronous, as per the spec.
+    if (this.state === FULFILLED) {
+      setTimeout(() => onFulfilled(this.value), 0);
+    }
+    // If the promise is already rejected, call the onRejected callback immediately.
+    if (this.state === REJECTED) {
+      setTimeout(() => onRejected(this.reason), 0);
+    }
+    // If the promise is still pending, add the callbacks to their respective queues.
+    if (this.state === PENDING) {
+      if (typeof onFulfilled === 'function') {
+        this.onFulfilledCallbacks.push(onFulfilled);
+      }
+      if (typeof onRejected === 'function') {
+        this.onRejectedCallbacks.push(onRejected);
+      }
+    }
+    // A full implementation would return a new promise for chaining. This is a simplified version.
+  };
+
+  // Assign our implementation to the global scope.
+  window.Promise = MyPromise;
+}
+```
+Of course. Let's continue with the rest of the Promise methods and the other advanced polyfills.
+
+---
+
+#### **Write a polyfill for `Promise.all()`**
+
+This function takes an array of promises and returns a new promise that fulfills with an array of the results when *all* of the input promises have fulfilled. It rejects if *any* of the promises reject.
+
+```javascript
+// This polyfill assumes a working Promise implementation exists (either native or our polyfill).
+if (!Promise.all) {
+  Promise.all = function(promises) {
+    // Return a new promise. This is the core of all Promise methods.
+    return new Promise((resolve, reject) => {
+      // An array to store the results of the promises in the correct order.
+      const results = [];
+      // A counter to track how many promises have been completed.
+      let completed = 0;
+      // The total number of promises we need to wait for.
+      const total = promises.length;
+
+      // Handle the edge case of an empty array.
+      // As per the spec, Promise.all with an empty iterable should resolve immediately.
+      if (total === 0) {
+        resolve(results);
+        return;
+      }
+
+      // Loop through each promise in the input array.
+      promises.forEach((promise, index) => {
+        // Ensure that what we have is a promise. If it's a static value, resolve it.
+        Promise.resolve(promise)
+          .then(value => {
+            // When a promise fulfills, store its result in the correct position.
+            results[index] = value;
+            // Increment the completed counter.
+            completed++;
+
+            // If all promises have been completed...
+            if (completed === total) {
+              // ...resolve the main promise with the results array.
+              resolve(results);
+            }
+          })
+          .catch(error => {
+            // If ANY of the promises reject...
+            // ...reject the main promise immediately with that error.
+            reject(error);
+          });
+      });
+    });
+  };
+}
+```
+
+#### **Implement polyfills for `Promise.race()`, `Promise.allSettled()`, and `Promise.any()`**
+
+**`Promise.race()`**
+
+This takes an array of promises and settles (fulfills or rejects) as soon as the *first* promise in the array settles.
+
+```javascript
+if (!Promise.race) {
+  Promise.race = function(promises) {
+    // Return a new promise.
+    return new Promise((resolve, reject) => {
+      // Handle the edge case of an empty array.
+      // An empty `race` never settles, so we do nothing.
+      if (!promises || promises.length === 0) {
+        return;
+      }
+
+      // Loop through each promise.
+      promises.forEach(promise => {
+        // Whichever promise resolves or rejects first will call the main resolve/reject.
+        // Because a promise can only be settled once, subsequent calls will be ignored.
+        Promise.resolve(promise).then(resolve, reject);
+      });
+    });
+  };
+}
+```
+
+**`Promise.allSettled()`**
+
+This takes an array of promises and fulfills after *all* promises have settled (either fulfilled or rejected). It fulfills with an array of objects, each describing the outcome of a promise.
+
+```javascript
+if (!Promise.allSettled) {
+  Promise.allSettled = function(promises) {
+    // Map each promise/value to a new promise that will always fulfill.
+    const mappedPromises = promises.map(p =>
+      Promise.resolve(p)
+        .then(value => ({
+          // If the original promise fulfills, create a 'fulfilled' status object.
+          status: 'fulfilled',
+          value: value
+        }))
+        .catch(reason => ({
+          // If the original promise rejects, create a 'rejected' status object.
+          status: 'rejected',
+          reason: reason
+        }))
+    );
+    // Use Promise.all on our new array of "safe" promises.
+    // Since none of these can reject, the Promise.all itself will never reject.
+    return Promise.all(mappedPromises);
+  };
+}
+```
+
+**`Promise.any()`**
+
+This takes an array of promises and fulfills as soon as the *first* promise fulfills. It only rejects if *all* of the promises reject, and it rejects with a special `AggregateError`.
+
+```javascript
+if (!Promise.any) {
+  Promise.any = function(promises) {
+    return new Promise((resolve, reject) => {
+      // A counter for how many promises have rejected.
+      let rejectedCount = 0;
+      // An array to store the rejection reasons.
+      const errors = [];
+      const total = promises.length;
+
+      // Handle the edge case of an empty array.
+      // As per the spec, it should reject immediately.
+      if (total === 0) {
+        reject(new AggregateError([], "All promises were rejected"));
+        return;
+      }
+
+      promises.forEach((promise, index) => {
+        Promise.resolve(promise)
+          .then(value => {
+            // If ANY promise fulfills, resolve the main promise immediately.
+            resolve(value);
+          })
+          .catch(error => {
+            // If a promise rejects, store its error and increment the counter.
+            errors[index] = error;
+            rejectedCount++;
+            // If all promises have rejected...
+            if (rejectedCount === total) {
+              // ...reject the main promise with an AggregateError.
+              reject(new AggregateError(errors, "All promises were rejected"));
+            }
+          });
+      });
+    });
+  };
+}
+```
+
+#### **How would you create a polyfill for `fetch()` using `XMLHttpRequest`?**
+
+`fetch` is a browser API, not a language feature. A polyfill for it shows understanding of both modern and legacy web APIs.
+
+```javascript
+// Check if the 'fetch' function exists on the global object (window).
+if (!window.fetch) {
+  window.fetch = function(url, options) {
+    // The fetch API is Promise-based, so our polyfill must return a Promise.
+    return new Promise((resolve, reject) => {
+      // Create a new XMLHttpRequest object, the legacy way to make HTTP requests.
+      const xhr = new XMLHttpRequest();
+
+      // Get the HTTP method from the options, defaulting to 'GET'.
+      const method = options ? options.method || 'GET' : 'GET';
+      
+      // Open the request with the specified method and URL.
+      // The 'true' argument makes the request asynchronous.
+      xhr.open(method, url, true);
+
+      // The onload event fires when the request has successfully completed.
+      xhr.onload = function() {
+        // Create a response object that mimics the Fetch API's Response.
+        const response = {
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          statusText: xhr.statusText,
+          // A helper function to parse the response as JSON.
+          json: () => Promise.resolve(JSON.parse(xhr.responseText)),
+          // A helper function to get the response as plain text.
+          text: () => Promise.resolve(xhr.responseText)
+          // A full polyfill would also implement headers, blob(), etc.
+        };
+        // Resolve the promise with our mock response object.
+        resolve(response);
+      };
+      
+      // The onerror event fires when there is a network-level error.
+      xhr.onerror = function() {
+        // Reject the promise with a TypeError, which is what the real fetch does.
+        reject(new TypeError('Network request failed'));
+      };
+
+      // Set headers if they were provided in the options.
+      if (options && options.headers) {
+        Object.keys(options.headers).forEach(key => {
+          xhr.setRequestHeader(key, options.headers[key]);
+        });
+      }
+
+      // Send the request. If there's a body, send it along.
+      xhr.send(options ? options.body : null);
+    });
+  };
+}
+```
+
+---
+*Self-Correction:* The remaining questions (`async/await`, `setTimeout`, etc.) are less about traditional polyfills and more about demonstrating a very deep, conceptual understanding of JavaScript's internals. A true polyfill for `async/await` would be a transpilation step, and `setTimeout` is a host object that can't be reliably polyfilled. The answers will reflect this nuance.
+
+---
+
+#### **Can you write a polyfill for `async/await` using Promises and Generators?**
+
+**Answer:**
+
+This is not a polyfill in the traditional sense; it's a **transpilation**. `async/await` is syntactic sugar over Promises and Generators. Babel performs this exact transformation at build time. An interview question on this topic is asking you to demonstrate *how* that transformation works conceptually.
+
+You would write a "runner" function that takes a generator function and executes it, handling the yielded promises.
+
+```javascript
+// This function demonstrates the transpilation concept.
+function asyncToGenerator(generatorFunc) {
+  // Return a new function that will behave like our async function.
+  return function() {
+    // Create an instance of the generator.
+    const generator = generatorFunc.apply(this, arguments);
+
+    // Return a promise, because all async functions return a promise.
+    return new Promise((resolve, reject) => {
+      // Create a step function that will process each 'yield' from the generator.
+      function step(nextFn) {
+        let generatorResult;
+        try {
+          // Call the next function (e.g., generator.next() or generator.throw()).
+          generatorResult = nextFn();
+        } catch (error) {
+          // If the generator throws an error, reject the promise.
+          return reject(error);
+        }
+
+        // Deconstruct the result from the generator { value, done }.
+        const { value, done } = generatorResult;
+
+        if (done) {
+          // If the generator is finished, resolve the promise with its final return value.
+          return resolve(value);
+        }
+
+        // If the generator is not done, the 'value' should be a promise that we need to wait for.
+        // We use Promise.resolve() to handle cases where the yielded value is not a promise.
+        Promise.resolve(value).then(
+          (result) => {
+            // When the promise resolves, call the step function again,
+            // passing the result back into the generator via .next().
+            step(() => generator.next(result));
+          },
+          (error) => {
+            // If the promise rejects, throw the error back into the generator
+            // so it can be handled by a try...catch block inside the async function.
+            step(() => generator.throw(error));
+          }
+        );
+      }
+      // Start the process by calling step with the first .next().
+      step(() => generator.next(undefined));
+    });
+  };
+}
+
+// HOW IT WOULD BE USED BY A TRANSPILER:
+
+// Your original code:
+// async function myAsyncFunction() {
+//   const data = await fetchData();
+//   return data;
+// }
+
+// What Babel conceptually transforms it into:
+// const myAsyncFunction = asyncToGenerator(function* () {
+//   const data = yield fetchData();
+//   return data;
+// });
+```
+
+#### **Write a polyfill for `setTimeout()` and `setInterval()`**
+
+**Answer:**
+
+This is a trick question. You **cannot** create a true, reliable polyfill for `setTimeout` or `setInterval`.
+
+These functions are **host objects**, not native JavaScript objects. They are provided by the browser environment (or Node.js) and are deeply tied to the event loop mechanism of that environment. You cannot replicate their core timing functionality and integration with the event loop using pure JavaScript.
+
+Any attempt to "polyfill" them would have to rely on the existing `setTimeout` or a busy-waiting loop (`while(true){...}`), which would freeze the main thread entirely.
+
+The appropriate answer in an interview is to explain this:
+"A polyfill for `setTimeout` or `setInterval` isn't feasible because they are host objects provided by the browser environment, not native ECMAScript features. Their functionality is tied directly to the browser's event loop scheduler, which we can't replicate or replace from within JavaScript without using the very functions we're trying to polyfill. Any attempt would either be circular or would lock up the browser's single thread, defeating the purpose of asynchronous timers."
+
+---
+
+### **Other Common Polyfills**
+
+#### **How do you write a polyfill for `Object.create()`?**
+
+`Object.create()` creates a new object with a specified prototype object.
+
+```javascript
+// Check if Object.create exists.
+if (typeof Object.create !== 'function') {
+  // Define the 'create' method.
+  Object.create = function(proto) {
+    // Check if the provided prototype is not an object or is null.
+    if (typeof proto !== 'object' || proto === null) {
+      throw new TypeError('Object prototype may only be an Object or null');
+    }
+
+    // The classic way to do this is to create a temporary constructor function.
+    function F() {}
+    
+    // Set the prototype of this temporary constructor to the desired prototype.
+    F.prototype = proto;
+    
+    // Create a new instance of the temporary constructor.
+    // The new instance will have 'proto' as its prototype.
+    return new F();
+
+    // Note: The full spec for Object.create also accepts a second 'propertiesObject'
+    // argument. This is a simplified polyfill covering the primary use case.
+  };
+}
+```
+
+#### **Implement a polyfill for `requestAnimationFrame()`**
+
+`requestAnimationFrame` (rAF) is a browser API for scheduling animations. It tells the browser you wish to perform an animation and requests that the browser schedule a repaint of the window for the next animation frame. Its key advantage over `setTimeout` for animations is that it's optimized by the browser to be more efficient and smoother, and it pauses when the tab is not visible.
+
+A polyfill for it falls back to `setTimeout`. It won't have the same performance benefits but will provide a working API.
+
+```javascript
+// Check if requestAnimationFrame exists (it may be vendor-prefixed).
+(function() {
+  let lastTime = 0;
+  const vendors = ['ms', 'moz', 'webkit', 'o'];
+  // Check for vendor-prefixed versions.
+  for (let x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
+    window.requestAnimationFrame = window[vendors[x] + 'RequestAnimationFrame'];
+    window.cancelAnimationFrame = window[vendors[x] + 'CancelAnimationFrame'] || window[vendors[x] + 'CancelRequestAnimationFrame'];
+  }
+
+  // If requestAnimationFrame is still not found, create a polyfill using setTimeout.
+  if (!window.requestAnimationFrame) {
+    window.requestAnimationFrame = function(callback) {
+      const currTime = new Date().getTime();
+      // Calculate the time to wait to aim for a ~60fps framerate (1000ms / 60 = ~16.7ms).
+      const timeToCall = Math.max(0, 16 - (currTime - lastTime));
+      const id = window.setTimeout(function() {
+        callback(currTime + timeToCall);
+      }, timeToCall);
+      lastTime = currTime + timeToCall;
+      return id;
+    };
+  }
+
+  // Polyfill for cancelAnimationFrame.
+  if (!window.cancelAnimationFrame) {
+    window.cancelAnimationFrame = function(id) {
+      clearTimeout(id);
+    };
+  }
+}());
+```
+
+#### **How would you create a polyfill for `localStorage` using cookies?**
+
+`localStorage` is another browser host object. If a browser is so old that it doesn't support it (very rare today, but possible), you could create a fallback implementation using cookies. This demonstrates knowledge of multiple storage mechanisms.
+
+```javascript
+// Check if localStorage is available and functional.
+// Some browsers in private mode might have localStorage but throw an error on setItem.
+(function() {
+  try {
+    if (typeof window.localStorage !== 'undefined') {
+      window.localStorage.setItem('__test', 'test');
+      window.localStorage.removeItem('__test');
+      // If we got here without an error, localStorage is supported.
+      return;
+    }
+  } catch (e) {
+    // localStorage is not fully supported. Proceed with the polyfill.
+  }
+
+  // If we reach here, we need to create the polyfill.
+  const LocalStoragePolyfill = {
+    // Use an object to store key-value pairs in memory for the current session.
+    _data: {},
+    
+    setItem: function(id, val) {
+      // Store in our in-memory object and also write to a cookie.
+      this._data[id] = String(val);
+      // Create a cookie. We set a very long expiry date to mimic persistence.
+      // encodeURIComponent is used to handle special characters.
+      document.cookie = encodeURIComponent(id) + "=" + encodeURIComponent(val) + "; expires=Tue, 19 Jan 2038 03:14:07 GMT; path=/";
+    },
+
+    getItem: function(id) {
+      // Check our in-memory object first for speed.
+      // If it's not there, parse the document's cookies to find it.
+      const cookieString = "; " + document.cookie;
+      const parts = cookieString.split("; " + encodeURIComponent(id) + "=");
+      if (parts.length === 2) {
+        return decodeURIComponent(parts.pop().split(";").shift());
+      }
+      return this._data[id] || null;
+    },
+
+    removeItem: function(id) {
+      // Remove from our in-memory object and expire the cookie.
+      delete this._data[id];
+      // To "delete" a cookie, we set its expiry date to a time in the past.
+      document.cookie = encodeURIComponent(id) + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+    },
+
+    clear: function() {
+      // Clear our in-memory object and loop through all cookies to expire them.
+      this._data = {};
+      const cookies = document.cookie.split(";");
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i];
+        const eqPos = cookie.indexOf("=");
+        const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+        document.cookie = name.trim() + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+      }
+    }
+  };
+
+  // Assign our polyfill to the window object.
+  window.localStorage = LocalStoragePolyfill;
+}());
+```
