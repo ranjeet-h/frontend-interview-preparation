@@ -1,4 +1,4 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
+ 
 
 # i have 4 years of experience in frontend development i want 40 react only programming coding questions and answers that i can prepare for interviews
 
@@ -730,7 +730,7 @@ function UndoableInput() {
 
 
 
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
+ 
 
 # give me what will be the output like questions for react coding where it covers all the react concepts like memo, useCallback, all hooks like context and redux etc all where interviewer shows me code asks for what will be the out put give me at least 40 such questions
 
@@ -1508,7 +1508,7 @@ useEffect(() => {
 <div style="text-align: center">⁂</div>
 
 
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
+ 
 
 # last give me question what will be the output on useMemo and useCallback like renedering based 10 at least
 

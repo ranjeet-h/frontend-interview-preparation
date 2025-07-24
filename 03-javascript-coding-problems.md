@@ -1,4 +1,4 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
+ 
 
 # JavaScript Interview Preparation: 40 Essential Questions for 4 Years Experience
 
@@ -1707,7 +1707,7 @@ The questions are designed to assess both theoretical knowledge and practical pr
 
 <div style="text-align: center">⁂</div>
 
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
+ 
 
 # JavaScript Coding Questions: Arrays, Objects, and Strings
 
@@ -2186,7 +2186,7 @@ function decodeString(s) {
 
 <div style="text-align: center">⁂</div>
 
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" class="logo" width="120"/>
+ 
 
 # i want lot of questions on what will be the output of this in big topics like
 
