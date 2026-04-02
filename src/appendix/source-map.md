@@ -64,9 +64,50 @@ Maps every `{{#include}}` range to its canonical book chapter.
 | Frontend-Specific Application Problems | L1471–1882 | [Frontend Application Problems](../dsa/frontend-apps.md) |
 | Implementation Challenges #1–#53 | L1883–4984 | [Implementations](../dsa/implementations.md) |
 
+## `100_System_Design_Interview_Questions_Complete_Guide.md` → Full Stack Expansion / System Design
+
+| Source section | Lines | Book chapter |
+|---|---|---|
+| Introduction & Framework + Concept-Based Questions (Q1–Q15) | L22–141 | [Foundations & Framework](../full-stack/system-design/concepts.md) |
+| Easy System Design Problems (Q16–Q35) | L143–483 | [Easy System Design Problems](../full-stack/system-design/easy.md) |
+| Medium System Design Problems (Q36–Q70) | L485–1220 | [Medium System Design Problems](../full-stack/system-design/medium.md) |
+| Hard System Design Problems (Q71–Q95) | L1222–1879 | [Hard System Design Problems](../full-stack/system-design/hard.md) |
+| Advanced & Specialist Areas (Q96–Q100) | L1881–2209 | [Advanced & Specialist Areas](../full-stack/system-design/specialist.md) |
+| Preparation Strategy | L2211–2390 | [Preparation Strategy](../full-stack/system-design/preparation.md) |
+
+## Question-bank CSV imports
+
+| Source file | Prompt count | Book chapter |
+|---|---|---|
+| `Frontend_Questions.csv` | 19 | [Frontend Questions](../frontend/question-banks.md) |
+| `Frontend_Coding_Questions.csv` | 14 | [Frontend Coding Questions](../frontend/coding-questions.md) |
+| `Backend_Questions.csv` | 20 | [Backend Questions](../full-stack/backend/question-banks.md) |
+| `Backend_Coding_Questions.csv` | 19 | [Backend Coding Questions](../full-stack/backend/coding-questions.md) |
+| Curated Node.js bank | 50 | [Node.js Question Bank](../full-stack/backend/nodejs-question-bank.md) |
+| Curated FastAPI bank | 50 | [FastAPI Question Bank](../full-stack/backend/fastapi-question-bank.md) |
+| Curated backend libraries bank | 50 | [Backend Libraries Question Bank](../full-stack/backend/libraries-question-bank.md) |
+| Curated MongoDB bank | 50 | [MongoDB Question Bank](../full-stack/databases/mongodb-question-bank.md) |
+| Curated MySQL bank | 50 | [MySQL Question Bank](../full-stack/databases/mysql-question-bank.md) |
+| Curated PostgreSQL bank | 50 | [PostgreSQL Question Bank](../full-stack/databases/postgresql-question-bank.md) |
+| Curated database modeling bank | 50 | [Database Modeling Question Bank](../full-stack/databases/modeling-management-question-bank.md) |
+
 ## Not yet integrated (archived)
 
 | File | Reason |
 |---|---|
 | `ops-tree-interview-qna.md` | Ops/tree topics; planned for Full Stack Expansion |
 | `the-transformation-group.md` | Miscellaneous notes; not interview-focused |
+
+## Expansion scaffold
+
+These pages cover both live and planned expansion tracks. Live tracks map to source files; planned
+tracks are placeholders for future content.
+
+| Page | Purpose | Status |
+|---|---|---|
+| [Full Stack Expansion](../full-stack/index.md) | Expansion hub | Ready |
+| [Backend & APIs](../full-stack/backend/index.md) | Node, Python, FastAPI, auth, backend design | Planned |
+| [Databases & Storage](../full-stack/databases/index.md) | MongoDB, MySQL, PostgreSQL, modeling | Planned |
+| [Cloud & DevOps](../full-stack/cloud/index.md) | AWS, Azure, Google Cloud, delivery, ops | Planned |
+| [System Design](../full-stack/system-design/index.md) | 100 system design questions and patterns | Ready |
+| [AI & Agents](../full-stack/ai/index.md) | Agentic workflows, prompting, RAG, evaluation | Planned |

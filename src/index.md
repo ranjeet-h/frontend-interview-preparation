@@ -1,35 +1,37 @@
 # Full Stack Interview Study Book
 
-A structured study guide for frontend and full-stack engineers preparing for senior interviews.
+A structured, track-based interview study system for frontend, backend, databases, cloud,
+system design, and AI prep. The layout is designed to grow without forcing a rewrite of the
+navigation or study flow.
 
 ## How to use this book
 
-Each section maps to a cluster of original interview-prep source files. Content is chunked into
-focused chapters so you can study by topic rather than reading one giant file.
+Start with the core tracks, then move into the expansion tracks when you want broader interview
+coverage.
 
-| Section | Source files | Focus |
+| Track | What it covers | Status |
 |---|---|---|
-| [Frontend Fundamentals](frontend/index.md) | `01-html-css-web-concepts.md` | HTML, CSS, Web Vitals, browser APIs, rendering |
-| [JavaScript](javascript/index.md) | `02-javascript-theory-concepts.md` + `03-javascript-coding-problems.md` | Theory, coding, output Qs, polyfills |
-| [DSA](dsa/index.md) | `06-javascript-coding-DSA-problems.md` | Array/String/Object algorithms + 50+ implementations |
-| [React](react/index.md) | `04-react-theory-concepts.md` + `05-react-coding-challenges.md` | Theory, hooks, coding, output Qs |
-| [Full Stack Expansion](full-stack/index.md) | planned | Node, DB, APIs, system design |
-| [Appendix](appendix/index.md) | all | Source map, original files |
+| [Frontend Fundamentals](frontend/index.md) | HTML, CSS, browser behavior, rendering, performance | Ready |
+| [JavaScript](javascript/index.md) | Core JS theory, coding problems, output questions, polyfills | Ready |
+| [DSA](dsa/index.md) | Arrays, strings, objects, application problems, implementations | Ready |
+| [React](react/index.md) | Hooks, state, architecture, patterns, challenges | Ready |
+| [Full Stack Expansion](full-stack/index.md) | Backend, databases, cloud, system design, AI/agents | Growing |
+| [Appendix](appendix/index.md) | Source map, original files, expansion notes | Ready |
 
 ## Quick reference: canonical chapters
 
 | Topic | Canonical chapter |
 |---|---|
-| Event Loop | [Core Concepts](javascript/core-concepts.md) |
-| Hoisting & Closures | [Core Concepts](javascript/core-concepts.md) |
-| Async / Promises | [Core Concepts](javascript/core-concepts.md) |
-| ES6+ features | [ES6 & Modern JS](javascript/es6-modern.md) |
-| Debounce / Throttle implementations | [DSA Implementations](dsa/implementations.md) |
+| Event loop | [Core Concepts](javascript/core-concepts.md) |
+| Hoisting and closures | [Core Concepts](javascript/core-concepts.md) |
+| Async and Promises | [Core Concepts](javascript/core-concepts.md) |
+| ES6+ features | [ES6 & Modern JavaScript](javascript/es6-modern.md) |
+| Debounce and throttle implementations | [DSA Implementations](dsa/implementations.md) |
 | Array polyfills | [Polyfills](javascript/polyfills.md) |
 | React hooks | [Hooks In-Depth](react/hooks.md) |
 | React state management | [State Management & Performance](react/state-performance.md) |
 | Rendering strategies (SSR/CSR/SSG/ISR) | [Architecture & Testing](react/architecture-testing.md) |
 
-> **Deduplication note:** Where multiple source files cover the same topic (e.g., the event loop
-> appears in both `02` and `03`), one chapter is designated canonical and the others cross-link.
-> See the [Source Map](appendix/source-map.md) for the full mapping.
+> **Deduplication note:** When multiple source files cover the same topic, one chapter is
+> designated canonical and the others cross-link. See the [Source Map](appendix/source-map.md)
+> for the full mapping.

@@ -16,6 +16,8 @@
   - [HTML](frontend/html.md)
   - [CSS](frontend/css.md)
   - [Web Concepts & Performance](frontend/web-concepts.md)
+  - [Frontend Questions](frontend/question-banks.md)
+  - [Frontend Coding Questions](frontend/coding-questions.md)
 
 ---
 
@@ -61,6 +63,26 @@
 # Full Stack Expansion
 
 - [Full Stack Expansion](full-stack/index.md)
+  - [Backend & APIs](full-stack/backend/index.md)
+    - [Backend Questions](full-stack/backend/question-banks.md)
+    - [Backend Coding Questions](full-stack/backend/coding-questions.md)
+    - [Node.js Question Bank](full-stack/backend/nodejs-question-bank.md)
+    - [FastAPI Question Bank](full-stack/backend/fastapi-question-bank.md)
+    - [Backend Libraries Question Bank](full-stack/backend/libraries-question-bank.md)
+  - [Databases & Storage](full-stack/databases/index.md)
+    - [MongoDB Question Bank](full-stack/databases/mongodb-question-bank.md)
+    - [MySQL Question Bank](full-stack/databases/mysql-question-bank.md)
+    - [PostgreSQL Question Bank](full-stack/databases/postgresql-question-bank.md)
+    - [Database Modeling Question Bank](full-stack/databases/modeling-management-question-bank.md)
+  - [Cloud & DevOps](full-stack/cloud/index.md)
+  - [System Design](full-stack/system-design/index.md)
+    - [Foundations & Framework](full-stack/system-design/concepts.md)
+    - [Easy System Design Problems](full-stack/system-design/easy.md)
+    - [Medium System Design Problems](full-stack/system-design/medium.md)
+    - [Hard System Design Problems](full-stack/system-design/hard.md)
+    - [Advanced & Specialist Areas](full-stack/system-design/specialist.md)
+    - [Preparation Strategy](full-stack/system-design/preparation.md)
+  - [AI & Agents](full-stack/ai/index.md)
 
 ---
 

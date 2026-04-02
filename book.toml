@@ -9,5 +9,5 @@ src = "src"
 command = "mdbook-excalidraw"
 
 [output.html]
-additional-js = ["theme/excalidraw.js"]
+additional-js = ["theme/mermaid.min.js", "theme/excalidraw.js"]
 additional-css = ["theme/excalidraw.css"]

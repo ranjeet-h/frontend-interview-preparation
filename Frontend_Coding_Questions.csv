@@ -1,0 +1,15 @@
+Category,Question,Input (Detailed),Output (Detailed)
+EASY,Implement a debounce function,"A function fn that logs ""API called"" and a delay of 300ms. The debounced function is invoked 5 times within 200ms.","""API called"" should be logged only once, 300ms after the last call."
+EASY,Group array of objects by key,"[{ id: 1, age: 25 }, { id: 2, age: 30 }, { id: 3, age: 25 }]","{ 25: [{ id:1, age:25 }, { id:3, age:25 }], 30: [{ id:2, age:30 }] }"
+EASY,Reverse words in a string,"Input string: ""hello world from JavaScript""","Output string: ""JavaScript from world hello"""
+MEDIUM,Predict event loop execution order,"js console.log(""start""); setTimeout(() => console.log(""timeout""), 0); Promise.resolve().then(() => console.log(""promise"")); console.log(""end""); ",Console output order: start → end → promise → timeout
+MEDIUM,Remove duplicates efficiently,"Input array: [1, 2, 2, 3, 4, 4, 5]","Output array: [1, 2, 3, 4, 5] (order preserved, no mutation of original array)"
+MEDIUM,Flatten a nested array,"Input array: [1, [2, [3, [4]]]]","Output array: [1, 2, 3, 4]"
+HARD,Implement Promise.all,"Input: [Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)]","Returns a Promise that resolves to [1, 2, 3] in the same order"
+HARD,Implement Promise.all (rejection case),"Input: [Promise.resolve(1), Promise.reject(""Error""), Promise.resolve(3)]","Returns a Promise that rejects immediately with ""Error"""
+HARD,Deep clone an object,"Input object: { a: 1, b: { c: 2 } }","Output: { a: 1, b: { c: 2 } } where output.b !== input.b"
+HARD,Implement memoization,"Function add(a, b) wrapped with memoization. Call add(2,3) twice.",First call computes result. Second call returns cached value without recomputation.
+HARD,Implement LRU Cache,"Capacity = 2. Operations: put(1,1), put(2,2), get(1), put(3,3)","Cache contains keys {1,3}. Key 2 is evicted."
+HARD - React/Frontend,Custom useFetch hook,URL changes from /api/users → /api/posts quickly before first request completes,Only /api/posts response updates state. Previous request is aborted or ignored.
+HARD - React/Frontend,Pagination with caching,User visits Page 1 → Page 2 → Page 1,Page 1 data is loaded from cache without new API call
+HARD - React/Frontend,Route-based code splitting,React app with route /dashboard,Dashboard JS bundle is loaded only when route is visited

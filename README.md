@@ -1,6 +1,8 @@
-# Frontend Developer Interview Preparation Guide 🚀
+# Full Stack Interview Preparation Guide 🚀
 
-A comprehensive collection of interview questions, answers, and coding challenges for frontend developers preparing for technical interviews. This repository covers HTML, CSS, JavaScript, and React with both theoretical concepts and practical coding problems.
+A comprehensive interview study system for frontend, backend, databases, cloud, system design,
+and AI prep. The repository is structured so new domains can be added without reshaping the whole
+book.
 
 ## 📚 Table of Contents
 
@@ -14,13 +16,17 @@ A comprehensive collection of interview questions, answers, and coding challenge
 
 ## 🎯 Overview
 
-This repository is designed for frontend developers with 2-5 years of experience preparing for technical interviews. It contains:
+This repository is designed for developers preparing for technical interviews across frontend and
+full-stack roles. It contains:
 
-- **500+ Interview Questions** across all major frontend technologies
+- **500+ Interview Questions** across the core frontend and JavaScript tracks
 - **Detailed Explanations** with code examples
 - **Coding Challenges** with solutions
 - **Best Practices** and performance optimization techniques
 - **Real-world Scenarios** and practical applications
+- **Planned expansion tracks** for backend, databases, cloud, system design, and AI agents
+- **A 100-question system design guide** split into navigable chapters
+- **CSV-backed question banks** for frontend and backend theory/coding practice
 
 ## 📁 Repository Structure
 
@@ -31,6 +37,12 @@ interview-qna/
 ├── 03-javascript-coding-problems.md # JS Coding Challenges & Solutions
 ├── 04-react-coding-challenges.md    # React Implementation Problems
 ├── 05-react-theory-concepts.md      # React Core Concepts & Advanced Topics
+├── 100_System_Design_Interview_Questions_Complete_Guide.md # System design question bank
+├── Frontend_Questions.csv           # Frontend theory question bank source
+├── Frontend_Coding_Questions.csv    # Frontend coding question bank source
+├── Backend_Questions.csv            # Backend theory question bank source
+├── Backend_Coding_Questions.csv     # Backend coding question bank source
+├── src/full-stack/                  # Backend, database, cloud, system design, AI tracks
 └── README.md                        # This file
 ```
 
@@ -71,6 +83,14 @@ interview-qna/
 - **Performance**: React.memo, useMemo, useCallback
 - **Testing**: Jest, React Testing Library, mocking
 
+### 6. Full Stack Expansion
+- **Backend & APIs**: Node.js, Python, FastAPI, auth, API design
+- **Databases**: MongoDB, MySQL, PostgreSQL, data modeling, indexing
+- **Cloud & DevOps**: AWS, Azure, Google Cloud, CI/CD, deployment
+- **System Design**: scalable architecture, trade-offs, 100-question practice set
+- **AI & Agents**: agentic workflows, prompt design, retrieval, evaluation, Claude
+- **Question Banks**: CSV-imported frontend and backend theory/coding banks
+
 ## 🎯 How to Use
 
 ### For Interview Preparation
@@ -110,6 +130,11 @@ interview-qna/
 ### Week 7-8: Advanced React
 - Advanced topics from [05-react-theory-concepts.md](05-react-theory-concepts.md)
 - Complex challenges from [04-react-coding-challenges.md](04-react-coding-challenges.md)
+
+### Future Expansion
+
+Move into the [Full Stack Expansion](src/full-stack/index.md) track when you're ready to add
+backend, cloud, system design, and AI interview depth.
 
 ## 🤝 Contributing
 

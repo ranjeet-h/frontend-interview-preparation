@@ -12,6 +12,11 @@ This appendix preserves the original source material and provides a cross-refere
 | `04-react-theory-concepts.md` | 2195 | React theory — hooks, state, performance, architecture |
 | `05-react-coding-challenges.md` | 1917 | React coding challenges + output questions |
 | `06-javascript-coding-DSA-problems.md` | 4984 | DSA problems + 53 implementation challenges |
+| `100_System_Design_Interview_Questions_Complete_Guide.md` | 2390 | System design guide split into navigable chapter pages |
+| `Frontend_Questions.csv` | 20 | Frontend theory question-bank source |
+| `Frontend_Coding_Questions.csv` | 15 | Frontend coding question-bank source |
+| `Backend_Questions.csv` | 21 | Backend theory question-bank source |
+| `Backend_Coding_Questions.csv` | 20 | Backend coding question-bank source |
 | `ops-tree-interview-qna.md` | 1406 | Ops and tree-based Q&A (archived, not yet integrated) |
 | `the-transformation-group.md` | 2037 | Miscellaneous notes (archived) |
 | `prp-plan.md` | 296 | Original implementation plan |

@@ -28,6 +28,12 @@ This book uses one memory-first structure for every chapter:
 - Compare trade-offs explicitly.
 - Transfer the pattern to similar questions instead of memorizing isolated answers.
 
+## Track design rules
+
+- Every new domain starts with a landing page before it gets many chapters.
+- Keep the chapter map and source map aligned whenever a track grows.
+- Split large topics into smaller pages instead of extending one file forever.
+
 ## Difficulty-aware depth
 
 - **Easy**: concise but complete walkthrough, traps, and recap.
