@@ -1,0 +1,13 @@
+[book]
+title = "Full Stack Interview Study Book"
+authors = []
+language = "en"
+multilingual = false
+src = "src"
+
+[preprocessor.excalidraw]
+command = "mdbook-excalidraw"
+
+[output.html]
+additional-js = ["theme/excalidraw.js"]
+additional-css = ["theme/excalidraw.css"]
