@@ -1,34 +1,35 @@
 # Full Stack Interview Study Book
 
-Welcome to the **Full Stack Interview Study Book** — a navigable, memory-first study guide for frontend and full-stack technical interviews.
-
-## What this book covers
-
-| Section | Topics |
-|---|---|
-| [Frontend Fundamentals](frontend/index.md) | HTML5, CSS layout & specificity, Core Web Vitals, browser APIs, security |
-| [JavaScript](javascript/index.md) | Core concepts, async patterns, ES6+, prototypes, coding problems |
-| [DSA & Algorithms](dsa/index.md) | Arrays, strings, objects, frontend-specific algorithm patterns |
-| [React](react/index.md) | Hooks, state management, performance, component patterns, coding challenges |
-| [Full Stack Expansion](full-stack/index.md) | Coming soon: Node.js, databases, system design |
-| [Appendix](appendix/index.md) | Original source files and cross-reference map |
+A structured study guide for frontend and full-stack engineers preparing for senior interviews.
 
 ## How to use this book
 
-1. **Read the [Study System](study-system.md) first** — it explains the 17-section chapter recipe and the cross-topic study principles.
-2. **Follow the sections in order** for a structured study path, or jump to any chapter by topic.
-3. **Use the search** (press `S`) to find any concept instantly.
-4. Each chapter is a canonical answer to one topic cluster — if the same concept appears in multiple sections, one is designated canonical and the others link back to it.
+Each section maps to a cluster of original interview-prep source files. Content is chunked into
+focused chapters so you can study by topic rather than reading one giant file.
 
-## Source material
+| Section | Source files | Focus |
+|---|---|---|
+| [Frontend Fundamentals](frontend/index.md) | `01-html-css-web-concepts.md` | HTML, CSS, Web Vitals, browser APIs, rendering |
+| [JavaScript](javascript/index.md) | `02-javascript-theory-concepts.md` + `03-javascript-coding-problems.md` | Theory, coding, output Qs, polyfills |
+| [DSA](dsa/index.md) | `06-javascript-coding-DSA-problems.md` | Array/String/Object algorithms + 50+ implementations |
+| [React](react/index.md) | `04-react-theory-concepts.md` + `05-react-coding-challenges.md` | Theory, hooks, coding, output Qs |
+| [Full Stack Expansion](full-stack/index.md) | planned | Node, DB, APIs, system design |
+| [Appendix](appendix/index.md) | all | Source map, original files |
 
-This book is generated from the following source files kept in the repository root:
+## Quick reference: canonical chapters
 
-- `01-html-css-web-concepts.md`
-- `02-javascript-theory-concepts.md`
-- `03-javascript-coding-problems.md`
-- `04-react-theory-concepts.md`
-- `05-react-coding-challenges.md`
-- `06-javascript-coding-DSA-problems.md`
+| Topic | Canonical chapter |
+|---|---|
+| Event Loop | [Core Concepts](javascript/core-concepts.md) |
+| Hoisting & Closures | [Core Concepts](javascript/core-concepts.md) |
+| Async / Promises | [Core Concepts](javascript/core-concepts.md) |
+| ES6+ features | [ES6 & Modern JS](javascript/es6-modern.md) |
+| Debounce / Throttle implementations | [DSA Implementations](dsa/implementations.md) |
+| Array polyfills | [Polyfills](javascript/polyfills.md) |
+| React hooks | [Hooks In-Depth](react/hooks.md) |
+| React state management | [State Management & Performance](react/state-performance.md) |
+| Rendering strategies (SSR/CSR/SSG/ISR) | [Architecture & Testing](react/architecture-testing.md) |
 
-The original files are preserved unchanged. See the [Source Map](appendix/source-map.md) for the mapping between source files and book chapters.
+> **Deduplication note:** Where multiple source files cover the same topic (e.g., the event loop
+> appears in both `02` and `03`), one chapter is designated canonical and the others cross-link.
+> See the [Source Map](appendix/source-map.md) for the full mapping.

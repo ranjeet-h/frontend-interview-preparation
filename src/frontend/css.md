@@ -1,15 +1,8 @@
 # CSS
 
-> **Canonical chapter.** HTML structure → [HTML](html.md). Web performance → [Web Concepts](web-concepts.md).
+> **Canonical chapter for CSS.** HTML structure → [HTML](html.md). Web performance → [Web Concepts](web-concepts.md).
 
-This chapter covers the CSS box model, specificity, Flexbox vs Grid layout, pseudo-classes vs pseudo-elements, and the CSS positioning model.
-
-**Key questions covered:**
-- CSS Box Model
-- CSS Specificity
-- Flexbox vs Grid
-- Pseudo-classes vs pseudo-elements
-- CSS position properties
+Covers the CSS box model, specificity, Flexbox vs Grid, pseudo-classes vs pseudo-elements, and positioning.
 
 ---
 

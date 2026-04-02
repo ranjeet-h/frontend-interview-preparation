@@ -1,15 +1,13 @@
 # Frontend Fundamentals
 
-Frontend fundamentals are the browser-facing building blocks behind every interview answer in this section: structure, styling, rendering, and core browser behavior.
+Browser-facing building blocks: structure, styling, rendering, and core browser behaviour.
 
 ## Chapters
 
-| Chapter | Focus |
-|---|---|
-| [HTML](html.md) | Semantic structure, document metadata, media, and accessibility-friendly markup |
-| [CSS](css.md) | Box model, specificity, layout, pseudo-selectors, and positioning |
-| [Web Concepts & Performance](web-concepts.md) | Core Web Vitals, browser APIs, storage, security, and rendering patterns |
+| Chapter | Lines | Focus |
+|---|---|---|
+| [HTML](html.md) | `01` L1–102 | Semantic structure, metadata, media, accessibility |
+| [CSS](css.md) | `01` L103–178 | Box model, specificity, layout, pseudo-selectors, positioning |
+| [Web Concepts & Performance](web-concepts.md) | `01` L179–280 | Core Web Vitals, browser storage, security, rendering patterns |
 
-## Source material
-
-This section is distilled from `01-html-css-web-concepts.md` in the repository root.
+Source: `01-html-css-web-concepts.md`

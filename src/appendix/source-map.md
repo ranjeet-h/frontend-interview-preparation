@@ -1,91 +1,72 @@
 # Source Map
 
-This table maps each original source file to its canonical book chapter(s). Use it to trace back any question in the book to its source, or to navigate from a source file to the appropriate chapter.
+Maps every `{{#include}}` range to its canonical book chapter.
 
-## 01-html-css-web-concepts.md → Frontend Fundamentals
-
-| Source section | Lines | Book chapter |
-|---|---|---|
-| `## HTML` (Q1–Q5) | 8–102 | [HTML](../frontend/html.md) |
-| `## CSS` (Q6–Q10) | 103–178 | [CSS](../frontend/css.md) |
-| `## Web Vitals & Performance` (Q11–Q12) | 179–209 | [Web Concepts & Performance](../frontend/web-concepts.md) |
-| `## Browser & Web Concepts` (Q13–Q15) | 210–240 | [Web Concepts & Performance](../frontend/web-concepts.md) |
-| `## Design Patterns` (Q16–Q18) | 241–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
-
-## 02-javascript-theory-concepts.md → JavaScript Theory
+## `01-html-css-web-concepts.md` → Frontend Fundamentals
 
 | Source section | Lines | Book chapter |
 |---|---|---|
-| Prototypes (Array, String, Object) | 1–291 | [JS Theory](../javascript/theory.md) |
-| JavaScript Looping Examples | 292–end | [JS Theory](../javascript/theory.md) |
-| Core concepts, async, ES6+, DSA, browser, performance | Full file | [JS Theory](../javascript/theory.md) |
+| `## HTML` (Q1–Q5) | L1–102 | [HTML](../frontend/html.md) |
+| `## CSS` (Q6–Q10) | L103–178 | [CSS](../frontend/css.md) |
+| `## Web Vitals & Performance` (Q11–Q12) | L179–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
+| `## Browser & Web Concepts` (Q13–Q15) | L179–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
+| `## Design Patterns` (Q16–Q18) | L179–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
 
-## 03-javascript-coding-problems.md → JavaScript Coding
+## `02-javascript-theory-concepts.md` → JavaScript (theory)
 
 | Source section | Lines | Book chapter |
 |---|---|---|
-| JavaScript Core Concepts (theory deep-dive) | 7–182 | [JS Coding](../javascript/coding.md) |
-| Asynchronous JavaScript | 183–292 | [JS Coding](../javascript/coding.md) |
-| ES6+ Features | 293–423 | [JS Coding](../javascript/coding.md) |
-| OOP | 424–522 | [JS Coding](../javascript/coding.md) |
-| DOM Manipulation and Events | 523–601 | [JS Coding](../javascript/coding.md) |
-| Error Handling | 602–653 | [JS Coding](../javascript/coding.md) |
-| Data Types and Structures | 654–721 | [JS Coding](../javascript/coding.md) |
-| Performance Optimization | 722–828 | [JS Coding](../javascript/coding.md) |
-| Advanced Concepts | 829–954 | [JS Coding](../javascript/coding.md) |
-| Module Systems and Build Tools | 955–1003 | [JS Coding](../javascript/coding.md) |
-| Testing and Debugging | 1004–1061 | [JS Coding](../javascript/coding.md) |
-| Browser APIs and Web Technologies | 1062–1202 | [JS Coding](../javascript/coding.md) |
-| Security Considerations | 1203–1251 | [JS Coding](../javascript/coding.md) |
-| Advanced Patterns and Best Practices | 1252–1461 | [JS Coding](../javascript/coding.md) |
-| Memory Management and Performance | 1462–1715 | [JS Coding](../javascript/coding.md) |
-| Array Operations (coding) | 1716–1816 | [JS Coding](../javascript/coding.md) |
-| String Manipulation (coding) | 1817–1904 | [JS Coding](../javascript/coding.md) |
-| Object Handling (coding) | 1905–1975 | [JS Coding](../javascript/coding.md) |
-| Combined Challenges | 1976–2027 | [JS Coding](../javascript/coding.md) |
-| Performance-Critical Scenarios | 2028–2092 | [JS Coding](../javascript/coding.md) |
-| Final Set + Polyfills | 2093–5521 | [JS Coding](../javascript/coding.md) |
+| Prototypes (Array, String, Object) | L1–291 | [Prototypes & Loops](../javascript/prototypes-loops.md) |
+| Looping Guide + Examples | L292–660 | [Prototypes & Loops](../javascript/prototypes-loops.md) |
+| Overview section | L661–754 | [Core Concepts](../javascript/core-concepts.md) |
+| Q1–Q10 (Hoisting – IIFE) | L755–959 | [Core Concepts](../javascript/core-concepts.md) |
+| Q11–Q17 (Event Loop – Promise.race) | L960–1082 | [Core Concepts](../javascript/core-concepts.md) |
+| Q18–Q27 (ES6+ – Generators) | L1083–1252 | [ES6 & Modern JavaScript](../javascript/es6-modern.md) |
+| Q28–Q35 (DSA basics) | L1253–1397 | [ES6 & Modern JavaScript](../javascript/es6-modern.md) |
+| Q36–Q44 (Browser/DOM/Performance) | L1398–1511 | [Browser, DOM & Performance](../javascript/browser-dom-perf.md) |
+| Q45+ (Design Patterns in JS) | L1512–3139 | [Browser, DOM & Performance](../javascript/browser-dom-perf.md) |
 
-## 04-react-theory-concepts.md → React Theory
+## `03-javascript-coding-problems.md` → JavaScript (coding)
 
-| Source section | Book chapter |
+| Source section | Lines | Book chapter | Deduplication note |
+|---|---|---|---|
+| 40 Essential Questions (theory deep-dive) | L1–1711 | *Not included* — overlaps with `02` chapters | Cross-link to canonical `02` chapters |
+| Coding Problems (arrays/strings/objects) | L1712–2190 | [Coding Problems](../javascript/coding-problems.md) | Unique |
+| Output Qs (hoisting/closures/Promises/async/event loop) | L2191–3160 | [Output Questions – Part 1](../javascript/output-questions.md) | Unique |
+| Polyfills (Array/Function/Promise) | L3161–4286 | [Polyfills](../javascript/polyfills.md) | Unique |
+| Output Qs Part 2 (`this`/scope/coercion/classes) | L4287–5521 | [Output Questions – Part 2](../javascript/output-questions-2.md) | Unique |
+
+## `04-react-theory-concepts.md` → React (theory)
+
+| Source section | Lines | Book chapter |
+|---|---|---|
+| Core React Concepts | L1–296 | [Core Concepts](../react/core-concepts.md) |
+| Hooks In-Depth | L297–538 | [Hooks In-Depth](../react/hooks.md) |
+| State Management + Performance | L539–663 | [State Management & Performance](../react/state-performance.md) |
+| Component Architecture + Testing | L664–879 | [Architecture & Testing](../react/architecture-testing.md) |
+| Advanced Patterns + Ecosystem | L880–1165 | [Advanced Patterns & Ecosystem](../react/advanced-patterns.md) |
+| Implementations & Coding Walkthroughs | L1166–2195 | [Implementations & Examples](../react/implementations.md) |
+
+## `05-react-coding-challenges.md` → React (coding)
+
+| Source section | Lines | Book chapter |
+|---|---|---|
+| Custom Hooks + Performance + Component Design + State Mgmt | L1–734 | [Coding Challenges](../react/coding-challenges.md) |
+| Output Questions (useState/useEffect/useMemo/useContext/useReducer) | L735–1917 | [Output Questions](../react/output-questions.md) |
+
+## `06-javascript-coding-DSA-problems.md` → DSA
+
+| Source section | Lines | Book chapter |
+|---|---|---|
+| Array-Based Questions | L1–573 | [Array Problems](../dsa/arrays.md) |
+| String Manipulation Questions | L574–970 | [String Problems](../dsa/strings.md) |
+| Object-Related Questions | L971–1470 | [Object Problems](../dsa/objects.md) |
+| Frontend-Specific Application Problems | L1471–1882 | [Frontend Application Problems](../dsa/frontend-apps.md) |
+| Implementation Challenges #1–#53 | L1883–4984 | [Implementations](../dsa/implementations.md) |
+
+## Not yet integrated (archived)
+
+| File | Reason |
 |---|---|
-| Core React Concepts | [React Theory](../react/theory.md) |
-| Hooks In-Depth | [React Theory](../react/theory.md) |
-| State Management | [React Theory](../react/theory.md) |
-| Performance Optimization | [React Theory](../react/theory.md) |
-| Component Architecture | [React Theory](../react/theory.md) |
-| Testing | [React Theory](../react/theory.md) |
-| Latest React Features (React 18+) | [React Theory](../react/theory.md) |
-| Advanced Hooks & Patterns | [React Theory](../react/theory.md) |
-| React Ecosystem & TypeScript | [React Theory](../react/theory.md) |
-| Architectural & System Design | [React Theory](../react/theory.md) |
-| Coding Challenge examples | [React Theory](../react/theory.md) |
-
-## 05-react-coding-challenges.md → React Coding
-
-| Source section | Book chapter |
-|---|---|
-| Custom Hooks | [React Coding](../react/coding.md) |
-| Performance Optimization | [React Coding](../react/coding.md) |
-| Component Design and Patterns | [React Coding](../react/coding.md) |
-| State Management & Hooks | [React Coding](../react/coding.md) |
-| Short-form Challenges (26–40) | [React Coding](../react/coding.md) |
-| useState/useEffect/useMemo/useCallback/useContext/useReducer output questions | [React Coding](../react/coding.md) |
-| Rendering and Memoization Questions | [React Coding](../react/coding.md) |
-
-## 06-javascript-coding-DSA-problems.md → DSA
-
-| Source section | Lines | Book chapter |
-|---|---|---|
-| Array-Based Questions | 3–573 | [Array & String Problems](../dsa/array-string.md) |
-| String Manipulation Questions | 574–970 | [Array & String Problems](../dsa/array-string.md) |
-| Object-Related Questions | 971–1470 | [Object & App Problems](../dsa/object-app.md) |
-| Frontend-Specific Application Problems | 1471–end | [Object & App Problems](../dsa/object-app.md) |
-
-## Archived files (not yet integrated)
-
-| File | Status |
-|---|---|
-| `ops-tree-interview-qna.md` | Archived — planned for Full Stack Expansion section |
-| `the-transformation-group.md` | Archived — planned for Full Stack Expansion section |
+| `ops-tree-interview-qna.md` | Ops/tree topics; planned for Full Stack Expansion |
+| `the-transformation-group.md` | Miscellaneous notes; not interview-focused |
