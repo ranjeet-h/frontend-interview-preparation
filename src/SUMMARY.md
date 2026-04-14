@@ -56,6 +56,7 @@
   - [Advanced Patterns & Ecosystem](react/advanced-patterns.md)
   - [Implementations & Examples](react/implementations.md)
   - [Coding Challenges](react/coding-challenges.md)
+  - [Practical Questions (50 Interview Builds)](react/practical-questions.md)
   - [Output Questions](react/output-questions.md)
 
 ---

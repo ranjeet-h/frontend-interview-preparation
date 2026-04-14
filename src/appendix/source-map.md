@@ -54,6 +54,12 @@ Maps every `{{#include}}` range to its canonical book chapter.
 | Custom Hooks + Performance + Component Design + State Mgmt | L1–734 | [Coding Challenges](../react/coding-challenges.md) |
 | Output Questions (useState/useEffect/useMemo/useContext/useReducer) | L735–1917 | [Output Questions](../react/output-questions.md) |
 
+## Curated chapters (direct authoring in `src/`)
+
+| Book chapter | Canonical source | Notes |
+|---|---|---|
+| [Practical Questions (50 Interview Builds)](../react/practical-questions.md) | `src/react/practical-questions.md` | Curated beginner/intermediate/advanced React practical builds |
+
 ## `06-javascript-coding-DSA-problems.md` → DSA
 
 | Source section | Lines | Book chapter |

@@ -20,3 +20,9 @@ how data flows, when components re-render, and how hooks shape that flow.
 |---|---|---|
 | [Coding Challenges](coding-challenges.md) | `05` L1–734 | Custom hooks, performance, component design, state management |
 | [Output Questions](output-questions.md) | `05` L735–end | "What is the output?" — hooks, memo, context, reducer |
+
+## Practical interview builds (curated)
+
+| Chapter | Source | Focus |
+|---|---|---|
+| [Practical Questions (50 Interview Builds)](practical-questions.md) | Curated | Beginner → advanced React UI build problems with simple solutions and interview takeaways |
