@@ -1,0 +1,36 @@
+# Authentication and Authorization Pages
+
+Dedicated pages for auth.
+
+## Pages
+
+- [What is authentication](what-is-authentication.md)
+- [What is authorization](what-is-authorization.md)
+- [Session-based auth vs token-based auth](session-based-auth-vs-token-based-auth.md)
+- [JWT vs session](jwt-vs-session.md)
+- [What are access tokens](what-are-access-tokens.md)
+- [What are refresh tokens](what-are-refresh-tokens.md)
+- [Where should access tokens be stored](where-should-access-tokens-be-stored.md)
+- [Where should refresh tokens be stored](where-should-refresh-tokens-be-stored.md)
+- [Why is localStorage risky for tokens](why-is-localstorage-risky-for-tokens.md)
+- [What are HttpOnly cookies](what-are-httponly-cookies.md)
+- [What is SameSite cookie](what-is-samesite-cookie.md)
+- [What is Secure cookie](what-is-secure-cookie.md)
+- [How do you implement login](how-do-you-implement-login.md)
+- [How do you implement logout](how-do-you-implement-logout.md)
+- [How do you implement refresh token rotation](how-do-you-implement-refresh-token-rotation.md)
+- [What is token revocation](what-is-token-revocation.md)
+- [How do you invalidate JWT](how-do-you-invalidate-jwt.md)
+- [How do you handle password hashing](how-do-you-handle-password-hashing.md)
+- [bcrypt vs argon2](bcrypt-vs-argon2.md)
+- [What is salt](what-is-salt.md)
+- [What is RBAC](what-is-rbac.md)
+- [What is ABAC](what-is-abac.md)
+- [Role-based authorization vs permission-based authorization](role-based-authorization-vs-permission-based-authorization.md)
+- [How do you protect admin routes](how-do-you-protect-admin-routes.md)
+- [How do you prevent privilege escalation](how-do-you-prevent-privilege-escalation.md)
+- [What is OAuth2](what-is-oauth2.md)
+- [What is OpenID Connect](what-is-openid-connect.md)
+- [How does Google login work](how-does-google-login-work.md)
+- [What is MFA](what-is-mfa.md)
+- [How do you secure forgot-password flow](how-do-you-secure-forgot-password-flow.md)

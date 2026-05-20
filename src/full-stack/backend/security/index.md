@@ -1,0 +1,36 @@
+# Backend Security Pages
+
+Dedicated pages for backend security.
+
+## Pages
+
+- [What is XSS](what-is-xss.md)
+- [What is CSRF](what-is-csrf.md)
+- [What is SQL injection](what-is-sql-injection.md)
+- [What is NoSQL injection](what-is-nosql-injection.md)
+- [What is command injection](what-is-command-injection.md)
+- [What is path traversal](what-is-path-traversal.md)
+- [What is SSRF](what-is-ssrf.md)
+- [What is CORS misconfiguration](what-is-cors-misconfiguration.md)
+- [What is clickjacking](what-is-clickjacking.md)
+- [What is open redirect](what-is-open-redirect.md)
+- [What is prototype pollution](what-is-prototype-pollution.md)
+- [How do you prevent SQL injection](how-do-you-prevent-sql-injection.md)
+- [How do you prevent NoSQL injection](how-do-you-prevent-nosql-injection.md)
+- [How do you prevent XSS](how-do-you-prevent-xss.md)
+- [How do you prevent CSRF](how-do-you-prevent-csrf.md)
+- [How do you secure cookies](how-do-you-secure-cookies.md)
+- [How do you secure headers](how-do-you-secure-headers.md)
+- [What is CSP](what-is-csp.md)
+- [What is Helmet](what-is-helmet.md)
+- [What is input validation](what-is-input-validation.md)
+- [What is output encoding](what-is-output-encoding.md)
+- [What is rate limiting](what-is-rate-limiting.md)
+- [What is brute-force protection](what-is-brute-force-protection.md)
+- [How do you prevent password enumeration](how-do-you-prevent-password-enumeration.md)
+- [How do you store passwords securely](how-do-you-store-passwords-securely.md)
+- [How do you store secrets](how-do-you-store-secrets.md)
+- [What is secrets rotation](what-is-secrets-rotation.md)
+- [How do you protect APIs from abuse](how-do-you-protect-apis-from-abuse.md)
+- [What should never be logged](what-should-never-be-logged.md)
+- [How do you handle sensitive data in errors](how-do-you-handle-sensitive-data-in-errors.md)

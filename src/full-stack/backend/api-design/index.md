@@ -1,0 +1,36 @@
+# API Design Scenario Pages
+
+These pages convert API design interview prompts into repeatable backend design answers.
+
+## Scenarios
+
+- [User Registration API](user-registration-api.md)
+- [Login API](login-api.md)
+- [Refresh Token API](refresh-token-api.md)
+- [Logout API](logout-api.md)
+- [Forgot Password Flow](forgot-password-flow.md)
+- [Reset Password Flow](reset-password-flow.md)
+- [Role-Based Access APIs](role-based-access-apis.md)
+- [Product CRUD APIs](product-crud-apis.md)
+- [Order APIs](order-apis.md)
+- [Payment Callback APIs](payment-callback-apis.md)
+- [Webhook APIs](webhook-apis.md)
+- [Bulk Upload APIs](bulk-upload-apis.md)
+- [Bulk Update APIs](bulk-update-apis.md)
+- [Search APIs](search-apis.md)
+- [Autocomplete APIs](autocomplete-apis.md)
+- [Notification APIs](notification-apis.md)
+- [Audit Log APIs](audit-log-apis.md)
+- [Admin Dashboard APIs](admin-dashboard-apis.md)
+- [API Response Structure](api-response-structure.md)
+- [API Error Structure](api-error-structure.md)
+- [Backward Compatible APIs](backward-compatible-apis.md)
+- [Breaking API Changes](breaking-api-changes.md)
+- [API Versioning Design](api-versioning-design.md)
+- [API Documentation](api-documentation.md)
+- [Secure Public APIs](secure-public-apis.md)
+- [Secure Internal APIs](secure-internal-apis.md)
+- [Prevent Duplicate Submissions](duplicate-submissions.md)
+- [Idempotency Keys](idempotency-keys.md)
+- [Partial Failure in Bulk APIs](partial-failure-bulk-apis.md)
+- [Nested Request Payload Validation](nested-request-validation.md)

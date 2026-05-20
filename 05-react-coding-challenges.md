@@ -730,11 +730,6 @@ function UndoableInput() {
 
 
 
- 
-
-# give me what will be the output like questions for react coding where it covers all the react concepts like memo, useCallback, all hooks like context and redux etc all where interviewer shows me code asks for what will be the out put give me at least 40 such questions
-
-Of course. Here are over 40 "What will be the output?" questions designed for an experienced React developer, covering hooks, performance, state management, and more.
 
 ### `useState` and Re-renders
 
@@ -1508,11 +1503,6 @@ useEffect(() => {
 <div style="text-align: center">⁂</div>
 
 
- 
-
-# last give me question what will be the output on useMemo and useCallback like renedering based 10 at least
-
-Of course. Here are 11 "what will be the output" questions focused on `useMemo` and `useCallback`, specifically looking at how they impact component rendering.
 
 ### Rendering and Memoization Questions
 

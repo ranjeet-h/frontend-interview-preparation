@@ -1,0 +1,36 @@
+# Python Backend Concept Pages
+
+Dedicated Python backend interview concept pages.
+
+## Concepts
+
+- [list, tuple, set, and dict](list-tuple-set-dict.md)
+- [Mutable and Immutable Types](mutable-immutable-types.md)
+- [GIL](gil.md)
+- [Python Memory Management](python-memory-management.md)
+- [Garbage Collection in Python](python-garbage-collection.md)
+- [Decorators](decorators.md)
+- [How Decorators Work](how-decorators-work.md)
+- [Generators](generators.md)
+- [yield](yield.md)
+- [Iterators](iterators.md)
+- [Context Manager](context-manager.md)
+- [with Statement](with-statement.md)
+- [Dataclasses](dataclasses.md)
+- [Type Hinting](type-hinting.md)
+- [Optional](optional.md)
+- [Union](union.md)
+- [Protocol](protocol.md)
+- [asyncio](asyncio.md)
+- [async/await in Python](python-async-await.md)
+- [Concurrency vs Parallelism](concurrency-vs-parallelism.md)
+- [Multiprocessing](multiprocessing.md)
+- [Multithreading](multithreading.md)
+- [Exception Handling](exception-handling.md)
+- [Custom Exceptions](custom-exceptions.md)
+- [Dependency Injection in Python](dependency-injection-python.md)
+- [Virtual Environment](virtual-environment.md)
+- [pip](pip.md)
+- [Poetry](poetry.md)
+- [Python Dependency Management](python-dependency-management.md)
+- [Unit Tests in Python](python-unit-tests.md)

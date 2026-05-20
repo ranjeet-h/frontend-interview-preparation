@@ -1,0 +1,36 @@
+# Mongoose Concept Pages
+
+Dedicated pages for Mongoose.
+
+## Pages
+
+- [What is Mongoose](what-is-mongoose.md)
+- [Why use Mongoose with MongoDB](why-use-mongoose-with-mongodb.md)
+- [What is a schema](what-is-a-schema.md)
+- [What is a model](what-is-a-model.md)
+- [What is a document](what-is-a-document.md)
+- [What are schema types](what-are-schema-types.md)
+- [What are validators](what-are-validators.md)
+- [What are custom validators](what-are-custom-validators.md)
+- [What are virtuals](what-are-virtuals.md)
+- [What are getters and setters](what-are-getters-and-setters.md)
+- [What are middleware hooks](what-are-middleware-hooks.md)
+- [What is pre-save hook](what-is-pre-save-hook.md)
+- [What is post-save hook](what-is-post-save-hook.md)
+- [What is populate](what-is-populate.md)
+- [What is lean query](what-is-lean-query.md)
+- [Why use lean](why-use-lean.md)
+- [What is discriminator](what-is-discriminator.md)
+- [How do you define indexes in Mongoose](how-do-you-define-indexes-in-mongoose.md)
+- [How do you handle unique fields](how-do-you-handle-unique-fields.md)
+- [How do you handle timestamps](how-do-you-handle-timestamps.md)
+- [How do you implement soft delete](how-do-you-implement-soft-delete.md)
+- [How do you hash password before saving user](how-do-you-hash-password-before-saving-user.md)
+- [How do you validate nested schemas](how-do-you-validate-nested-schemas.md)
+- [How do you handle references](how-do-you-handle-references.md)
+- [How do you optimize Mongoose queries](how-do-you-optimize-mongoose-queries.md)
+- [How do you prevent N+1 queries with populate](how-do-you-prevent-n-1-queries-with-populate.md)
+- [What is aggregation in Mongoose](what-is-aggregation-in-mongoose.md)
+- [How do you handle transactions in Mongoose](how-do-you-handle-transactions-in-mongoose.md)
+- [How do you handle connection errors](how-do-you-handle-connection-errors.md)
+- [How do you structure Mongoose models](how-do-you-structure-mongoose-models.md)

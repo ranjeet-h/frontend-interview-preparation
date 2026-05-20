@@ -1,0 +1,36 @@
+# MySQL Concept Pages
+
+Dedicated pages for MySQL.
+
+## Pages
+
+- [What is MySQL](what-is-mysql.md)
+- [What is InnoDB](what-is-innodb.md)
+- [What is MyISAM](what-is-myisam.md)
+- [InnoDB vs MyISAM](innodb-vs-myisam.md)
+- [What is auto increment](what-is-auto-increment.md)
+- [What is MySQL storage engine](what-is-mysql-storage-engine.md)
+- [What is MySQL indexing](what-is-mysql-indexing.md)
+- [What is composite index in MySQL](what-is-composite-index-in-mysql.md)
+- [What is full-text index in MySQL](what-is-full-text-index-in-mysql.md)
+- [What is EXPLAIN in MySQL](what-is-explain-in-mysql.md)
+- [How do you optimize slow MySQL queries](how-do-you-optimize-slow-mysql-queries.md)
+- [What is MySQL query cache](what-is-mysql-query-cache.md)
+- [What are MySQL isolation levels](what-are-mysql-isolation-levels.md)
+- [What is gap lock](what-is-gap-lock.md)
+- [What is next-key lock](what-is-next-key-lock.md)
+- [What is deadlock in MySQL](what-is-deadlock-in-mysql.md)
+- [How do you debug MySQL deadlocks](how-do-you-debug-mysql-deadlocks.md)
+- [What is MySQL replication](what-is-mysql-replication.md)
+- [What is binlog](what-is-binlog.md)
+- [What is master-slave replication](what-is-master-slave-replication.md)
+- [What is read replica](what-is-read-replica.md)
+- [What is connection pool in MySQL](what-is-connection-pool-in-mysql.md)
+- [How do you handle migrations in MySQL](how-do-you-handle-migrations-in-mysql.md)
+- [How do you store JSON in MySQL](how-do-you-store-json-in-mysql.md)
+- [What are MySQL JSON functions](what-are-mysql-json-functions.md)
+- [What is VARCHAR vs TEXT](what-is-varchar-vs-text.md)
+- [What is DATETIME vs TIMESTAMP](what-is-datetime-vs-timestamp.md)
+- [What is collation](what-is-collation.md)
+- [What is charset](what-is-charset.md)
+- [How do you backup and restore MySQL database](how-do-you-backup-and-restore-mysql-database.md)

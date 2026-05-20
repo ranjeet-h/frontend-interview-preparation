@@ -3,6 +3,53 @@
 JavaScript is the language layer that powers the browser, your algorithms, and the reusable
 patterns interviewers probe from multiple angles.
 
+## Migration tracker
+
+| Chapter | Purpose |
+|---|---|
+| [JavaScript Missing Concepts Audit](missing-concepts-audit.md) | Tracks frontend-interview JavaScript topics that still need dedicated concept pages |
+
+## Concept chapters (12-section study format)
+
+| Chapter | Focus |
+|---|---|
+| [Memory Heap](concepts/memory-heap.md) | Heap storage, object references, leaks |
+| [Global Execution Context](concepts/global-execution-context.md) | Top-level script environment and globals |
+| [Function Execution Context](concepts/function-execution-context.md) | Per-call runtime environment and stack frames |
+| [JavaScript and Rendering Pipeline Interaction](concepts/rendering-pipeline-interaction.md) | Main thread, rendering opportunities, UI blocking |
+| [Lexical Scoping](concepts/lexical-scoping.md) | Source-location based variable access |
+| [Closure Memory Retention](concepts/closure-memory-retention.md) | Captured variables, reachability, leak risk |
+| [Closures in Loops](concepts/closures-in-loops.md) | `var` vs `let`, per-iteration bindings |
+| [Closures in Event Handlers](concepts/closures-in-event-handlers.md) | Handler context, retained values, cleanup |
+| [Primitive vs Reference Values](concepts/primitive-vs-reference-values.md) | Value copy vs shared object identity |
+| [Array Mutation](concepts/array-mutation.md) | Mutating methods, immutable array updates |
+| [`flatMap`](concepts/flatmap.md) | Map plus one-level flatten |
+| [Promise States](concepts/promise-states.md) | Pending, fulfilled, rejected, settled |
+| [Timeout Handling](concepts/timeout-handling.md) | Async deadlines, abort, timeout errors |
+| [Passive Listeners](concepts/passive-listeners.md) | Non-blocking scroll/touch listeners |
+| [Custom Events](concepts/custom-events.md) | DOM event publishing with `detail` |
+| [Pointer Events](concepts/pointer-events.md) | Unified mouse/touch/pen input |
+| [Focus and Blur](concepts/focus-and-blur.md) | Keyboard focus, blur, accessible UI |
+| [Private Fields](concepts/private-fields.md) | Runtime class-private `#field` |
+| [Copying Array Methods](concepts/copying-array-methods.md) | `toSorted`, `toReversed`, `toSpliced` |
+| [Barrel Files](concepts/barrel-files.md) | Re-export hubs and tree-shaking risks |
+| [IndexedDB](concepts/indexeddb.md) | Async browser database |
+| [Storage Event](concepts/storage-event.md) | localStorage cross-tab notifications |
+| [BroadcastChannel](concepts/broadcast-channel.md) | Same-origin tab messaging |
+| [DOM-Based XSS](concepts/dom-based-xss.md) | Client-side script injection through DOM sinks |
+| [Open Redirects](concepts/open-redirects.md) | Unsafe redirect target handling |
+| [Layout Thrashing](concepts/layout-thrashing.md) | Repeated layout read/write reflows |
+| [Detached DOM Nodes](concepts/detached-dom-nodes.md) | Removed DOM retained by JS references |
+| [Heap Snapshots](concepts/heap-snapshots.md) | DevTools memory leak evidence |
+| [History API](concepts/history-api.md) | URL/history updates without reload |
+| [File API](concepts/file-api.md) | User-selected file metadata/content |
+| [Clipboard API](concepts/clipboard-api.md) | Permissioned clipboard read/write |
+| [Performance API](concepts/performance-api.md) | Browser/app timing measurement |
+| [Query String Parser](concepts/query-string-parser.md) | URL query parsing practice |
+| [Virtual List Basics](concepts/virtual-list-basics.md) | Windowed rendering for huge lists |
+| [Custom `new`](concepts/custom-new.md) | Constructor/prototype creation algorithm |
+| [Custom `instanceof`](concepts/custom-instanceof.md) | Prototype-chain membership check |
+
 ## Chapters (theory — source: `02-javascript-theory-concepts.md`)
 
 | Chapter | Lines | Focus |

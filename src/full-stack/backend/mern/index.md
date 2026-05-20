@@ -1,0 +1,36 @@
+# MERN Backend Pages
+
+Dedicated pages for MERN backend.
+
+## Pages
+
+- [How does MERN architecture work](how-does-mern-architecture-work.md)
+- [How does React communicate with Express backend](how-does-react-communicate-with-express-backend.md)
+- [How do you design auth in MERN](how-do-you-design-auth-in-mern.md)
+- [How do you store JWT securely in MERN](how-do-you-store-jwt-securely-in-mern.md)
+- [How do you handle refresh tokens in MERN](how-do-you-handle-refresh-tokens-in-mern.md)
+- [How do you protect frontend routes](how-do-you-protect-frontend-routes.md)
+- [How do you protect backend routes](how-do-you-protect-backend-routes.md)
+- [Why is frontend route protection not enough](why-is-frontend-route-protection-not-enough.md)
+- [How do you handle CORS in MERN](how-do-you-handle-cors-in-mern.md)
+- [How do you structure a MERN backend](how-do-you-structure-a-mern-backend.md)
+- [How do you handle API errors in MERN](how-do-you-handle-api-errors-in-mern.md)
+- [How do you handle form validation from React to backend](how-do-you-handle-form-validation-from-react-to-backend.md)
+- [How do you handle file uploads in MERN](how-do-you-handle-file-uploads-in-mern.md)
+- [How do you implement image upload with MongoDB](how-do-you-implement-image-upload-with-mongodb.md)
+- [Should files be stored in MongoDB or object storage](should-files-be-stored-in-mongodb-or-object-storage.md)
+- [How do you implement search in MERN](how-do-you-implement-search-in-mern.md)
+- [How do you implement pagination in MERN](how-do-you-implement-pagination-in-mern.md)
+- [How do you implement real-time chat in MERN](how-do-you-implement-real-time-chat-in-mern.md)
+- [How do you implement notifications in MERN](how-do-you-implement-notifications-in-mern.md)
+- [How do you handle socket authentication](how-do-you-handle-socket-authentication.md)
+- [How do you handle optimistic UI with backend](how-do-you-handle-optimistic-ui-with-backend.md)
+- [How do you avoid duplicate API calls](how-do-you-avoid-duplicate-api-calls.md)
+- [How do you handle race conditions in search](how-do-you-handle-race-conditions-in-search.md)
+- [How do you handle loading/error states](how-do-you-handle-loading-error-states.md)
+- [How do you design admin APIs](how-do-you-design-admin-apis.md)
+- [How do you handle permissions](how-do-you-handle-permissions.md)
+- [How do you deploy MERN app](how-do-you-deploy-mern-app.md)
+- [How do you connect frontend and backend in production](how-do-you-connect-frontend-and-backend-in-production.md)
+- [How do you manage environment variables](how-do-you-manage-environment-variables.md)
+- [How do you monitor MERN backend](how-do-you-monitor-mern-backend.md)

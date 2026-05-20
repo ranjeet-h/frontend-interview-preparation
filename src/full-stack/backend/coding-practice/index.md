@@ -1,0 +1,36 @@
+# Backend Coding Practice Pages
+
+Dedicated pages for backend coding.
+
+## Pages
+
+- [Implement JWT authentication middleware](implement-jwt-authentication-middleware.md)
+- [Implement role-based authorization middleware](implement-role-based-authorization-middleware.md)
+- [Implement request validation middleware](implement-request-validation-middleware.md)
+- [Implement global error handler](implement-global-error-handler.md)
+- [Implement pagination helper](implement-pagination-helper.md)
+- [Implement sorting and filtering helper](implement-sorting-and-filtering-helper.md)
+- [Implement password hashing and comparison](implement-password-hashing-and-comparison.md)
+- [Implement refresh token flow](implement-refresh-token-flow.md)
+- [Implement forgot password flow](implement-forgot-password-flow.md)
+- [Implement file upload API](implement-file-upload-api.md)
+- [Implement CSV upload parser](implement-csv-upload-parser.md)
+- [Implement bulk insert API](implement-bulk-insert-api.md)
+- [Implement transaction-safe order creation](implement-transaction-safe-order-creation.md)
+- [Implement retry function](implement-retry-function.md)
+- [Implement rate limiter](implement-rate-limiter.md)
+- [Implement LRU cache](implement-lru-cache.md)
+- [Implement Redis cache wrapper](implement-redis-cache-wrapper.md)
+- [Implement background job processor](implement-background-job-processor.md)
+- [Implement email queue](implement-email-queue.md)
+- [Implement webhook signature verification](implement-webhook-signature-verification.md)
+- [Implement idempotency key handling](implement-idempotency-key-handling.md)
+- [Implement audit logging](implement-audit-logging.md)
+- [Implement soft delete](implement-soft-delete.md)
+- [Implement search API](implement-search-api.md)
+- [Implement autocomplete API](implement-autocomplete-api.md)
+- [Implement nested comments API](implement-nested-comments-api.md)
+- [Implement tree/category API](implement-tree-category-api.md)
+- [Implement many-to-many relationship API](implement-many-to-many-relationship-api.md)
+- [Implement chat message API](implement-chat-message-api.md)
+- [Implement notification API](implement-notification-api.md)

@@ -1,24 +1,60 @@
 # Study System
 
-This book uses one memory-first structure for every chapter:
+This mdBook uses one memory-first structure for concept chapters. Every new concept page should follow this format unless it is clearly a landing page, pure coding challenge, output question, source map, or index.
 
-1. Question
-2. Idea to remember
-3. Picture it
-4. Say it back
-5. Worked example
-6. Invariant
-7. Why this works
-8. Closed-book drill
-9. Common traps
-10. Pattern transfer
-11. Interview strategy
-12. Memory-map Mermaid diagram
-13. Quick self-check
-14. Solution
-15. Solution walkthrough
-16. Original source in a collapsible appendix
-17. One-sentence recap
+## Concept Chapter Template
+
+```md
+# Concept Name
+
+## Detailed explanation
+Explain the concept properly before the learning sections. This should be the first real teaching block: define the concept, explain how it works, when it appears in real projects, and why interviewers care about it.
+
+## 1. One-line mental model
+Explain the concept in one simple sentence.
+
+## 2. Problem it solves
+What pain existed before this concept?
+
+## 3. Core idea
+Explain the concept in 3-5 clear points.
+
+## 4. Visual / analogy
+Use one diagram, analogy, or flow.
+
+## 5. Minimal example
+Show the smallest possible working example.
+
+## 6. Real-world example
+Show how it appears in production code.
+
+## 7. Common interview questions
+Add 5-10 questions.
+
+## 8. Active recall test
+Ask questions without answers first.
+
+## 9. Mistakes / traps
+Mention common wrong answers and misconceptions.
+
+## 10. Compare with related concepts
+Explain what it is not.
+
+## 11. Summary from memory
+Ask the reader to explain the concept in their own words.
+
+## 12. Spaced revision prompts
+Create quick revision questions for later.
+```
+
+## Chapter Type Rules
+
+- **Concept chapters:** use the 12-section template exactly.
+- **Question banks:** may group many questions, but each detailed answer should still use the same mental-model, problem, example, traps, and comparison flow.
+- **Coding challenge chapters:** keep problem, constraints, solution, walkthrough, complexity, traps, and follow-ups.
+- **Output question chapters:** keep question, prediction, answer, why, trap, and variation.
+- **Index pages:** only navigation and study guidance.
+- **Legacy source include pages:** acceptable during migration, but new hand-written material should use the 12-section template.
 
 ## Cross-topic principles
 

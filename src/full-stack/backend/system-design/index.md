@@ -1,0 +1,36 @@
+# Backend System Design Pages
+
+Dedicated pages for backend system design.
+
+## Pages
+
+- [Design a URL shortener](design-a-url-shortener.md)
+- [Design a file upload service](design-a-file-upload-service.md)
+- [Design an image upload and resize service](design-an-image-upload-and-resize-service.md)
+- [Design an authentication system](design-an-authentication-system.md)
+- [Design a role-based access system](design-a-role-based-access-system.md)
+- [Design a notification system](design-a-notification-system.md)
+- [Design an email delivery system](design-an-email-delivery-system.md)
+- [Design a real-time chat system](design-a-real-time-chat-system.md)
+- [Design a logging system](design-a-logging-system.md)
+- [Design an audit log system](design-an-audit-log-system.md)
+- [Design a payment system](design-a-payment-system.md)
+- [Design an order management system](design-an-order-management-system.md)
+- [Design an inventory management system](design-an-inventory-management-system.md)
+- [Design a booking system](design-a-booking-system.md)
+- [Design a ride booking backend](design-a-ride-booking-backend.md)
+- [Design a food delivery backend](design-a-food-delivery-backend.md)
+- [Design a social media feed](design-a-social-media-feed.md)
+- [Design a search autocomplete system](design-a-search-autocomplete-system.md)
+- [Design a rate limiter](design-a-rate-limiter.md)
+- [Design a recommendation backend](design-a-recommendation-backend.md)
+- [Design a multi-tenant SaaS backend](design-a-multi-tenant-saas-backend.md)
+- [Design a webhook processing system](design-a-webhook-processing-system.md)
+- [Design a background job system](design-a-background-job-system.md)
+- [Design a report generation system](design-a-report-generation-system.md)
+- [Design an analytics dashboard backend](design-an-analytics-dashboard-backend.md)
+- [Design a comments system](design-a-comments-system.md)
+- [Design a like/follow system](design-a-like-follow-system.md)
+- [Design a scalable REST API](design-a-scalable-rest-api.md)
+- [Design a cache layer](design-a-cache-layer.md)
+- [Design a distributed notification service](design-a-distributed-notification-service.md)

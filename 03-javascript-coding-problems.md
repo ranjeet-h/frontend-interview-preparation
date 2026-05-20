@@ -2186,13 +2186,7 @@ function decodeString(s) {
 
 <div style="text-align: center">⁂</div>
 
- 
 
-# i want lot of questions on what will be the output of this in big topics like
-
-closuers, hoisting, promices, async await, event loop give me alto with answers so i can be well prepared for it give me atleas 40
-
-Of course. Here are over 40 "What will be the output?" questions covering closures, hoisting, promises, async/await, and the event loop, complete with answers and explanations to help you prepare for your JavaScript interviews.
 
 ### Hoisting
 

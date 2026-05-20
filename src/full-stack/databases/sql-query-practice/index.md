@@ -1,0 +1,36 @@
+# SQL Query Practice Pages
+
+Dedicated pages for SQL query practice.
+
+## Pages
+
+- [Write a query to find duplicate emails](write-a-query-to-find-duplicate-emails.md)
+- [Write a query to get the second highest salary](write-a-query-to-get-the-second-highest-salary.md)
+- [Write a query to get the nth highest salary](write-a-query-to-get-the-nth-highest-salary.md)
+- [Write a query to count users by role](write-a-query-to-count-users-by-role.md)
+- [Write a query to get users with no orders](write-a-query-to-get-users-with-no-orders.md)
+- [Write a query to get orders with user details](write-a-query-to-get-orders-with-user-details.md)
+- [Write a query using INNER JOIN](write-a-query-using-inner-join.md)
+- [Write a query using LEFT JOIN](write-a-query-using-left-join.md)
+- [Write a query using RIGHT JOIN](write-a-query-using-right-join.md)
+- [Write a query using FULL OUTER JOIN](write-a-query-using-full-outer-join.md)
+- [Write a query using GROUP BY](write-a-query-using-group-by.md)
+- [Write a query using HAVING](write-a-query-using-having.md)
+- [Write a query using subquery](write-a-query-using-subquery.md)
+- [Write a query using CTE](write-a-query-using-cte.md)
+- [Write a query using window functions](write-a-query-using-window-functions.md)
+- [Write a query using ROW_NUMBER](write-a-query-using-row-number.md)
+- [Write a query using RANK](write-a-query-using-rank.md)
+- [Write a query using DENSE_RANK](write-a-query-using-dense-rank.md)
+- [Write a query to calculate monthly revenue](write-a-query-to-calculate-monthly-revenue.md)
+- [Write a query to find customers who ordered in the last 30 days](write-a-query-to-find-customers-who-ordered-in-the-last-30-days.md)
+- [Write a query to find top 5 products by sales](write-a-query-to-find-top-5-products-by-sales.md)
+- [Write a query to find inactive users](write-a-query-to-find-inactive-users.md)
+- [Write a query to soft delete records](write-a-query-to-soft-delete-records.md)
+- [Write a query to paginate records](write-a-query-to-paginate-records.md)
+- [Write a query to filter by date range](write-a-query-to-filter-by-date-range.md)
+- [Write a query to calculate running total](write-a-query-to-calculate-running-total.md)
+- [Write a query to find parent-child hierarchy](write-a-query-to-find-parent-child-hierarchy.md)
+- [Write a query to update records using join](write-a-query-to-update-records-using-join.md)
+- [Write a query to delete duplicate rows](write-a-query-to-delete-duplicate-rows.md)
+- [Write a query to aggregate JSON data](write-a-query-to-aggregate-json-data.md)
