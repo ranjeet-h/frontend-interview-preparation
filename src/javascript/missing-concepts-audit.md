@@ -106,6 +106,29 @@ These topics from your JavaScript priority list originally had no meaningful cov
 
 These topics exist somewhere in the mdBook/source material, but they are not yet split into one concept page with the required study format.
 
+The highest-priority senior frontend gaps from this section have been promoted into dedicated pages:
+
+- Call stack — added as [Call Stack](concepts/call-stack.md)
+- Execution context — added as [Execution Context](concepts/execution-context.md)
+- Scope chain — added as [Scope Chain](concepts/scope-chain.md)
+- Lexical environment — added as [Lexical Environment](concepts/lexical-environment.md)
+- Hoisting — added as [Hoisting](concepts/hoisting.md)
+- Temporal Dead Zone — added as [Temporal Dead Zone](concepts/temporal-dead-zone.md)
+- Event loop — added as [Event Loop](concepts/event-loop.md)
+- Microtask queue — added as [Microtask Queue](concepts/microtask-queue.md)
+- Macrotask queue — added as [Macrotask Queue](concepts/macrotask-queue.md)
+- Closures — added as [Closures](concepts/closures.md)
+- `this` binding — added as [`this` Binding](concepts/this-binding.md)
+- Shallow copy vs deep copy — added as [Shallow Copy vs Deep Copy](concepts/shallow-copy-vs-deep-copy.md)
+- Promise chaining — added as [Promise Chaining](concepts/promise-chaining.md)
+- Async/await — added as [Async/Await](concepts/async-await.md)
+- DOM event propagation — added as [DOM Event Propagation](concepts/dom-event-propagation.md)
+- Type coercion and equality — added as [Type Coercion and Equality](concepts/type-coercion-and-equality.md)
+- Browser storage and token risks — added as [Browser Storage and Token Risks](concepts/browser-storage-token-risks.md)
+- XSS, CSRF, CORS, CSP — added as [XSS, CSRF, CORS, and CSP](concepts/xss-csrf-cors-csp.md)
+- Debounce and throttle — added as [Debounce and Throttle](concepts/debounce-and-throttle.md)
+- Garbage collection and memory leaks — added as [Garbage Collection and Memory Leaks](concepts/garbage-collection-memory-leaks.md)
+
 ### Execution Model
 
 - Call stack
@@ -402,25 +425,20 @@ Existing output chapters already include many examples. They should be grouped i
 
 ## 5. Recommended Next Work Order
 
-All **truly not found** items are now added as dedicated concept pages. Next pass: convert **broadly covered** legacy topics into dedicated pages, starting here:
+All **truly not found** items and the first senior-priority **broadly covered** concept batch are now added as dedicated concept pages. Next pass: split coding and output practice into focused pages:
 
-1. Call stack
-2. Execution context
-3. Scope chain
-4. Lexical environment
-5. Hoisting
-6. Temporal Dead Zone
-7. Event loop
-8. Microtask queue
-9. Macrotask queue
-10. Closures
-11. `this` binding
-12. Shallow copy vs deep copy
-13. Promise chaining
-14. Async/await
-15. DOM event propagation
-16. Type coercion and equality
-17. Browser storage and token risks
-18. XSS, CSRF, CORS, CSP
-19. Debounce and throttle
-20. Garbage collection and memory leaks
+1. Implement debounce
+2. Implement throttle
+3. Implement deep clone
+4. Implement deep equal
+5. Implement curry
+6. Implement memoize
+7. Implement event emitter
+8. Implement `Promise.all`
+9. Implement promise retry
+10. Implement concurrency limiter
+11. Hoisting output questions
+12. Closure output questions
+13. Event loop output questions
+14. Promise output questions
+15. `this` binding output questions
