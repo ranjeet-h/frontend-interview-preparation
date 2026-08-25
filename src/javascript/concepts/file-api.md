@@ -1,111 +1,229 @@
 # File API
 
-## Detailed explanation
-File API lets browser JavaScript read metadata and content from files selected by user through file inputs or drag-and-drop. It powers uploads, previews, CSV import, image validation, and local file processing.
+## 1. Why This Exists — The Problem First
 
-Security model: web pages cannot freely read arbitrary files; user must choose files.
+An upload screen often needs to do useful work before a request is sent: show an image preview, reject a 20 MB file when the limit is 5 MB, parse a CSV, or tell the user that the chosen file is not an accepted format. The browser must make that possible without allowing a random website to scan the user's Documents folder. The File API is the boundary that gives a page access to files the user has deliberately selected or dropped, and only then lets the page inspect or read them.
 
-## 1. One-line mental model
-File API lets app work with user-selected files.
+That boundary matters in both directions: without it, browser apps could not build uploads and local import tools; without the user's selection step, any page could read private files.
 
-## 2. Problem it solves
-Frontend apps need upload previews, validation, and client-side parsing before sending files.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- User selects files.
-- Files appear as `FileList`.
-- `File` has name/type/size.
-- Read with `FileReader`, streams, or object URLs.
-- Validate type/size before upload.
+Think of a secure intake desk at a company. A visitor (the user) chooses one or more documents and hands them to the receptionist. The receptionist writes down each document's name, size, and category on an intake list, but does not hand the application an open door to the visitor's filing cabinet.
 
-## 4. Visual / analogy
-User hands app a file; app can inspect only that file.
+The mapping is direct:
 
-```txt
-input[type=file] -> FileList -> File
+- The file picker or drop zone is the intake desk where the user presents files.
+- `FileList` is the receptionist's list of the presented documents.
+- A `File` is one document on that list. Its metadata is available immediately.
+- `FileReader`, `file.text()`, `file.arrayBuffer()`, and `file.stream()` are different ways of opening and reading the document's contents.
+- `URL.createObjectURL(file)` is a temporary badge that lets an image, video, or other browser consumer refer to the presented document without first copying its contents into a JavaScript string.
+- Server-side validation is the final security inspection. The receptionist's label is useful for routing and user feedback, but it is not proof that the document is safe.
+
+## 3. How It Actually Works — The Full Explanation
+
+The normal flow is:
+
+```text
+user action -> FileList -> File metadata -> optional content read -> upload or local processing
 ```
 
-## 5. Minimal example
+1. A user chooses files through `<input type="file">`, or drops files onto a page. For an input, the browser exposes the selection through `input.files`; for a drop, it is available through `event.dataTransfer.files`.
+2. The result is a `FileList`, an array-like collection supplied by the browser. It has `length` and indexed access, but it is not a normal JavaScript array that your code creates and mutates.
+3. Each item is a `File`, which extends `Blob`. It provides `name`, `size` in bytes, `type` as a browser-provided MIME hint, and `lastModified`. A `File` can be inspected without reading its entire payload.
+4. Reading content is explicit. `await file.text()` is convenient for text, `await file.arrayBuffer()` gives binary data, and `file.stream()` exposes a `ReadableStream` for incremental processing. `FileReader` is the older event-based API and is still useful in code that uses its event lifecycle or needs broad legacy-style compatibility.
+5. A `Blob` URL gives browser APIs a URL-shaped reference to a `File` or `Blob`. It is usually a good fit for a preview. Every call creates a new URL, even for the same file, so a long-lived application should call `URL.revokeObjectURL()` when that preview is no longer needed.
+
+The browser's security rule is about how the `File` was obtained. A page cannot ask for an arbitrary path such as `/Users/alice/secret.txt` and read it through the File API. The user must grant access by choosing or dropping something. A script can also construct a `File` from bytes it already has, but that does not give it access to new local files.
+
+The selection itself is not the upload. A `File` remains client-side until code sends it, commonly in `FormData` with `fetch`. Conversely, reading a file locally does not make the data trustworthy: the browser's `type`, the filename extension, and even client-side validation can be wrong or deliberately bypassed. The server must validate size, format, authorization, and content again.
+
+For previews, object URLs and data URLs have different costs. An object URL is a short-lived browser-managed reference. `FileReader.readAsDataURL()` reads the whole file and produces a Base64 data URL, which is convenient for small files but increases representation size and retains a large string in memory. Neither choice is a security validation step.
+
+## 4. Real Code — See It Working
+
+**Select, inspect, validate, and upload.**
+
+This is a complete browser example. The `accept` attribute helps the picker filter choices, but the JavaScript check is still needed for immediate feedback, and the server must check again.
+
+```html
+<input id="picker" type="file" accept="image/png,image/jpeg" />
+<p id="status"></p>
+
+<script>
+  const picker = document.querySelector("#picker");
+  const status = document.querySelector("#status");
+  const maxBytes = 5 * 1024 * 1024;
+
+  picker.addEventListener("change", async () => {
+    const file = picker.files[0];
+    if (!file) return;
+
+    if (file.size > maxBytes) {
+      status.textContent = "Choose an image smaller than 5 MB.";
+      picker.value = "";
+      return;
+    }
+
+    const allowedTypes = new Set(["image/png", "image/jpeg"]);
+    if (!allowedTypes.has(file.type)) {
+      status.textContent = "Only PNG and JPEG images are accepted.";
+      picker.value = "";
+      return;
+    }
+
+    status.textContent = `${file.name}: ${file.size} bytes`;
+
+    // FormData keeps the original file payload; it does not require us to
+    // turn the file into a Base64 string first.
+    const body = new FormData();
+    body.append("avatar", file, file.name);
+
+    // This local mock makes the example runnable without a backend. Replace
+    // it with the real fetch call when wiring the form to an API.
+    const mockFetch = async (url, options) => {
+      if (url !== "/api/avatar" || options.method !== "POST" || options.body !== body) {
+        throw new Error("Unexpected upload request");
+      }
+
+      return { ok: true, status: 201 };
+    };
+
+    const response = await mockFetch("/api/avatar", { method: "POST", body });
+    if (!response.ok) throw new Error(`Upload failed with status ${response.status}`);
+
+    // Clearing allows selecting the same path again to produce another
+    // change event after this processing flow finishes.
+    picker.value = "";
+    status.textContent += " Upload complete (local demo).";
+  });
+</script>
+```
+
+**Preview an image with an object URL.**
 
 ```js
-const file = input.files[0];
-console.log(file.name, file.size, file.type);
+function showPreview(file, image) {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Preview requires an image file");
+  }
+
+  const previewUrl = objectUrlApi.createObjectURL(file);
+  image.src = previewUrl;
+
+  // Revoke it when this preview is replaced or removed from the UI.
+  // Do not revoke immediately if the image still needs the URL for actions
+  // such as opening or saving the image.
+  return () => objectUrlApi.revokeObjectURL(previewUrl);
+}
+
+const previewUrls = new Set();
+const objectUrlApi = {
+  createObjectURL(file) {
+    const url = `blob:demo-${file.name}`;
+    previewUrls.add(url);
+    return url;
+  },
+  revokeObjectURL(url) {
+    previewUrls.delete(url);
+  },
+};
+
+
+const image = { src: "" };
+const file = { name: "avatar.png", type: "image/png" };
+const releasePreview = showPreview(file, image);
+if (image.src !== "blob:demo-avatar.png") {
+  throw new Error("Preview URL was not assigned");
+}
+releasePreview();
+if (previewUrls.size !== 0) throw new Error("Preview URL was not revoked");
 ```
 
-## 6. Real-world example
+**Read a text file without loading it through a FileReader callback.**
 
 ```js
-const previewUrl = URL.createObjectURL(file);
-image.src = previewUrl;
-URL.revokeObjectURL(previewUrl);
+async function readCsv(file) {
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("CSV is too large for this import screen");
+  }
+
+  const text = await file.text();
+  return text
+    .trim()
+    .split("\n")
+    .map((line) => line.split(","));
+}
+
+(async () => {
+  const csvFile = {
+    size: 20,
+    async text() {
+      return "name,score\nAda,10\nLinus,9";
+    },
+  };
+
+  const rows = await readCsv(csvFile);
+  const expectedRows = [["name", "score"], ["Ada", "10"], ["Linus", "9"]];
+  if (JSON.stringify(rows) !== JSON.stringify(expectedRows)) {
+    throw new Error("CSV was not parsed as expected");
+  }
+})().catch((error) => {
+  throw error;
+});
 ```
 
-## 7. Common interview questions
+For a large file, prefer `file.stream()` and process chunks rather than converting the entire file to one string. For older event-based code, `FileReader.readAsText(file)` and `FileReader.readAsArrayBuffer(file)` perform the read asynchronously and report completion or errors through events.
 
-#### What is File API?
-- **The Engine Mechanism (Why it behaves this way):** The HTML5 File API is a web-browser host environment API that gives JavaScript web applications a secure, read-only interface to interact with files from the user's local filesystem. Operating under strict browser sandboxing rules, JavaScript cannot initiate access to files arbitrarily. Instead, user intent is required to yield a file handle—either through an `<input type="file">` interaction, a Drag-and-Drop operation, or the File System Access API. A file is represented in JavaScript as a `File` object, which is a specialized subclass of `Blob` (Binary Large Object). The browser allocates a pointer to the file on disk without loading the whole file into the V8 memory heap, preventing memory bloat for large files.
-- **The Unforgettable Mental Model:** A secure banking window. The customer (user) slides a specific document through the secure drawer (file input/drag-and-drop). The teller (JavaScript) can read and inspect this specific document, but has absolutely no access to the customer's wallet or briefcase (the rest of the user's filesystem).
-- **The Trap:** Believing that instantiating a `File` object immediately loads the binary file data into the browser's active RAM. In reality, the `File` object is merely a metadata reference holding a file descriptor. The actual byte streams are only pulled into V8 heap memory when explicit reading methods (like `FileReader.readAsArrayBuffer()` or streams) are executed.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The File API is a highly secure client-side browser interface that allows web applications to inspect and read user-selected files. It extends the `Blob` primitive to represent physical files on disk. The browser's sandboxed security model prohibits arbitrary filesystem access, meaning JavaScript can only obtain a `File` reference following an explicit user event like file selection or drag-and-drop."
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### How get selected file?
-- **The Engine Mechanism (Why it behaves this way):** When a user selects a file via an HTML `<input type="file">`, the browser's layout engine captures the file descriptors from the operating system and populates the input's `files` property with a read-only, array-like `FileList` object. Because standard array indices are not directly writable on `FileList`, we access individual files using brackets (`input.files[0]`) or the `FileList.item()` method. In a drag-and-drop context, the browser dispatches a `dragover` and `drop` event; the developer intercepts the `drop` event, calls `event.preventDefault()` to block the browser's default behavior of navigating to the dropped file, and extracts the `FileList` via `event.dataTransfer.files`.
-- **The Unforgettable Mental Model:** A security guard's clipboard. When the visitor arrives, the guard logs their name, ID, and size on a list (`FileList`). The JavaScript code is the manager who reads the clipboard using `list[0]` to see who has walked through the door.
-- **The Trap:** Forgetting to clear the input value (`input.value = null` or `input.value = ''`) after processing a file. If the user selects a file, deletes it or changes it, and then re-selects the exact same file path, the browser's `change` event will not fire because the input value has not changed.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: To retrieve a selected file, we listen to the `change` event on a file input element and access its `.files` property, which returns an array-like `FileList` containing `File` objects. For drag-and-drop, we intercept the `drop` event, suppress the default browser behavior using `preventDefault`, and access the files via `event.dataTransfer.files`. Crucially, always reset the input value to an empty string after extraction so that selecting the same file consecutively triggers the change event again."
+**Q: What is the File API, and what security boundary does it provide?**
 
-#### How preview image?
-- **The Engine Mechanism (Why it behaves this way):** There are two standard approaches: `URL.createObjectURL(file)` and `FileReader`. `URL.createObjectURL` is a synchronous C++ engine call that registers a unique, temporary string token URL mapping to the local file (e.g., `blob:https://domain/uuid`). The browser binds this token directly to the file descriptor on disk, bypassing V8 memory completely. The alternative, `FileReader.readAsDataURL(file)`, is an asynchronous, event-driven I/O operation. The browser reads the file from disk, encodes the entire binary byte payload into a Base64 string, and passes it to V8 memory as a massive text data URL. This data URL is then set as the image's `src`.
-- **The Unforgettable Mental Model:** `URL.createObjectURL` is like giving someone a temporary locker key (a short string) that points directly to the locker holding the physical bag. `FileReader` is like physically opening the bag, photocopying every single pixel in it, encoding it into code letters, and handing a huge pile of photocopies to the client.
-- **The Trap:** Using `FileReader` to preview very large files (e.g., 50MB images). Converting a 50MB binary file into a Base64 string increases its size by ~33%, bloating V8 heap memory and potentially locking the browser's main execution thread due to intensive string encoding.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: To preview an image, the most performant approach is using `URL.createObjectURL(file)`. This synchronously creates a temporary, lightweight pointer URL that maps directly to the file on disk, avoiding loading the binary data into JavaScript's heap memory. For small assets or when we need to persist the image data in storage, `FileReader.readAsDataURL` can be used to asynchronously serialize the file into a Base64-encoded data URI, though we must avoid this for large files to prevent thread jank."
+It is a set of browser APIs for working with `File` and `Blob` objects supplied by user-facing browser actions or created from data the page already owns. A page cannot use it to enumerate or read arbitrary local paths. The user must select or drop the file first, which gives the page a handle to that selected data. The API is therefore a controlled input mechanism, not general filesystem access.
 
-#### Why revoke object URL?
-- **The Engine Mechanism (Why it behaves this way):** Object URLs generated via `URL.createObjectURL()` are tied to the lifetime of the document (the page session). Because they represent a strong C++ reference pointing directly to the file stream on disk, the browser cannot release the file descriptor or reclaim the disk/memory cache resources as long as the object URL remains active in the document registry. To prevent this severe memory and resource leak, developers must call `URL.revokeObjectURL(url)`. Once revoked, the browser removes the mapping from its internal C++ registry, allowing the underlying resource to be garbage collected and freeing up file system handles.
-- **The Unforgettable Mental Model:** Checking out of a library with a temp card. If you keep the library card active in your wallet, the library must keep the book reserved for you forever. Revoking the card is like handing it back to the librarian so the book can be returned to the shelf and read by others.
-- **The Trap:** Revoking an object URL *before* the browser has finished rendering or decoding the image. If you call `img.src = url; URL.revokeObjectURL(url);` synchronously, the browser might fail to fetch the image bytes because the C++ lookup reference is deleted before the rendering engine's asynchronous image-decoding thread gets to fetch it. You should revoke it inside the image's `onload` event handler instead.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Revoking an object URL via `URL.revokeObjectURL` is critical because the browser maintains a strong internal reference to the file on disk for every generated object URL. This reference persists for the entire lifetime of the tab document, preventing garbage collection and creating a memory leak. To release these system resources safely, we should always revoke the URL once it is no longer needed—typically inside the target image's `onload` callback."
+**Q: What is the difference between `FileList`, `File`, and `Blob`?**
 
-#### How validate uploads?
-- **The Engine Mechanism (Why it behaves this way):** Client-side validation is performed synchronously by inspecting the metadata properties on the `File` object: `file.size` (in bytes) and `file.type` (MIME type string, parsed from the file header or extension by the OS). A validation script checks these values against application limits before sending the payload over the network. However, because client-side JavaScript can be easily bypassed or manipulated by editing the runtime execution scope, the browser cannot enforce true security. To ensure absolute security, the server-side engine must receive the file stream, parse the physical magic bytes (the initial binary signatures, like `FF D8 FF` for JPEGs), and enforce limits on the backend.
-- **The Unforgettable Mental Model:** A security guard at a VIP club. The client-side validation is like checking if someone is wearing a tie. If they are, they get in the outer door. But the server-side validation is like checking their physical passport and ID under a UV light at the final security gate to verify who they actually are.
-- **The Trap:** Relying on the `file.type` property or file extensions for security. An attacker can rename a malicious executable script `malicious.exe` to `photo.jpg`. The browser's `file.type` might report `image/jpeg` based on the file extension. Only a backend signature/magic number scan can verify the true file integrity.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Client-side validation is a user experience enhancement, not a security boundary. We validate file size using `file.size` and MIME type using `file.type` to provide immediate UI feedback and prevent redundant network traffic. However, because client-side metadata is easily spoofed, robust security requires strict backend validation where the file stream is intercepted, maximum sizes are enforced, and the file's binary magic numbers are analyzed to confirm its true format."
+`FileList` is the browser-provided collection of selected files. `File` represents one file and adds file metadata such as `name` and `lastModified` to the binary data behavior inherited from `Blob`. `Blob` is the more general immutable, file-like container for bytes and a MIME type; it can represent data created in memory and does not need a filename.
 
-## 8. Active recall test
+**Q: How do you get files from a picker and from drag-and-drop?**
 
-#### 1. What DOM elements or events provide user-selected files to the web application?
-The `<input type="file">` HTML element provides selected files through its `.files` property, while custom DOM elements capture dropped files via the `drop` event's `event.dataTransfer.files` property.
+Listen for `change` on the file input and read `event.currentTarget.files` or `input.files`. In a drop handler, call `event.preventDefault()` so the browser does not navigate to the dropped resource, then read `event.dataTransfer.files`. Both paths produce `FileList`-like access to the files the user supplied.
 
-#### 2. What object stores the array-like reference list of selected files?
-The read-only, array-like `FileList` object contains the `File` objects.
+**Q: When would you use an object URL, `FileReader`, or `file.text()`?**
 
-#### 3. What metadata fields are accessible directly on a File object?
-`file.name` (the filename string), `file.size` (size in bytes), `file.type` (MIME type string), and `file.lastModified` (UNIX timestamp).
+Use an object URL when a browser element needs to display or consume a file, such as an image preview or a video source. Use `file.text()` or `file.arrayBuffer()` when JavaScript needs the contents as a whole, and use `file.stream()` when incremental processing matters. Use `FileReader` when its event-based API fits the surrounding code or compatibility requirements. An object URL is not a decoded copy of the file, and a data URL is not automatically better just because it is a string.
 
-#### 4. How do you programmatically create a temporary lightweight preview URL for a file?
-Call `URL.createObjectURL(file)`, which registers a temporary, lightweight pointer to the file on disk.
+**Q: Why should object URLs be revoked?**
 
-#### 5. Why must you revoke an object URL after it is loaded, and where is the best place to do it?
-To release the strong internal C++ reference the browser holds to the physical file on disk, freeing file handles and preventing memory leaks. The best place to revoke it is inside the target image's asynchronous `onload` event handler.
+`URL.createObjectURL()` registers a temporary URL for a `Blob` or `File`. The URL remains usable until it is revoked or the document is unloaded, so repeatedly creating URLs while replacing previews can retain browser-managed resources longer than necessary. Store the URL, revoke it when the consuming element no longer needs it, and clear the element's `src` when removing the preview. Do not revoke it immediately if the user still needs to interact with that preview.
 
-## 9. Mistakes / traps
-- Trusting client validation only.
-- Not revoking object URLs.
-- Reading huge files on main thread.
-- Accepting file extension as proof.
+**Q: Is `file.type` enough to secure an upload?**
 
-## 10. Compare with related concepts
-- **File vs Blob:** File is Blob with name/metadata.
-- **FileReader vs object URL:** read bytes/text vs preview reference.
-- **Client validation vs server validation:** UX guard vs security enforcement.
+No. It is useful client-side metadata for feedback and an early rejection, but it is not a security boundary. The client can be modified, a MIME type can be missing or misleading, and a filename extension can be changed. The server must enforce size and authorization limits and inspect the received content using the appropriate format parser or signature checks before storing or processing it.
 
-## 11. Summary from memory
-Explain image preview upload flow.
+**Q: Does choosing a file automatically upload it?**
 
-## 12. Spaced revision prompts
-- 1 day: Define File API.
-- 3 days: Read file metadata.
-- 7 days: Preview image.
-- 14 days: Explain validation limits.
+No. Selection only gives the page a `File` reference. Upload happens when the page submits a form or explicitly sends the file, commonly by appending it to `FormData` and passing that body to `fetch` or another transport.
 
+## 6. The Traps — What Goes Wrong
+
+- **Treating `accept` as enforcement.** `accept="image/*"` guides the file picker and improves the UI, but it does not prove the content is an image. Check on the client for fast feedback and validate again on the server.
+- **Trusting extensions or `file.type`.** `photo.jpg` can contain something else, and some files have an empty MIME string. The server must inspect the bytes with a format-aware validator before storing or serving the upload.
+- **Assuming a `File` is already the file contents.** Metadata access is cheap, but `text()`, `arrayBuffer()`, `FileReader`, and stream consumption actually read bytes. Avoid converting a large file to a Base64 string just to preview it.
+- **Revoking a preview URL too early.** Revoking immediately after assigning `img.src` can make the resource unavailable before the browser has finished using it. Revoke when the preview is replaced or removed, while it is still safe to stop using that URL.
+- **Forgetting the lifecycle of repeated previews.** Every `createObjectURL()` call creates a distinct URL. If a component replaces previews, keep the old URL and revoke it during replacement/unmount cleanup; do not revoke only the latest URL.
+- **Expecting a normal mutable array.** `FileList` is array-like, but you do not normally push into it or construct it as a normal array. Convert it with `[...input.files]` when array methods or a stable snapshot are useful.
+- **Assuming selecting the same file always fires `change`.** After processing, resetting `input.value = ""` lets the user select the same path again and receive a fresh change event. This reset clears the input control, not the `File` data already captured by your code.
+- **Reading everything on the main thread for a large import.** `await file.text()` is simple, but it still creates one large string. Use streams, chunked parsing, a worker, or a server-side import path when the file size makes a whole-file read expensive.
+
+## 7. Compare With Related Concepts
+
+- **`File` vs `Blob`:** A `File` is a `Blob` with file-oriented metadata. Use `Blob` for generated bytes; use `File` when the name and last-modified information matter, such as an upload.
+- **`FileList` vs JavaScript array:** `FileList` is a browser-supplied, array-like selection. Convert it to an array when you need normal array transformations or a snapshot.
+- **Object URL vs data URL:** An object URL is a temporary browser-managed reference; a data URL is the entire content encoded into a string. Use object URLs for previews and data URLs only when the small, self-contained string representation is genuinely useful.
+- **`FileReader` vs modern `File` methods:** `FileReader` exposes event callbacks; `file.text()` and `file.arrayBuffer()` return promises, and `file.stream()` supports incremental consumption. Choose based on the data shape and size, not on the assumption that one API changes the security model.
+- **File API vs File System Access API:** The File API works with files the user has supplied to the page. File System Access APIs can provide a longer-lived file or directory handle in supporting browsers, but they still require an explicit permission flow and are not a license to silently scan the device.
+- **Client validation vs server validation:** Client validation improves speed and feedback; server validation protects the system. A production upload needs both, with the server treated as authoritative.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+The browser is a secure intake desk: the user must hand over a file before JavaScript can inspect it, and JavaScript chooses whether to read, preview, or upload that file. Remember the boundary—`File` is a representation of the selected bytes and their metadata, not a permission object; permission and user-consent semantics belong to the file-picking flow or File System Access API handles, not to `File` itself; `type` is a hint, not proof; and every temporary preview URL needs a clear release point.
