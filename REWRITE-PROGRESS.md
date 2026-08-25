@@ -12,13 +12,13 @@ In-book summary: `src/appendix/rewrite-progress.md`
 
 || Metric | Count |
 ||---|---:|
-|| **Type A** leaf pages (`## 1. Why This Exists`) | 170 |
+|| **Type A** leaf pages (`## 1. Why This Exists`) | 172 |
 || **Type D** leaf pages (`## 1. Understand the Problem First`) | 30 |
 || **Type E** leaf pages (`## 1. The Real-World Problem`) | 31 |
 || **Condensed study banks** (system-design chapters, frontend banks) | 6 files |
-|| **Total rewritten leaf pages** | **231** |
-|| Still on **old template** (`One-line mental model` / `Engine Mechanism`) | ~722 |
-|| **Next up** | JavaScript concepts (20 not yet committed), then MongoDB/Mongoose/MERN queues |
+|| **Total rewritten leaf pages** | **233** |
+|| Still on **old template** (`One-line mental model` / `Engine Mechanism`) | ~720 |
+|| **Next up** | JavaScript concepts (17 not yet committed), then MongoDB/Mongoose/MERN queues |
 
 > Counts use automated heading markers. A page is "done" only when the full Type A–E section contract is satisfied — not just a heading swap.
 
@@ -34,7 +34,7 @@ In-book summary: `src/appendix/rewrite-progress.md`
 || `src/full-stack/system-design/` chapters | 5 | 5 | Type A / condensed Type D | ✅ |
 || `src/full-stack/backend/system-design/` | 30 | 30 | Type D (full) | ✅ |
 || `src/full-stack/backend/nodejs/` | 30 | 30 | Type A | ✅ |
-|| `src/javascript/concepts/` | 37 | 56 | Type A | 🔄 66% |
+|| `src/javascript/concepts/` | 39 | 56 | Type A | 🔄 70% |
 || `src/react/concepts/` | 45 | 66 | Type A | 🔄 68% |
 || `src/full-stack/databases/mongodb/` | 16 | 35 | Type E | 🔄 46% |
 || `src/full-stack/backend/mongoose/` | 15 | 30 | Type E | 🔄 50% |
@@ -77,16 +77,16 @@ Type A: V8, libuv, event loop, streams, cluster, worker threads, errors, env con
 
 ## 🔄 In progress
 
-### JavaScript concepts — 37 / 56 done
+### JavaScript concepts — 39 / 56 done
 
 **Rewritten (Type A):**  
-`memory-heap`, `execution-context`, `global-execution-context`, `function-execution-context`, `call-stack`, `lexical-environment`, `lexical-scoping`, `scope-chain`, `hoisting`, `temporal-dead-zone`, `closures`, `closure-memory-retention`, `closures-in-loops`, `closures-in-event-handlers`, `event-loop`, `microtask-queue`, `macrotask-queue`, `rendering-pipeline-interaction`, `promise-states`, `promise-chaining`, `async-await`, `timeout-handling`, `this-binding`, `primitive-vs-reference-values`, `shallow-copy-vs-deep-copy`, `array-mutation`, `type-coercion-and-equality`, `flatmap`, `private-fields`, `copying-array-methods`, `barrel-files`, `passive-listeners`, `custom-events`, `pointer-events`, `focus-and-blur`, `dom-event-propagation`, `indexeddb`
+`memory-heap`, `execution-context`, `global-execution-context`, `function-execution-context`, `call-stack`, `lexical-environment`, `lexical-scoping`, `scope-chain`, `hoisting`, `temporal-dead-zone`, `closures`, `closure-memory-retention`, `closures-in-loops`, `closures-in-event-handlers`, `event-loop`, `microtask-queue`, `macrotask-queue`, `rendering-pipeline-interaction`, `promise-states`, `promise-chaining`, `async-await`, `timeout-handling`, `this-binding`, `primitive-vs-reference-values`, `shallow-copy-vs-deep-copy`, `array-mutation`, `type-coercion-and-equality`, `flatmap`, `private-fields`, `copying-array-methods`, `barrel-files`, `passive-listeners`, `custom-events`, `pointer-events`, `focus-and-blur`, `dom-event-propagation`, `indexeddb`, `storage-event`, `broadcast-channel`
 
 **In review / assigned (not counted done):**  
-`storage-event`, `broadcast-channel`
+`history-api`, `file-api`
 
 **Still old template (17):**  
-`debounce-and-throttle`, `browser-storage-token-risks`, `xss-csrf-cors-csp`, `garbage-collection-memory-leaks`, `dom-based-xss`, `open-redirects`, `layout-thrashing`, `detached-dom-nodes`, `heap-snapshots`, `history-api`, `file-api`, `clipboard-api`, `performance-api`, `query-string-parser`, `virtual-list-basics`, `custom-new`, `custom-instanceof`
+`debounce-and-throttle`, `browser-storage-token-risks`, `xss-csrf-cors-csp`, `garbage-collection-memory-leaks`, `dom-based-xss`, `open-redirects`, `layout-thrashing`, `detached-dom-nodes`, `heap-snapshots`, `clipboard-api`, `performance-api`, `query-string-parser`, `virtual-list-basics`, `custom-new`, `custom-instanceof`
 
 ### React concepts — 45 / 66 done
 

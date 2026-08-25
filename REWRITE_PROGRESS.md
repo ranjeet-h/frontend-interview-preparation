@@ -6,7 +6,7 @@ This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-
 
 ## Current JavaScript concept queue
 
-37 of 56 JavaScript concept pages are reviewed and committed. The commit for each accepted page is recorded here.
+39 of 56 JavaScript concept pages are reviewed and committed. The commit for each accepted page is recorded here.
 
 1. `src/javascript/concepts/memory-heap.md` — `be5f70d`, wording refinement `205763a`
 2. `src/javascript/concepts/execution-context.md` — `c540720`
@@ -45,14 +45,16 @@ This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-
 35. `src/javascript/concepts/focus-and-blur.md` — `f7059f1`
 36. `src/javascript/concepts/dom-event-propagation.md` — `cb3e4a2`
 37. `src/javascript/concepts/indexeddb.md` — `ebd36a9`
+38. `src/javascript/concepts/storage-event.md` — `36e18a4`
+39. `src/javascript/concepts/broadcast-channel.md` — `3d2c18e`
 
 ## Active JavaScript pages
 
-- `src/javascript/concepts/storage-event.md` — focused fix complete; Luna review pending
-- `src/javascript/concepts/broadcast-channel.md` — focused fix complete; Luna review pending
+- `src/javascript/concepts/history-api.md` — Luna worker active; review pending
+- `src/javascript/concepts/file-api.md` — Luna worker active; review pending
 
 ## Cross-project synchronization
 
-- The detailed tracker currently has 201 page rows marked `rewritten` and 20 rows marked `assigned`.
+- The detailed tracker currently has 203 page rows marked `rewritten` and 18 rows marked `assigned`.
 - The broader rollup in `REWRITE-PROGRESS.md` includes the other completed frontend, React, system-design, Node.js, MongoDB, Mongoose, and MERN work.
 - Update the detailed tracker only after a page has passed its scoped review and target-only commit.
