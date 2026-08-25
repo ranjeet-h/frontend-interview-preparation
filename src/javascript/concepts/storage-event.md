@@ -1,124 +1,184 @@
 # Storage Event
 
-## Detailed explanation
-`storage` event fires in other tabs/windows from same origin when localStorage changes. It does not fire in same tab that made change. It is useful for logout sync, preference sync, and simple cross-tab communication.
+## 1. Why This Exists — The Problem First
 
-For richer cross-tab messaging, use BroadcastChannel.
+An application can be open in three tabs at once. If the user logs out in one tab, the other two still have their old in-memory UI unless they receive some signal. The same problem appears when a user changes a theme, switches an account, or invalidates a cached preference in one tab.
 
-## 1. One-line mental model
-`storage` event notifies other tabs about localStorage changes.
+Polling `localStorage` wastes work and still leaves a delay. A `storage` event gives sibling browsing contexts a browser-provided notification when a shared Web Storage area actually changes.
 
-## 2. Problem it solves
-Multiple tabs need to know when shared browser storage changes.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Fires on other same-origin documents.
-- Triggered by localStorage changes.
-- Includes key, oldValue, newValue.
-- Same tab does not receive its own event.
-- Useful for logout sync.
+Imagine several offices belonging to the same company. They share a public noticeboard, but each office has its own receptionist.
 
-## 4. Visual / analogy
-One tab writes notice; other tabs hear bell.
+- `localStorage` is the noticeboard shared by offices with the same origin (scheme, host, and port).
+- A tab that calls `setItem`, `removeItem`, or `clear` changes the noticeboard.
+- The other offices receive a notice describing the change; the office that posted it does not receive a second notice.
+- `event.key`, `event.oldValue`, and `event.newValue` describe what changed. For a noticeboard-wide wipe (`clear()`), there is no single key, so `event.key` is `null`.
+- `sessionStorage` is different: it is a private noticeboard for one top-level browsing context. Its event can reach same-tab iframes that share that session storage area, but not an unrelated tab.
 
-```mermaid
-flowchart LR
-  TabA["Tab A setItem"] --> Storage["localStorage"]
-  Storage --> TabB["Tab B storage event"]
-```
+The event is therefore a change notification, not a conversation channel. The noticeboard stores the latest state; the notice only tells another office to inspect or react to it.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+When one document successfully mutates a storage area, the browser identifies other documents that can access that same area and dispatches a non-bubbling `StorageEvent` on their `window` objects. The document that performed the mutation is excluded by design.
+
+For `localStorage`, the receiving documents are other same-origin tabs, windows, and frames that share the origin's local storage area. For `sessionStorage`, the receiving documents must also belong to the same top-level browsing context, which normally means embedded same-tab iframes. This is why `sessionStorage` is not a cross-tab bus.
+
+The event is produced only for a real storage change:
+
+- `setItem(key, value)` adds a key or changes its string value.
+- `removeItem(key)` changes storage only when that key existed.
+- `clear()` changes storage only when the storage area was non-empty.
+- Reads such as `getItem()` never produce an event.
+- Setting a key to the same string value does not produce a change event.
+
+Values in Web Storage are strings. If an application stores an object, it must serialize it with `JSON.stringify` and parse it on the receiving side. The event's values are snapshots of the mutation: `oldValue` is `null` for a newly added key, `newValue` is `null` for a removed key, and both are `null` for `clear()`. `url` identifies the document that made the change, while `storageArea` identifies the affected storage object.
+
+The event does not carry an arbitrary JavaScript object, acknowledge delivery, order messages for your application, or replay history to a newly opened tab. If a tab opens after a change, it should read the current state directly. If several changes happen quickly, application logic should treat the storage area as the source of truth and make handlers idempotent.
+
+`storage` is also not a same-document custom event. If the writer needs to update its own UI, it must do that in the write path or use a local state update as well. The browser's event is intended to notify other documents.
+
+For the exact browser-facing API, see [MDN's `storage` event reference](https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event) and [`StorageEvent` properties](https://developer.mozilla.org/en-US/docs/Web/API/StorageEvent).
+
+## 4. Real Code — See It Working
+
+### Observe a real `localStorage` change
+
+Open the same page in two tabs. Keep this listener open in Tab B, then run the writer commands from Tab A's console.
 
 ```js
 window.addEventListener("storage", (event) => {
-  console.log(event.key, event.newValue);
+  // The event fields describe the change made by the other document.
+  console.log({
+    key: event.key,
+    oldValue: event.oldValue,
+    newValue: event.newValue,
+    url: event.url,
+    isLocalStorage: event.storageArea === window.localStorage,
+  });
 });
+
+// Run these in the other tab, one at a time:
+localStorage.setItem("theme", "dark");       // add: oldValue null
+localStorage.setItem("theme", "light");      // update: both values strings
+localStorage.setItem("theme", "light");      // same value: no event
+localStorage.removeItem("theme");             // remove: newValue null
+localStorage.setItem("a", "1");
+localStorage.clear();                          // key, oldValue, newValue are null
 ```
 
-## 6. Real-world example
+The writer tab does not log its own writes. Tab B sees the events, and the values remain strings even if the code that wrote them started with numbers or objects.
+
+### Logout synchronization
+
+Use a changing value as a signal. A fixed value such as `"true"` would not create a new event if it is written again while already stored.
 
 ```js
+const LOGOUT_KEY = "app:logout";
+
+function clearLocalSessionState() {
+  sessionStorage.clear();
+}
+
+function logoutHere() {
+  // The timestamp makes each logout a distinct storage mutation.
+  localStorage.setItem(LOGOUT_KEY, String(Date.now()));
+
+  // The writer does not receive a storage event, so update itself explicitly.
+  clearLocalSessionState();
+  window.location.replace("/login");
+}
+
 window.addEventListener("storage", (event) => {
-  if (event.key === "logout") redirectToLogin();
+  if (event.storageArea !== window.localStorage || event.key !== LOGOUT_KEY) {
+    return;
+  }
+
+  // Make this safe if the handler is reached more than once by app logic.
+  clearLocalSessionState();
+  window.location.replace("/login");
 });
 ```
 
-## 7. Common interview questions
+The event is only a coordination hint. It is not authentication. The server must still reject expired or revoked credentials, and the logout handler must not assume that a tab receiving the signal is currently on a page where redirecting is harmless.
 
-#### What is the storage event?
-- **The Engine Mechanism (Why it behaves this way):** The `storage` event represents a notification dispatched by the browser's storage synchronization engine when a change is committed to `localStorage` (or `sessionStorage` in limited iframe scopes). Under the hood, when a tab modifies a storage key via `localStorage.setItem()`, `removeItem()`, or `clear()`, the browser process intercepts this write. The browser process updates the shared origin database file on disk and broadcasts a message across all open renderer processes running same-origin windows. Each matching renderer process creates a `StorageEvent` instance (inheriting from `Event`) in its heap memory and pushes a task onto the Event Loop's Macrotask Queue to execute any registered `storage` handlers on the `window` object.
-- **The Unforgettable Mental Model:** A neighborhood association bulletin board. When one resident (tab) pins a notice (writes to localStorage) on the public physical board, the association mails a copy of that notice (fires a storage event) to all other homes (tabs) in the neighborhood, but doesn't mail one back to the sender since they wrote it themselves.
-- **The Trap:** Thinking that the `storage` event is triggered by changes to `sessionStorage` in separate tabs. Since `sessionStorage` is strictly scoped to the individual tab session, changes to a tab's `sessionStorage` do not propagate across other tabs and therefore will never fire a `storage` event in them.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'The `storage` event is a native DOM window event fired on all same-origin windows and tabs when a change—like setting, updating, or deleting a key—is committed to `localStorage` in *another* window or tab. It provides a lightweight, browser-native notification system for multi-tab synchronization.'"
+### Cross-tab preference synchronization
 
-#### Does it fire in the same tab?
-- **The Engine Mechanism (Why it behaves this way):** No, by design and specifications, the `storage` event does *not* fire on the same window/document that initiated the change. The browser's storage engine keeps track of which document context ID executed the `setItem`/`removeItem` call and explicitly excludes that context ID from the target list when broadcasting the inter-process storage change message. This prevents infinite cycles where a change in tab A triggers a listener in tab A that makes another storage update.
-- **The Unforgettable Mental Model:** Looking in a mirror and shouting a message. The sound waves travel out to everyone in the room (other tabs), but you don't need a loudspeaker to repeat your own words back into your own ears (same tab), since you are the source of the speech.
-- **The Trap:** Developing and testing a cross-tab feature (like tab sync) on a single browser tab and wondering why your `storage` event listener is never executing. You *must* open two separate windows/tabs of the same site to observe the event in action.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'No, the `storage` event does not fire in the document that initiated the write. The browser engine actively filters out the writer tab context to prevent self-triggering feedback loops. It only fires in sibling tabs and windows sharing the exact same origin.'"
+```js
+const THEME_KEY = "app:theme";
 
-#### What triggers it?
-- **The Engine Mechanism (Why it behaves this way):** The storage event is triggered specifically when a synchronous write operation actually *mutates* a key inside `localStorage`. This includes:
-  1. `localStorage.setItem(key, value)` — but *only* if the new value is different from the current value (re-setting a key to its exact same value does not trigger the event).
-  2. `localStorage.removeItem(key)`.
-  3. `localStorage.clear()`.
-  The event is NOT triggered by any read operations (like `getItem()`), and is NOT triggered by writing to object properties directly (like `localStorage.key = value`) in older non-conforming engines, or by modifications made within private/incognito browsing windows which are partitioned.
-- **The Unforgettable Mental Model:** A change detector on a scale. If you place a weight on the scale (different value), the alarm rings. If you place the exact same weight that is already there, or just look at the scale (read operation), the alarm remains silent.
-- **The Trap:** Writing `localStorage.setItem('key', 'same_value')` repeatedly inside a loop or timer, expecting it to continuously fire storage events. The engine performs a value comparison first; if `newValue === oldValue`, no event is dispatched.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'The event is triggered by successful mutations to `localStorage` via `setItem()`, `removeItem()`, or `clear()`. Crucially, if you set a key to its existing value, the engine's change-check intercepts it and suppresses the event. Read actions have zero effect on triggering events.'"
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+}
 
-#### How to sync logout across tabs?
-- **The Engine Mechanism (Why it behaves this way):** To synchronize logout across all same-origin tabs:
-  1. When a user clicks "Logout" in Tab A, the application calls `localStorage.setItem('session_logout', Date.now().toString())` and redirects the active tab to the login screen.
-  2. The browser engine broadcasts the storage change.
-  3. Sibling Tabs B and C receive the storage event. Inside their event listener callbacks, they inspect the event object: `if (event.key === 'session_logout')`.
-  4. Sibling tabs synchronously clear their local in-memory session states, clean up cookies, and programmatically redirect their viewport using `window.location.replace('/login')`.
-- **The Unforgettable Mental Model:** An automated emergency evacuation broadcast. When one building control room (Tab A) activates the fire alarm (writes the logout timestamp), all other rooms in the complex (other tabs) immediately receive the siren and execute the evacuation protocol (redirect to login) simultaneously.
-- **The Trap:** Forgetting to handle the case where the user logs in again. By using a changing timestamp value (like `Date.now()`) instead of a static string like `'true'`, you ensure that subsequent logins and logouts always represent a *new* mutation, forcing the storage event to fire every time.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'To sync logout, we write a changing value—like a high-precision timestamp—to a dedicated `session_logout` key in `localStorage` when the user triggers a sign-out. All other same-origin tabs catch this change through the `storage` event, detect the logout key, clear their active in-memory session stores, and programmatically redirect the user to the login screen, ensuring a uniform and secure logout state across the entire browser session.'"
+// New tabs must initialize from current state; they cannot receive old events.
+applyTheme(localStorage.getItem(THEME_KEY) ?? "light");
 
-#### Storage event vs BroadcastChannel?
-- **The Engine Mechanism (Why it behaves this way):**
-  - **Storage Event:** Is a side-effect of a state mutation in a persistent database (`localStorage`). It carries limited metadata (key, oldValue, newValue) and is constrained by key size boundaries. It is synchronous at write-time, persistent on disk, and does not support sending rich, non-serializable objects.
-  - **BroadcastChannel:** Is a dedicated, high-performance, asynchronous message bus built for cross-tab communications. It allows you to broadcast rich data payloads (directly cloning complex objects using the Structured Clone Algorithm) to any active subscribers on the same channel name, without writing *anything* to the persistent hard drive. It works in the main thread or inside Web Workers and Service Workers, and is much faster because it avoids disk I/O overhead.
-- **The Unforgettable Mental Model:** The storage event is like writing an announcement on a concrete public billboard in the town square; everyone can see it, but you had to physically carve it into stone (disk write). BroadcastChannel is like a direct walkie-talkie channel; you speak into the mic, and everyone tuned in hears your voice instantly through the air without any stone carving.
-- **The Trap:** Using the `storage` event as a real-time multiplayer message bus (e.g., syncing mouse coordinates or live chats across tabs). This causes massive disk thrashing and lag because every single coordinate change forces a disk write. You should use `BroadcastChannel` for high-frequency messages.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'The storage event is a side-effect of database mutation, meaning it requires disk writes, is limited to string values, and works only with `localStorage`. In contrast, `BroadcastChannel` is a dedicated, high-speed, purely in-memory communication channel. It enables bidirectional sharing of complex, cloned objects between tabs, windows, and background workers without the performance penalty of disk writes, making it the superior architecture for active multi-tab synchronization.'"
+window.addEventListener("storage", (event) => {
+  if (event.storageArea === window.localStorage && event.key === THEME_KEY) {
+    applyTheme(event.newValue ?? "light");
+  }
+});
+```
 
-## 8. Active recall test
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### 1. Which storage triggers it?
-- **Explanation/Answer:** Only changes committed to `localStorage` (and very rarely `sessionStorage` inside shared frames, but not standard `sessionStorage`).
+**Q: What is the `storage` event?**
 
-#### 2. Which tabs receive it?
-- **Explanation/Answer:** Sibling tabs and windows sharing the exact same protocol, domain, and port (same origin).
+It is a `Window` event that informs another document when a Web Storage area accessible to that document changes. In the common cross-tab case, one same-origin tab mutates `localStorage` and the other same-origin tabs receive a `StorageEvent` containing the changed key and old/new string values. It is a notification about shared browser state, not a general-purpose message API.
 
-#### 3. Does the writer tab receive it?
-- **Explanation/Answer:** No, the tab that performed the write is excluded from receiving the event to prevent infinite recursion loops.
+**Q: Does the tab that calls `localStorage.setItem()` receive the event?**
 
-#### 4. What values are available?
-- **Explanation/Answer:** The event object provides `key`, `oldValue`, `newValue`, `url` (the script URL that made the change), and `storageArea` (a reference to the storage object itself).
+No. The initiating document is intentionally excluded. If that tab needs to update its own UI, the code that performs the write must update local state directly. This also prevents code from accidentally treating its own write as an incoming synchronization message.
 
-#### 5. Name a use case.
-- **Explanation/Answer:** Instantly logging out a user in all open tabs of an application when they click "Log out" in one tab, preventing unauthorized access in stale sessions.
+**Q: Which operations trigger it?**
 
-## 9. Mistakes / traps
-- Expecting same tab event.
-- Using for high-frequency messages.
-- Storing sensitive data in localStorage.
-- Forgetting same-origin limit.
+A real `setItem`, `removeItem`, or `clear` mutation can trigger it. Repeating a write with the same string, removing a missing key, clearing an already empty area, and reading storage do not create a storage change. The event is delivered to eligible other documents, not to the writer.
 
-## 10. Compare with related concepts
-- **Storage event vs BroadcastChannel:** storage-change signal vs direct message channel.
-- **localStorage vs sessionStorage:** shared per origin vs per tab session.
-- **Storage event vs custom event:** cross-tab browser event vs same-document event.
+**Q: What is the difference between `localStorage` and `sessionStorage` for this event?**
 
-## 11. Summary from memory
-Explain logout sync with `storage` event.
+`localStorage` is shared by same-origin browsing contexts, so its event is useful across tabs. `sessionStorage` is scoped to a page session and top-level browsing context; its event can notify same-tab iframes that share that session storage area, but not another tab. Saying “the storage event only works with localStorage” is too broad; saying “sessionStorage syncs between tabs” is wrong.
 
-## 12. Spaced revision prompts
-- 1 day: Define storage event.
-- 3 days: Explain same-tab caveat.
-- 7 days: Implement logout sync.
-- 14 days: Compare BroadcastChannel.
+**Q: What does `StorageEvent` contain?**
 
+`key` names the changed key, or is `null` for `clear()`. `oldValue` and `newValue` are strings or `null`, depending on whether a value was added, changed, removed, or cleared. `url` is the URL of the document that changed storage, and `storageArea` refers to the affected `Storage` object. The event does not contain an arbitrary object payload.
+
+**Q: How would you implement logout across tabs?**
+
+Write a dedicated signal key with a value that changes on every logout, such as a timestamp or random ID. Handle the logout locally in the initiating tab, because it will not receive its own event, and handle the same key in sibling tabs by clearing local session state and navigating to the login route. This improves UI consistency, but real security still comes from server-side session or token invalidation; a browser event can be missed by a closed tab and should not be the security boundary.
+
+**Q: Is `storage` a reliable messaging system?**
+
+No. It is good for small, low-frequency hints such as logout or a preference change. It has string-only payloads, no application-level acknowledgement, no replay protocol, and no durable message history. A receiver should read current state when it needs authoritative data. For richer live messages, use `BroadcastChannel` or another explicit messaging design.
+
+## 6. The Traps — What Goes Wrong
+
+- **Testing in one tab and expecting a callback.** The writer is excluded, so a one-tab test appears broken. Use two same-origin tabs, or test the local write path separately from the cross-document listener.
+
+- **Treating `sessionStorage` as shared tab state.** Separate tabs normally have separate session storage areas. Only documents inside the same top-level browsing context, such as same-tab iframes, can share the relevant session storage area.
+
+- **Using a constant logout flag forever.** `setItem("logout", "true")` followed by the same call may be a no-op. Use a changing event ID, or remove and re-add deliberately when that behavior is appropriate.
+
+- **Assuming `event.key` is always a string.** `clear()` sets `key`, `oldValue`, and `newValue` to `null`. Branch on `event.key === null` before treating it as a normal item update.
+
+- **Parsing `newValue` without handling removal or invalid data.** `newValue` is `null` after `removeItem`, and JSON stored by another version of the app might be malformed or use an unexpected shape. Validate before applying it.
+
+- **Using it as a high-frequency transport.** Writing every cursor movement or chat keystroke to storage couples messaging to persistent state and creates unnecessary serialization and storage work. Use `BroadcastChannel`, a worker, or a server connection for active streams.
+
+- **Putting secrets in `localStorage` because it syncs.** Same-origin JavaScript, including an injected XSS script, can read it. Synchronization convenience does not change the storage area's security model; do not use it as a safe token vault.
+
+- **Believing an event is a durable delivery guarantee.** A closed or crashed tab cannot react, and a newly opened tab does not receive historical events. Persist authoritative state separately and initialize from that state.
+
+## 7. Compare With Related Concepts
+
+| Concept | What it gives you | Use it when |
+|---|---|---|
+| `storage` event | A notification caused by another document changing Web Storage; string metadata only | You need small, low-frequency same-origin sync tied to stored state, such as logout or theme changes |
+| `BroadcastChannel` | A named same-origin message channel with structured-clone payloads; the sender does not receive its own message | You need live tab/window/worker messages that do not need to be persisted |
+| `postMessage` | Targeted messages between windows, frames, or workers that hold a reference relationship | You know the specific recipient, such as a parent frame and an embedded iframe |
+| Custom DOM event | Same-document application notification | Components in one document need to communicate; it does not cross tabs |
+| `localStorage` vs `sessionStorage` | Origin-wide persistence vs top-level-tab session scope | Pick `localStorage` for cross-tab state; pick `sessionStorage` for temporary tab-local state |
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+`storage` is the **“someone else changed the shared noticeboard” bell**: the writer never hears its own bell, and the bell carries the change details rather than a rich message. For cross-tab logout, write a new signal, handle the current tab yourself, and let sibling tabs react; never confuse that notification with authentication or durable messaging.
