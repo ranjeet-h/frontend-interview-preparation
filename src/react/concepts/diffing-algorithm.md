@@ -1,130 +1,383 @@
-# Diffing Algorithm
+# The React Diffing Algorithm: Heuristics and Optimizations
 
-## Detailed explanation
-React's diffing algorithm is the set of heuristics used during reconciliation to compare old and new element trees efficiently. A perfect tree diff can be expensive, so React uses practical assumptions that work well for UI.
+## 1. Why This Exists — The Problem First
 
-The most important rules are: different element types usually produce different trees, and developers can provide stable keys to identify children across renders. This makes list updates and subtree replacement predictable.
+Every time state updates in a React application, components re-render and return a brand-new tree of React elements. If React discarded the entire browser DOM and rebuilt it from scratch on every user interaction, web applications would be unusable. Text inputs would drop cursor focus, CSS transitions would snap and restart, scroll positions would reset, embedded videos would reload, and the browser's layout engine would trigger expensive reflows and repaints on every single keystroke.
 
-## 1. One-line mental model
-React diffing is the comparison strategy that finds what changed between two UI trees.
+To prevent unnecessary DOM destruction, React must compare the previous Virtual DOM tree against the newly returned Virtual DOM tree and calculate the minimum set of DOM mutations needed to bring the screen up to date.
 
-## 2. Problem it solves
-Comparing two arbitrary trees perfectly is too expensive for frequent UI updates, so React needs a fast practical comparison approach.
+In computer science, finding the minimum number of edit operations to transform one arbitrary tree into another is known as the Tree Edit Distance problem. The best-known general algorithms (such as the Zhang-Shasha or Demaine algorithms) run in **$O(N^3)$ time complexity**, where $N$ is the total number of nodes in the tree.
 
-## 3. Core idea
-- Compare elements by type.
-- If type differs, replace the subtree.
-- If type matches, compare props and children.
-- Use keys to match list children.
-- Produce DOM update instructions for commit.
+Consider what $O(N^3)$ means in a real browser:
+If a modest web page contains 1,000 DOM elements, calculating a mathematically optimal diff would take $1,000^3 = 1,000,000,000$ (one billion) comparison operations on **every single state change**. At 60 frames per second, a browser only has a 16.6-millisecond window to run JavaScript, recalculate styles, lay out geometry, and paint pixels. Performing one billion comparisons would freeze the main thread for hundreds of milliseconds or seconds, locking the entire browser tab.
 
-## 4. Visual / analogy
-Diffing is like checking two shopping lists: match known item names first, then find added, removed, or changed items.
+React could not exist as a responsive UI framework if it used a general tree diffing algorithm. To make real-time updates viable, React introduced an $O(N)$ linear-time heuristic diffing algorithm. For a 1,000-node tree, React performs roughly 1,000 comparisons instead of one billion, finishing in less than a single millisecond.
 
-```txt
-Old: A, B, C
-New: A, C, D
+## 2. The Analogy — Make It Obvious
 
-With keys:
-B removed
-C preserved
-D added
-```
+Imagine you manage a large corporate office with hundreds of desks across multiple floors. At the start of the quarter, HR sends you a revised seating chart.
 
-## 5. Minimal example
+A mathematically "perfect" approach would analyze every single employee against every single desk on every floor, calculating whether swapping a desk between the 4th-floor engineering team and the 1st-floor marketing department saves two steps of walking distance. Running that exhaustive analysis would take weeks of paperwork while the entire company sits in limbo.
+
+Instead, a sensible facility manager relies on two practical shortcuts:
+
+1. **The Room Purpose Rule:** If Room 302 was previously an Accounting Office and the new chart designates it as a Server Room, you do not inspect whether the accountants' rolling chairs can stay in place. You clear the room completely, discard the office furniture, and install server racks. When the fundamental type of a room changes, you gut the space and build the new setup from scratch.
+2. **The Employee Badge Rule:** When checking a row of 30 software engineers, you do not identify people by their desk position (Desk 1, Desk 2, Desk 3). If a new hire joins at Desk 1, you do not force all 30 engineers to move their personal belongings one desk to the right. Instead, you check their employee badge IDs. If employee #408 was at Desk 1 yesterday and sits at Desk 2 today, they keep their laptop, monitor, and personal notes — they simply roll their chair to the adjacent desk.
+
+React works the exact same way:
+- The **room purpose** is the element or component type (`<div>` vs `<span>`, or `<UserProfile>` vs `<AdminDashboard>`). If the type changes at the same position, React tears down the old subtree and mounts a fresh one.
+- The **employee badge ID** is the `key` prop on sibling elements. It allows React to match an existing Fiber node and preserve its internal state across renders, even when its position in the list changes.
+
+## 3. How It Actually Works — The Full Explanation
+
+React achieves $O(N)$ linear diffing by replacing general tree comparison with two foundational heuristic assumptions:
+
+**Heuristic 1: Two elements of different types will produce different trees.**
+If a parent element changes from `<Header>` to `<Sidebar>`, or from `<div>` to `<section>`, React does not recursively inspect their children to find matching subtrees. It assumes the subtrees have nothing in common, destroys the entire old subtree, and mounts the new one from scratch.
+
+**Heuristic 2: The developer can hint at which child elements remain stable across renders using a `key` prop.**
+When diffing dynamic lists of siblings, React relies on unique keys to match elements across renders instead of comparing them by index position.
+
+**Level-by-Level Traversal (No Cross-Tree Matching)**
+React walks both the previous Fiber tree (the `current` tree) and the newly returned JSX elements level by level, starting at the root. React strictly compares nodes that share the same parent at the same hierarchical depth.
+
+React never attempts to match a node that moved to a different parent or a different depth in the tree. For example, if a `<span>` moves from inside `<div><header><span>Title</span></header></div>` to `<div><footer><span>Title</span></footer></div>`, React unmounts the `<span>` inside the header and creates a brand-new `<span>` inside the footer. Because real-world UIs rarely move elements across unrelated subtrees without structural redesigns, avoiding cross-level comparisons eliminates massive combinatorial overhead.
+
+**Diffing Rules by Element Category**
+
+**1. Elements of Different Types**
+Whenever the root elements at the same tree position have different types (e.g., changing `<a>` to `<button>`, or `<CommentView>` to `<CommentEdit>`):
+- React marks the old Fiber node and all of its descendants for deletion.
+- It unmounts old component instances, runs all `useEffect` cleanup functions (and `componentWillUnmount`), and removes the corresponding real DOM nodes.
+- All local component state inside that subtree is destroyed.
+- React creates fresh Fiber nodes and mounts brand-new real DOM elements.
+
+**2. DOM Elements of the Same Type**
+When React compares two native DOM elements of the same type (e.g., `<div className="idle" title="Panel" />` vs `<div className="active" title="Panel" />`):
+- React retains the underlying real DOM node instance without destroying it.
+- It compares the props and only mutates the specific HTML attributes that changed (in this case, updating `className` from `"idle"` to `"active"` while leaving `title` untouched).
+- For style objects, React only updates the specific CSS properties that changed (e.g., changing `{ color: 'red', fontWeight: 'bold' }` to `{ color: 'blue', fontWeight: 'bold' }` only mutates `node.style.color`).
+- After applying attribute updates, React proceeds to diff the element's children.
+
+**3. Component Elements of the Same Type**
+When a custom component updates (e.g., `<ProfileCard role="viewer" />` to `<ProfileCard role="editor" />`):
+- React keeps the existing component instance and its Fiber node mounted in place.
+- All internal component state (`useState`, `useReducer`, `useRef`) is preserved.
+- React passes the new props to the component, executes its render function, and recursively diffs the newly returned JSX tree against the previous one.
+
+**Multi-Child Diffing: The Two-Pass Algorithm (`reconcileChildrenArray`)**
+Diffing a single child node is an $O(1)$ check. However, diffing an array of sibling children requires handling insertions, deletions, reordering, and prop modifications without quadratic nested loops.
+
+React's list reconciliation algorithm (`reconcileChildrenArray`) uses a two-pass strategy:
+
+**Pass 1: Fast Sequential Scan (The Common Case)**
+Most UI updates simply modify props in place or append new items at the end of a list. React iterates through the old Fiber children linked list and the new JSX array simultaneously from index `0` upward.
+For each position `i`, React checks if the old Fiber child's key and element type match the new child at index `i`. If they match, React updates the Fiber node with the new props and advances to index `i + 1`.
+The moment React encounters a key mismatch (for example, an item was inserted at the front or deleted from the middle), the sequential alignment breaks and Pass 1 terminates immediately.
+
+**Pass 2: Map-Based Lookup (Handling Moves, Insertions, and Deletions)**
+If unmatched children remain after Pass 1, React switches to a hash-map strategy:
+1. React collects all remaining old Fiber siblings and places them into a JavaScript `Map<Key, FiberNode>` (keyed by their `key` prop, or by index if no key was provided).
+2. React loops through the remaining new JSX children. For each child, it performs an $O(1)$ lookup in the Map by key.
+3. If a match is found in the Map, React pulls the old Fiber node out of the Map, updates its props, and checks its position. React maintains a pointer called `lastPlacedIndex`, which tracks the highest index in the old list that has been placed so far. If the matched old node was originally located at an index smaller than `lastPlacedIndex`, it means the node has moved to the right relative to other items and receives a `Placement` flag so the commit phase can move the DOM node.
+4. If the new child's key is not in the Map, React creates a brand-new Fiber node with a `Placement` flag to insert it into the DOM.
+5. After processing all new children, any old Fiber nodes remaining in the Map were not present in the new list. React marks them with a `Deletion` flag to unmount them and remove their DOM nodes during the commit phase.
+
+Because map lookups run in $O(1)$ average time, diffing $N$ children completes in strict $O(N)$ linear time.
+
+## 4. Real Code — See It Working
+
+Here is how React's diffing behavior operates across different component structures and list scenarios.
+
+**Example 1: Type Replacement vs Prop Mutation**
 
 ```tsx
-// Type changed: subtree replacement
-return isLink ? <a href="/home">Home</a> : <button>Home</button>;
-```
+import React, { useState } from 'react';
 
-## 6. Real-world example
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <button onClick={() => setCount(c => c + 1)}>
+      Count: {count}
+    </button>
+  );
+}
 
-```tsx
-function Menu({ items }: { items: MenuItem[] }) {
-  return items.map((item) => <MenuItemRow key={item.id} item={item} />);
+export function TypeDiffingDemo() {
+  const [isSpecial, setIsSpecial] = useState(false);
+
+  return (
+    <div>
+      <button onClick={() => setIsSpecial(prev => !prev)}>
+        Toggle Layout
+      </button>
+
+      {/* 
+        CASE A: Different wrapper element type (div vs section).
+        React detects a type change at this tree position. It destroys the old <div>,
+        unmounts the nested Counter (wiping count state back to 0), and mounts a new <section>.
+      */}
+      {isSpecial ? (
+        <section className="highlighted">
+          <Counter />
+        </section>
+      ) : (
+        <div className="normal">
+          <Counter />
+        </div>
+      )}
+
+      {/* 
+        CASE B: Same element type (div vs div), only className changes.
+        React preserves the <div> DOM node, updates the className attribute,
+        and keeps the Counter mounted with its count state fully intact.
+      */}
+      <div className={isSpecial ? 'highlighted' : 'normal'}>
+        <Counter />
+      </div>
+    </div>
+  );
 }
 ```
 
-Keys let React match rows by ID instead of by position.
+**Example 2: How Keys Protect State During Multi-Child Diffing**
 
-## 7. Common interview questions
-#### What is React's diffing algorithm?
-- **The Engine Mechanism (Why it behaves this way):** React's diffing algorithm is the comparison logic inside reconciliation that finds differences between two element trees. Instead of computing a perfect minimum-edit-distance diff (which is O(n³)), React uses two practical heuristics: (1) elements of different types at the same position trigger a full subtree replacement, and (2) for sibling children, the `key` prop provides stable identity for matching. The algorithm walks both trees in a single pass, comparing nodes positionally, and produces a list of mutations — insertions, updates, moves, and deletions.
-- **The Unforgettable Mental Model:** The **Quick Sorter**. Instead of comparing every item against every other item, the sorter uses shortcuts: different categories get swapped out entirely, and items with matching ID tags are recognized instantly. It's not perfect, but it's fast enough and works for 99% of UI patterns.
-- **The Trap:** Thinking React computes the mathematically optimal diff. It doesn't — it uses heuristics that are fast and correct for typical UI trees but could produce suboptimal results for unusual structures.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: React's diffing algorithm is a heuristic-based comparison strategy that finds differences between two element trees in O(n) time. It uses two key assumptions: first, elements of different types at the same position represent different subtrees, so React replaces the entire subtree. Second, for list children, developers provide keys that let React match elements by identity. These heuristics avoid the O(n³) cost of a perfect tree diff while producing correct results for typical UI patterns."
+```tsx
+import React, { useState } from 'react';
 
-#### Why is a perfect tree diff too expensive?
-- **The Engine Mechanism (Why it behaves this way):** Computing the minimum number of operations to transform one arbitrary tree into another is the tree edit distance problem, which has O(n³) time complexity. For a UI tree with 1,000 elements, that's roughly 1 billion operations. Since React may re-render dozens of times per second during user interactions, this cost is prohibitive. React's heuristics reduce this to O(n) by assuming that elements rarely change type at the same position and that developers provide keys for list items — assumptions that hold true for nearly all real-world UIs.
-- **The Unforgettable Mental Model:** The **Dictionary Comparison**. Finding the exact minimum edits to transform one dictionary into another would require checking every word against every other word — millions of comparisons. But if you assume words are alphabetically ordered and only a few change between editions, you can scan both books in a single pass and find differences instantly.
-- **The Trap:** Believing React's diff is "good enough" because UIs are simple. The real reason is mathematical: O(n³) is fundamentally too slow for frequent re-renders, regardless of UI complexity.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A perfect tree diff solves the tree edit distance problem, which is O(n³) in time complexity. For a tree with just 1,000 nodes, that's a billion operations — far too slow for UI that needs to re-render multiple times per second. React sidesteps this by using domain-specific heuristics: it assumes elements of different types represent different subtrees, and that list items have stable keys. These assumptions reduce diffing to O(n), making it practical for real-time UI updates."
+interface TodoItem {
+  id: string;
+  text: string;
+}
 
-#### What are React's diffing assumptions?
-- **The Engine Mechanism (Why it behaves this way):** React makes two core assumptions to make diffing practical. First, the type assumption: if two elements at the same position have different types (e.g., `<div>` vs `<span>`, or `Button` vs `Link`), React assumes the entire subtree is different and replaces it wholesale. This avoids deep comparison of subtrees that are likely unrelated. Second, the key assumption: for children in a list, React assumes that elements with the same key represent the same logical item across renders, even if their position changed. Without keys, React assumes position equals identity.
-- **The Unforgettable Mental Model:** The **Airport Security Check**. Security assumes: (1) if your passport photo looks completely different, you're a different person (type change = full replacement). (2) if you have the same passport number, you're the same person even if you're standing in a different spot in line (key match = same identity).
-- **The Trap:** Assuming React's assumptions are always correct. They work for typical UIs but can produce suboptimal results in edge cases — like when you intentionally want to replace a subtree while preserving state (which requires using a `key` on the parent to force remounting).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: React's diffing algorithm relies on two assumptions. First, elements of different types at the same position represent fundamentally different UI, so React replaces the entire subtree rather than comparing deeply. Second, for list children, the key prop provides stable identity — elements with matching keys are the same item, even if their position changed. These assumptions reduce diffing from O(n³) to O(n) and work correctly for virtually all real-world UI patterns."
+function TodoRow({ text }: { text: string }) {
+  // Local state represents user input in progress (e.g. notes on this task)
+  const [draftNote, setDraftNote] = useState('');
 
-#### How do keys improve diffing?
-- **The Engine Mechanism (Why it behaves this way):** During diffing of children, React builds a map from old keys to old Fiber nodes. When processing new children, it looks up each new key in this map. A hit means the element existed before — React reuses the Fiber node, preserving its state and DOM. A miss means the element is new — React creates a fresh Fiber node. After processing all new children, any old keys not found in the new set are marked for deletion. This map-based lookup is O(1) per element, making the entire children diff O(n). Without keys, React must compare children positionally, which causes O(n) unnecessary operations when items shift.
-- **The Unforgettable Mental Model:** The **Library Catalog**. Without a catalog system, finding a book means scanning every shelf in order. With a catalog (keys), you look up the book's ID and go directly to its location. Adding a new book? Insert it at the right spot without reshuffling the entire shelf.
-- **The Trap:** Using non-unique or unstable keys. If two items share a key, React's map lookup produces incorrect results. If keys change between renders (like using `Math.random()`), React thinks every item is new and remounts everything.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Keys improve diffing by giving React an O(1) lookup mechanism to match children across renders. React builds a map from old keys to old nodes, then uses new keys to find matches. Matched nodes are reused with their state preserved; unmatched nodes are created or deleted. This makes children diffing O(n) and prevents the state corruption that occurs with position-based matching. Keys should be stable, unique identifiers from your data — never random values or array indices for dynamic lists."
+  return (
+    <li style={{ marginBottom: '8px' }}>
+      <strong>{text}</strong>
+      <input
+        value={draftNote}
+        onChange={(e) => setDraftNote(e.target.value)}
+        placeholder="Type a personal note..."
+        style={{ marginLeft: '12px' }}
+      />
+    </li>
+  );
+}
 
-#### What happens when component type changes?
-- **The Engine Mechanism (Why it behaves this way):** When the diffing algorithm encounters a type change at a position, it immediately marks the old subtree for deletion and schedules a new subtree for creation. React does not attempt to compare the subtrees — it assumes they are incompatible. All DOM nodes in the old subtree are removed, all component instances are unmounted (triggering `componentWillUnmount` and `useEffect` cleanup), and all local state is destroyed. New DOM nodes are created and new component instances are mounted. This is the most expensive operation in diffing because it discards all previous work.
-- **The Unforgettable Mental Model:** The **Building Demolition**. If you decide a house should become a parking lot, you don't renovate — you demolish everything and start fresh. The foundation, plumbing, wiring, and furniture are all gone because the new structure has nothing in common with the old one.
-- **The Trap:** Unintentionally changing types through conditional rendering patterns like `{condition ? <ComponentA /> : <ComponentB />}`. This destroys state every time the condition flips.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: When the component type changes at a position, React performs a full subtree replacement. It unmounts every component in the old subtree, removes all DOM nodes, and destroys all state. Then it mounts a completely new subtree. This is intentional — React assumes different types are incompatible. If you need to swap visual appearance while preserving state, keep the same component type and change props. If you intentionally want to reset state on a type change, you can force it by adding a `key` prop."
+export function ListDiffingComparison() {
+  const [todos, setTodos] = useState<TodoItem[]>([
+    { id: 'task-1', text: 'Buy Groceries' },
+    { id: 'task-2', text: 'Clean Kitchen' },
+  ]);
 
-#### Why can index keys break state?
-- **The Engine Mechanism (Why it behaves this way):** When index is used as a key, React associates component state with the array position, not the data item. Consider a list `[{id: 'A'}, {id: 'B'}]` rendered with index keys `0` and `1`. If you insert `{id: 'C'}` at the front, the list becomes `[{id: 'C'}, {id: 'A'}, {id: 'B'}]` with keys `0`, `1`, `2`. React sees key `0` existed before, so it reuses the component at position 0 — but now that component holds data `C` while its internal state (like an input value) still belongs to `A`. The state is now attached to the wrong data item, causing visible bugs.
-- **The Unforgettable Mental Model:** The **Assigned Seating Disaster**. Imagine a restaurant that seats guests by arrival order. Guest A sits at table 1, Guest B at table 2. If a VIP cuts in and takes table 1, Guest A moves to table 2. But the waiter's order sheet still says table 1 ordered steak and table 2 ordered fish. Now Guest A (at table 2) gets fish, and the VIP (at table 1) gets steak — wrong orders for everyone.
-- **The Trap:** Using index keys for lists that "seem static." Even lists that start static often gain sorting, filtering, or pagination later. Index keys create a latent bug that activates the moment the list mutates.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Index keys break state because they tie component identity to position rather than data. When items are inserted, deleted, or reordered, React incorrectly reuses component instances for the wrong data items. For example, inserting an item at the top shifts all indices down, and React thinks each position still holds the same component. But the data has changed, so the component's internal state — input values, toggle states, effect subscriptions — is now attached to the wrong data. The fix is always to use a stable, unique identifier from the data."
+  const prependUrgentTask = () => {
+    const newTask: TodoItem = {
+      id: `task-${Date.now()}`,
+      text: 'Urgent: Answer Client Call',
+    };
+    // Adding an item to the front shifts every existing element down by one position
+    setTodos([newTask, ...todos]);
+  };
 
-#### How does diffing relate to reconciliation?
-- **The Engine Mechanism (Why it behaves this way):** Diffing is the comparison mechanism that runs as a sub-step of reconciliation. Reconciliation is the broader process: it includes rendering components to produce new element trees, diffing those trees against the previous trees, and collecting the resulting mutations. Diffing specifically handles the tree comparison logic — the type checks, key lookups, and effect tag assignments. Think of reconciliation as the full pipeline and diffing as the comparison engine within it. In the Fiber architecture, diffing happens as React walks the Fiber tree, comparing each work-in-progress node with its current counterpart.
-- **The Unforgettable Mental Model:** The **Factory Assembly Line**. Reconciliation is the entire factory — raw materials come in, products are assembled, quality-checked, and shipped. Diffing is the quality control station — it compares the new product against the old spec and flags what changed. You can't have quality control without the factory, but the factory has many stations besides quality control.
-- **The Trap:** Using "diffing" and "reconciliation" as synonyms. They are related but distinct: diffing is the comparison algorithm; reconciliation is the full process that includes rendering, diffing, and effect collection.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Diffing is the comparison mechanism within the broader reconciliation process. Reconciliation encompasses rendering components to produce new element trees, diffing those trees against previous versions, and collecting mutations for the commit phase. Diffing specifically handles the tree comparison — checking types, matching keys, and marking effect tags. In short: reconciliation is the full pipeline, diffing is the comparison step inside it."
+  return (
+    <div style={{ padding: '16px' }}>
+      <button onClick={prependUrgentTask}>Add Urgent Task to Top</button>
 
-## 8. Active recall test
-1. **What is React's diffing algorithm?**
-   - **Explanation:** It is a heuristic-based comparison strategy that finds differences between two element trees in O(n) time. It uses type comparison (different types = subtree replacement) and key-based matching (keys identify list items across renders) to avoid the O(n³) cost of a perfect tree diff.
-2. **Why is a perfect tree diff too expensive?**
-   - **Explanation:** The tree edit distance problem has O(n³) complexity. For a 1,000-node tree, that's ~1 billion operations — too slow for UI that re-renders multiple times per second. React's heuristics reduce this to O(n).
-3. **What are React's two diffing assumptions?**
-   - **Explanation:** (1) Elements of different types at the same position represent different subtrees, so React replaces the entire subtree. (2) For list children, the key prop provides stable identity — matching keys mean the same item.
-4. **How do keys improve diffing?**
-   - **Explanation:** Keys enable O(1) map lookups to match children across renders. React builds a map of old keys to old nodes, then uses new keys to find matches. This avoids position-based matching and preserves component state.
-5. **What happens when component type changes?**
-   - **Explanation:** React unmounts the entire old subtree, destroys all DOM nodes, runs cleanup functions, and creates a brand new subtree. All component state is lost.
-6. **Why can index keys break state?**
-   - **Explanation:** Index keys tie component identity to position. When items are inserted or reordered, React reuses component instances for the wrong data items, causing internal state to attach to incorrect data.
-7. **How does diffing relate to reconciliation?**
-   - **Explanation:** Diffing is the comparison mechanism inside reconciliation. Reconciliation is the full process (render + compare + collect mutations); diffing is specifically the tree comparison step.
+      {/* 
+        BROKEN LIST (Index as key):
+        When a new item is prepended, index 0 now holds the new task, but React matches
+        index 0 to the OLD index 0 Fiber node. The old draftNote state remains attached
+        to index 0, corrupting the UI so the user's note appears on the wrong task.
+      */}
+      <h3>Broken: Index as Key</h3>
+      <ul>
+        {todos.map((item, index) => (
+          <TodoRow key={index} text={item.text} />
+        ))}
+      </ul>
 
-## 9. Mistakes / traps
-- Saying React compares every DOM node manually.
-- Thinking keys improve visual sorting only.
-- Using indexes in dynamic lists.
-- Thinking same-looking JSX always preserves state.
-- Ignoring component type identity.
+      {/* 
+        CORRECT LIST (Stable ID as key):
+        React's reconcileChildrenArray uses the Map lookup to match 'task-1' with its
+        previous Fiber node. 'task-1' retains its draftNote state, and the new item
+        gets a fresh Fiber node at the top.
+      */}
+      <h3>Correct: Stable ID as Key</h3>
+      <ul>
+        {todos.map((item) => (
+          <TodoRow key={item.id} text={item.text} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
 
-## 10. Compare with related concepts
-- **Diffing vs reconciliation:** diffing is the comparison mechanism inside reconciliation.
-- **Diffing vs memoization:** diffing compares output trees; memoization may skip rendering work.
-- **Diffing vs browser layout:** diffing is React work; layout is browser work.
+## 5. The Interview Questions — All of Them, Done Properly
 
-## 11. Summary from memory
-Explain React's two main diffing assumptions and why keys matter.
+**Q: What is React's diffing algorithm and why is it $O(N)$ instead of $O(N^3)$?**
 
-## 12. Spaced revision prompts
-- After 1 day: Define diffing.
-- After 3 days: Explain type replacement.
-- After 7 days: Explain key-based child matching.
-- After 14 days: Compare diffing and memoization.
+React's diffing algorithm is the comparison engine used during reconciliation to compute differences between the previous Fiber tree and the newly returned React element tree.
 
+A general mathematical tree edit distance algorithm has a complexity of $O(N^3)$ because it compares every node against every other node across all levels of both trees to find the globally optimal set of transformations. For a 1,000-node DOM tree, $O(N^3)$ requires one billion comparisons per render, which would freeze the browser.
+
+React reduces this complexity to $O(N)$ linear time by using two domain-specific heuristics:
+1. It assumes elements of different types produce completely different trees and tears down the old subtree immediately.
+2. It relies on developer-provided `key` props to match sibling elements across renders in $O(1)$ time via a hash map.
+Combined with level-by-level traversal that never compares nodes across different parent subtrees, React visits each node a constant number of times, diffing 1,000 nodes in approximately 1,000 operations.
+
+**Q: What are the two core heuristic assumptions behind the diffing algorithm?**
+
+The two core heuristic assumptions are:
+1. **Type-Based Subtree Replacement:** Two elements of different types produce fundamentally different trees. When an element's type changes (e.g., from `<div>` to `<section>`, or from `<Header>` to `<Nav>`), React does not attempt to match their children. It unmounts the entire old subtree, destroys its DOM nodes and state, and mounts a new subtree.
+2. **Key-Based Identity for Sibling Lists:** Sibling elements can be uniquely identified across renders using a stable `key` prop. Instead of matching children purely by their index position in an array, React matches them by key, preserving component state and DOM nodes even when elements are reordered, inserted, or removed.
+
+**Q: What happens under the hood when an element's type changes during diffing?**
+
+When React encounters a different element type at the same position in the tree:
+1. React marks the entire old Fiber node and all of its child Fiber nodes for deletion.
+2. During the commit phase, React runs cleanup functions for all `useEffect` and `useLayoutEffect` hooks (or `componentWillUnmount` in class components) from the bottom of the unmounted tree upward.
+3. React removes the corresponding DOM nodes from the document.
+4. All internal component state (`useState`, `useReducer`, `useRef`) in that subtree is discarded and garbage collected.
+5. React creates brand-new Fiber nodes for the new element type and its children, initializes fresh state, creates new real DOM nodes, and mounts them to the parent DOM container.
+
+**Q: How does React diff lists of children, and how does `reconcileChildrenArray` work under the hood?**
+
+React diffs arrays of children using a two-pass algorithm in `reconcileChildrenArray`:
+
+In **Pass 1**, React iterates through the old Fiber siblings and the new child array in parallel from left to right. As long as the keys and types match at each index, React reuses the Fiber node in place and updates its props. The first pass breaks as soon as a key mismatch is encountered.
+
+If all new children were processed in Pass 1, excess old children are marked for deletion and diffing completes.
+
+If Pass 1 broke early, React enters **Pass 2**. It builds a `Map<Key, FiberNode>` from the remaining unmatched old Fiber siblings. React then scans the remaining new children and looks up each child's key in the Map in $O(1)$ time:
+- If a matching Fiber is found in the Map, React reuses it and removes it from the Map. React compares its old position against `lastPlacedIndex` to determine if the node moved to the right in the DOM.
+- If no match is found in the Map, React creates a new Fiber node with a `Placement` effect.
+- Any Fiber nodes left in the Map after the loop finishes are marked with a `Deletion` effect to be removed from the DOM.
+
+**Q: Why does using an array index as a `key` cause silent state corruption in dynamic lists?**
+
+When you use array indices as keys (`key={index}`), you tell React that element identity is strictly bound to array position rather than the underlying data entity.
+
+If you prepend an item to the beginning of an array:
+- The new item receives index `0`.
+- The item that was previously at index `0` now sits at index `1`.
+- React compares the new tree with the old tree by key. It sees key `0` existed before, so it reuses the Fiber node at index `0` for the new item.
+- React updates the component's props with the new data, but the component's internal state (such as input text, open dropdown toggles, or active animations) is preserved on that Fiber node.
+- As a result, the state belonging to the old first item is displayed inside the new first item. Meanwhile, the last item in the array receives a brand-new component instance with empty state.
+
+This leads to visual glitches, wrong form inputs, and subtle production bugs whenever lists are sorted, filtered, or prepended.
+
+**Q: How does diffing differ from reconciliation?**
+
+Reconciliation is the entire end-to-end process React uses to synchronize component state changes with the user interface. It encompasses:
+1. Triggering a render when state or props change.
+2. Executing component functions to produce a new React element tree.
+3. Diffing the new tree against the current Fiber tree to identify mutations.
+4. Scheduling and committing the resulting DOM operations (inserts, updates, deletes).
+
+Diffing is specifically step 3 — the tree-comparison algorithm that calculates the minimal set of changes during the render phase. In short: reconciliation is the entire update pipeline, and diffing is the comparison algorithm inside that pipeline.
+
+**Q: Does React diff elements across different levels of the tree?**
+
+No. React diffs strictly level-by-level within the same parent node. If an element moves from one parent container to another (e.g., from a modal dialog to a page sidebar), React will not detect that the element moved. It will unmount the element from its old parent, destroy its DOM node and internal state, and mount a brand-new element in the new parent.
+
+## 6. The Traps — What Goes Wrong
+
+**Trap 1: Defining Components Inside the Body of Another Component**
+
+```tsx
+// WRONG: Defining a component inside another component's render function
+function ParentContainer() {
+  const [count, setCount] = useState(0);
+
+  // Every time ParentContainer renders, a NEW ChildComponent function reference is created in memory
+  function ChildComponent() {
+    return <input placeholder="Type here..." />;
+  }
+
+  return (
+    <div>
+      <button onClick={() => setCount(c => c + 1)}>Rerender: {count}</button>
+      <ChildComponent />
+    </div>
+  );
+}
+```
+
+When a component is declared inside another component's render function, JavaScript allocates a brand-new function object on every render. To React, the component type at `<ChildComponent />` is a different function reference on every single state update. React treats this as a type change, completely destroying and remounting the subtree on every keystroke or parent render. The text input loses focus after every single character typed.
+
+**The Fix:** Always declare components at the top level of the module so their function identity remains stable across renders.
+
+**Trap 2: Generating Dynamic or Random Keys on the Fly**
+
+```tsx
+// WRONG: Generating a new key on every render
+<UserCard key={Math.random()} user={user} />
+<UserCard key={Date.now()} user={user} />
+```
+
+Passing random numbers or timestamps as keys tricks React into believing that every single render contains completely new elements. React bypasses all DOM reuse, destroys the previous Fiber nodes, unmounts all children, and recreates every DOM element from scratch. This ruins rendering performance, causes visible screen flashing, and drops all local state.
+
+**The Fix:** Use stable, unique IDs from your data (such as database primary keys or UUIDs).
+
+**Trap 3: Assuming Same JSX Structure Preserves State Across Wrapper Changes**
+
+```tsx
+// Subtle bug: toggling isCard wipes out FormFields state
+{isCard ? (
+  <div className="card-wrapper">
+    <FormFields />
+  </div>
+) : (
+  <FormFields />
+)}
+```
+
+Developers often assume that because `<FormFields />` exists in both branches of a ternary operator, its state will be preserved when toggling `isCard`. However, in the first branch, `<FormFields />` is a child of `<div>`, while in the second branch, `<FormFields />` is a direct child of the parent container. Because the tree depth and parent structure changed, React cannot match the two positions. It destroys the first instance and mounts a fresh one, clearing all form inputs.
+
+**The Fix:** Keep the parent container structure identical and toggle classes on the wrapper, or lift state to a common ancestor.
+
+**Trap 4: Expecting React to Track Cross-Container Moves**
+
+```tsx
+// Moving a component from a drawer to a modal resets its state
+{isExpanded ? (
+  <ModalContainer>
+    <VideoPlayer src={url} />
+  </ModalContainer>
+) : (
+  <SidebarContainer>
+    <VideoPlayer src={url} />
+  </SidebarContainer>
+)}
+```
+
+React never compares across different parent branches. When `isExpanded` toggles, the `<VideoPlayer>` inside `<SidebarContainer>` is unmounted (pausing video playback and resetting playback time) and a new player is mounted inside `<ModalContainer>`.
+
+**The Fix:** Keep the stateful component mounted in a single persistent location in the React tree and use CSS or a React Portal (`createPortal`) to reposition its visual container in the DOM.
+
+## 7. Compare With Related Concepts
+
+**Diffing vs Reconciliation**
+Reconciliation is the complete end-to-end framework pipeline for updating the UI, including component rendering, tree comparison, effect scheduling, and DOM mutations. Diffing is specifically the in-memory tree comparison algorithm that runs during the render phase of reconciliation.
+*Rule:* Reconciliation is the whole factory; diffing is the inspection station comparing the new blueprint against the old one.
+
+**Diffing vs Virtual DOM**
+The Virtual DOM is the in-memory tree of JavaScript objects (and Fiber nodes) that represent the UI structure. Diffing is the algorithm that operates on those Virtual DOM trees to detect changes between renders.
+*Rule:* The Virtual DOM is the data structure; diffing is the algorithm that processes that data structure.
+
+**Diffing vs `React.memo` / `useMemo`**
+`React.memo` and `useMemo` prevent a component from re-rendering in the first place by skipping its render function when props do not change. Diffing only occurs when a component *does* render and React must inspect its returned JSX output against the previous Fiber tree.
+*Rule:* Memoization prevents rendering work before it starts; diffing resolves the differences after rendering occurs.
+
+**Diffing vs Browser Reflow and Repaint**
+Diffing is pure JavaScript execution in memory comparing lightweight object trees. Browser reflow (layout calculation) and repaint (drawing pixels to the screen) are browser engine operations that run when real DOM nodes are inserted, removed, or restyled.
+*Rule:* Diffing happens in React's JavaScript runtime; reflow and repaint happen in the browser's C++ rendering engine.
+
+## 8. 🧠 The Memory Hook
+
+**Different type? Gut the room and rebuild. Moving in a list? Show your badge ID.**
+React's $O(N)$ speed comes from two rules: change the tag and the whole subtree dies; keep the tag and use stable `key` IDs so React can roll existing DOM nodes and state into their new positions.
