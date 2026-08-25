@@ -1,129 +1,472 @@
-# Presentational vs Container Components
+# Presentational vs Container Components (Smart vs Dumb)
 
-## Detailed explanation
-The presentational/container pattern separates UI rendering from data and behavior orchestration. Presentational components focus on displaying props. Container components fetch data, read route params, connect to stores, manage state, or decide which UI state to show.
+## 1. Why This Exists — The Problem First
 
-Hooks made this pattern less formal, but the responsibility split remains valuable. It helps keep reusable UI free from feature-specific data fetching and makes feature-level components easier to test.
+Imagine building a sortable, paginated user table for an admin dashboard. You write a single 300-line React component: inside it, you call `fetch('/api/v2/users')`, read URL search params to synchronize pagination with `useSearchParams()`, pull the current auth token directly from a global Redux or Zustand store, and render the HTML `<table>` with custom CSS classes, loading spinners, and action buttons.
 
-## 1. One-line mental model
-Presentational components focus on how UI looks, while container components focus on data, state, and behavior.
+The component works on day one. Then production reality hits:
 
-## 2. Problem it solves
-Mixing data fetching, business logic, and markup in every component makes UI hard to test and reuse. Separating presentation from orchestration clarifies responsibilities.
+1. **Zero Reusability:** The billing team asks to display customer accounts using the exact same table design, column sorting, and pagination controls. But because your table has `/api/v2/users` hardcoded inside its body, you cannot reuse the markup. You either duplicate the 300 lines or hack in conditional API flags.
+2. **Broken Design Workflows:** The design team wants to test the table in Storybook across various visual edge cases (empty states, 50-character names, mobile viewports). Storybook crashes instantly because there is no backend API server, no active Redux store, and no router context.
+3. **Painful Testing:** To test whether clicking a column header toggles the sort arrow icon, your unit test must set up mock service workers (MSW), mock global state providers, configure memory routers, and wait for asynchronous network promises to settle. A five-line UI check turns into a 60-line test harness.
+4. **High Regression Risk:** When the backend team renames an API response property from `user_id` to `id`, you must open the exact file containing your CSS flexbox layouts and responsive dropdown logic. An API tweak risks breaking the visual layout.
 
-## 3. Core idea
-- Presentational components receive data and callbacks through props.
-- Container components fetch data, manage state, and connect to stores or routes.
-- Hooks have made the pattern less rigid, but the separation is still useful.
-- Feature components often combine both when the boundary is small.
-- Shared UI should usually stay presentational.
+This friction happens when **how things look** (markup, styles, visual states) is tightly coupled to **how things work** (data fetching, business logic, store subscriptions, side effects). Separating presentation from data orchestration solves this immediately.
 
-## 4. Visual / analogy
-A container is the restaurant kitchen; presentational components are the plated dish. The user sees the dish, but the kitchen prepares the data.
+---
 
-```mermaid
-flowchart TD
-  Container["UsersPageContainer"] --> Data["Fetch users"]
-  Container --> Presentational["UsersTable"]
-  Presentational --> UI["Rows and buttons"]
+## 2. The Analogy — Make It Obvious
+
+Think of a **high-end restaurant**:
+
+```
+[ Kitchen & Executive Chef ]  ──( Prepared Meal / Props )──▶  [ Waitstaff & Plating ]  ──▶  [ Diner / User ]
+   • Sources raw ingredients                                     • Arranges food on china
+   • Controls stoves & timers                                    • Handles silverware & napkins
+   • Manages recipes & inventory                                 • Listens to guest feedback
+   (Container / Smart)                                           (Presentational / Dumb)
 ```
 
-## 5. Minimal example
+- **The Kitchen & Executive Chef (The Container):** The kitchen sources raw ingredients from vendors (APIs), checks refrigerator inventory (cache/store), manages stove timers and prep work (side effects, state machines), and handles supply failures (if the salmon is spoiled, substitute sea bass). The kitchen does not care about table linens or background music. Its job is to turn raw ingredients into a clean, ready-to-serve meal.
+- **The Waitstaff & Plating (The Presentational Component):** The waitstaff receives the prepared meal on a silver platter (props). They focus entirely on visual presentation, plate arrangement, and diner interactions. When the diner asks for water or sends a dish back (user clicks/events), the server catches the request and passes the message back to the kitchen (callbacks).
+- **Why the separation matters:** You can switch food vendors from Local Farms to Ocean Catch (switch a REST API to GraphQL or local mock data), and the plated presentation at the table remains identical. Conversely, you can replace all the restaurant's plates and dining room decor (re-theme UI) without changing the kitchen's cooking recipes.
 
-```tsx
-function UserName({ name }: { name: string }) {
-  return <span>{name}</span>;
-}
+---
+
+## 3. How It Actually Works — The Full Explanation
+
+The Presentational vs. Container pattern divides UI development into two distinct layers of responsibility.
+
+### The Two Layers of Responsibility
+
+```
+┌────────────────────────────────────────────────────────┐
+│ CONTAINER LAYER ("Smart" / Orchestration)              │
+│ - Fetches data (TanStack Query, SWR, fetch)            │
+│ - Subscribes to global stores (Zustand, Redux)         │
+│ - Reads router params (useParams, useSearchParams)     │
+│ - Shapes raw API payloads into clean UI data shapes    │
+│ - Passes data and event handlers down as props         │
+└──────────────────────────┬─────────────────────────────┘
+                           │ Props (Data & Callbacks)
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ PRESENTATIONAL LAYER ("Dumb" / Visual)                 │
+│ - Receives data and callbacks strictly via props       │
+│ - Renders JSX markup, CSS, and layout styling          │
+│ - Handles local UI state (accordion open, hover state) │
+│ - No knowledge of APIs, databases, stores, or routes   │
+│ - Pure, deterministic, and isolated                    │
+└────────────────────────────────────────────────────────┘
 ```
 
-`UserName` is presentational because it only renders props.
+#### 1. Presentational Components ("Dumb" / UI Components)
+- **Primary concern:** How things look.
+- **Inputs and Outputs:** Props in, JSX elements out.
+- **Data dependencies:** They never import API clients, fetch utilities, global store selectors, or router hooks. If they need data, it must arrive through `props`.
+- **State ownership:** They do not own business or domain state. However, they **can** own ephemeral, visual-only UI state—such as whether a dropdown menu is open, whether a tooltip is hovered, or which tab is highlighted.
+- **Determinism:** Given the exact same props, a presentational component produces the exact same rendered output. This makes them trivial to test and drop into Storybook or component catalogs.
 
-## 6. Real-world example
+#### 2. Container Components ("Smart" / Orchestrator Components)
+- **Primary concern:** How things work.
+- **Responsibilities:** Managing network calls, caching, error boundaries, router coordination, global store reading/writing, and business calculations.
+- **Markup:** Minimal. Containers rarely have custom CSS classes, layout wrappers beyond basic structural divs, or detailed HTML tags. They primarily render presentational child components and feed them props.
+- **Data Transformation:** Containers act as a translation barrier. They receive raw backend data structures (DTOs), sanitize and reshape them into UI-friendly props, and pass them down. If the backend schema changes, only the container needs updating.
+
+---
+
+### The Evolution: From Class Wrappers to Custom Hooks
+
+Understanding how this pattern evolved prevents dogmatic or outdated architectural decisions.
+
+#### The 2015 Era: File-Level Component Pairs
+When Dan Abramov popularized this pattern in the early days of React and Redux, React had a fundamental limitation: **only class components could hold state and lifecycle methods (`componentDidMount`)**, while function components were strictly stateless (`(props) => JSX`).
+
+To separate logic from layout, developers created two physical files for every view:
+1. `UserListContainer.jsx` (Class component fetching data in `componentDidMount` and rendering the child).
+2. `UserList.jsx` (Stateless function component rendering `<ul>` and `<li>`).
+
+This led to deep component nesting ("wrapper hell") in React DevTools and excessive boilerplate.
+
+#### The Modern Era: Custom Hooks as Containers
+With React 16.8+ (Hooks), function components can manage state, side effects, and context subscriptions directly.
+
+This fundamentally changed how the pattern is implemented:
+- The **Container Component** largely evolved into a **Custom Hook** (e.g., `useUserData()`).
+- The logic (network calls, caching, state machines) lives in the hook.
+- The UI (markup, styles, accessibility) lives in the component.
 
 ```tsx
+// The modern expression of the Container/Presentational pattern:
 function UsersPage() {
-  const users = useUsersQuery();
-  return <UsersTable rows={users.data ?? []} isLoading={users.isLoading} />;
-}
+  // Custom hook acts as the Container / Data Orchestrator
+  const { users, isLoading, error, deleteUser } = useUsers();
 
-function UsersTable({ rows, isLoading }: { rows: User[]; isLoading: boolean }) {
-  if (isLoading) return <TableSkeleton />;
-  return <table>{rows.map((user) => <UserRow key={user.id} user={user} />)}</table>;
+  // Presentational component receives clean props
+  return (
+    <UserTable
+      users={users}
+      isLoading={isLoading}
+      errorMessage={error?.message}
+      onDelete={deleteUser}
+    />
+  );
 }
 ```
 
-## 7. Common interview questions
-#### What are presentational components?
-- **The Engine Mechanism (Why it behaves this way):** Presentational components are React functions that receive data and callbacks exclusively through props and return JSX. During the render phase, React calls the component with its props, and the component produces a React element tree purely from those inputs. Presentational components have no direct knowledge of data fetching, routing, or global stores. They may have minimal internal UI state (like "is dropdown open"), but they don't manage business data. Because they're pure functions of props, they're highly testable — you pass props, assert on output. React's reconciliation treats them like any other component, but their simplicity means fewer re-render triggers.
-- **The Unforgettable Mental Model:** The **Mannequin**. The mannequin (presentational component) doesn't decide what to wear. Someone dresses it (parent passes props), and it displays the outfit. Swap the clothes, the mannequin looks different. The mannequin never goes shopping (fetches data) itself.
-- **The Trap:** Calling them "dumb" components. Presentational components still need thoughtful design, accessibility, and interaction handling. "Dumb" implies they're unimportant — they're actually the user-facing layer.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Presentational components focus on how things look. They receive data and callbacks through props, manage minimal internal UI state, and render JSX. They don't fetch data, read routes, or connect to stores. This makes them highly reusable, easy to test, and portable across features. Examples include a UserAvatar that receives a name and image URL, or a DataTable that receives rows and column definitions."
+The separation of concerns did not disappear—it became cleaner. You get all the benefits of isolated UI components without arbitrary component wrapper hierarchies.
 
-#### What are container components?
-- **The Engine Mechanism (Why it behaves this way):** Container components are React functions that handle data fetching, state management, route parameter reading, and business logic orchestration. During the render phase, they execute data queries (via hooks like `useQuery`), read from stores, process data into presentational shapes, and pass the results down to presentational components. They may also handle side effects through `useEffect` or event handlers. Container components are the "glue" between the application's data layer and its UI layer. They re-render when their data sources change — when a query refetches, when store state updates, when route params change.
-- **The Unforgettable Mental Model:** The **Restaurant Kitchen**. The kitchen (container) receives orders (user actions), gathers ingredients (fetches data), prepares the dish (processes data), and hands it to the waiter (presentational component) who serves it to the customer. The customer never sees the kitchen.
-- **The Trap:** Making containers do presentation. If a container component has complex JSX, conditional rendering for UI states, or styling logic, it's doing two jobs. Split it: container handles data, presentational handles rendering.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Container components handle data and behavior — they fetch data, manage state, read route parameters, and orchestrate business logic. They shape raw data into presentational formats and pass them down to presentational components. A UsersPage container fetches users, handles loading and error states, and passes a clean array of user objects to a UsersTable presentational component. The container knows about APIs; the presentational component only knows about props."
+---
 
-#### Is this pattern still relevant with hooks?
-- **The Engine Mechanism (Why it behaves this way):** Before hooks, the container/presentational split was enforced by class component architecture — containers were classes with lifecycle methods and state, presentational components were stateless functional components. Hooks blurred this line because any function component can now use `useState`, `useEffect`, `useQuery`, etc. However, the responsibility separation remains valuable: keeping data logic separate from rendering logic makes components easier to test, reason about, and reuse. The pattern shifted from "separate files" to "separate concerns within files" or "custom hooks as containers." A component can use a custom hook (`useUsersQuery`) that encapsulates the container logic, keeping the component itself presentational.
-- **The Unforgettable Mental Model:** **Separate Rooms vs. Separate Houses**. Before hooks, containers and presentational components lived in separate houses (files). With hooks, they can live in the same house but in separate rooms (custom hooks + presentational rendering in one file). The separation of concerns remains; the physical separation is optional.
-- **The Trap:** Thinking hooks eliminate the need for separation. Without discipline, components become "god components" that fetch data, manage state, handle events, and render complex UI — all in one function.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Hooks made the strict file-level separation less necessary, but the responsibility split is still valuable. Instead of separate container and presentational files, I often use custom hooks to encapsulate data logic — useUsersQuery handles fetching, pagination, and error state, while the component focuses on rendering. The principle remains: separate data orchestration from UI rendering. Hooks just gave us a more flexible way to achieve it."
+## 4. Real Code — See It Working
 
-#### Where should data fetching live?
-- **The Engine Mechanism (Why it behaves this way):** Data fetching should live in container components or custom hooks, not in presentational components. During the render phase, React executes hooks in order. A data-fetching hook (`useQuery`, `useSWR`) initiates the request, manages loading/error/success states, and returns the result. The component then renders based on these states. If data fetching lived in presentational components, those components would become coupled to specific APIs, making them unusable in different contexts. Additionally, presentational components are often rendered multiple times in different parts of the app — each render would trigger a new fetch if the fetching logic were embedded in them.
-- **The Unforgettable Mental Model:** The **Water Main vs. the Faucet**. The water main (container/hook) connects to the city supply (API) and manages pressure, filtration, and flow. The faucet (presentational component) just lets water out when you turn the handle. You don't plumb the city connection into every faucet.
-- **The Trap:** Putting fetch calls directly inside component bodies or useEffect without proper dependency management. This causes infinite refetch loops or stale data.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Data fetching should live in container components or custom hooks, never in presentational components. I use libraries like TanStack Query or SWR through custom hooks that manage loading, error, caching, and refetching. The presentational component receives the fetched data as props and focuses on rendering. This keeps UI components portable and testable, and centralizes data-fetching concerns in one place."
+### The Anti-Pattern: Tightly Coupled God Component
 
-#### How does this pattern improve testing?
-- **The Engine Mechanism (Why it behaves this way):** Separating presentation from data makes each layer independently testable. Presentational components can be tested by rendering them with mock props and asserting on the output — no network mocking, no store setup, no async waiting. Container components can be tested by mocking their data sources (API responses, store values) and verifying they pass the correct props to presentational children. During testing, React Testing Library renders components into jsdom and queries the output. Presentational tests are fast and deterministic because they have no external dependencies. Container tests verify data transformation and state management without caring about the rendered HTML structure.
-- **The Unforgettable Mental Model:** The **Car Assembly Line Testing**. Each station tests one thing: the engine station tests the engine, the paint station tests the paint, the electrical station tests the wiring. You don't test the engine by checking the paint color. Separated components let you test each concern in isolation.
-- **The Trap:** Testing presentational components with real API calls or store connections. This makes tests slow, flaky, and coupled to implementation details.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: This pattern improves testing by making each layer independently testable. Presentational components are tested with mock props — I render them, query the output, and assert on what's on screen. No network mocking, no async waits. Container components are tested by mocking their data sources and verifying they pass correct props to children. This separation means presentational tests are fast and deterministic, while container tests verify data logic without caring about HTML structure."
+Here is the coupled approach where networking, routing, store access, and table rendering are tangled together:
 
-#### What should shared UI components know?
-- **The Engine Mechanism (Why it behaves this way):** Shared UI components should only know about their own props, internal UI state, and DOM interactions. During render, they produce output based solely on these inputs. They should not import API clients, read from global stores, access router context, or reference feature-specific types. If a shared component needs data, that data should be passed as props. If it needs to trigger an action, it should call a callback prop. This isolation ensures the component can be used in any context — different pages, different apps, even different projects. React's module system enforces this at the import level: if a shared component doesn't import feature-specific modules, it can't accidentally depend on them.
-- **The Unforgettable Mental Model:** The **Universal Remote**. It works with any TV because it doesn't know about specific TV models. It sends standard signals (props and callbacks) that any compatible device understands. A TV-specific remote (feature-coupled component) only works with one model.
-- **The Trap:** Importing a "shared" component that secretly imports from `@/features/checkout`. This creates a hidden dependency that breaks when you try to use the component elsewhere.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Shared UI components should only know about their props, internal UI state, and how to interact with the DOM. They should never import API clients, read from stores, access router context, or reference feature-specific types. If a shared Button needs to know about loading state, that's passed as an `isLoading` prop — the Button doesn't fetch the loading state itself. The test is: can I copy this component to a completely different project and use it with just props? If yes, it's truly shared."
+```tsx
+// AntiPatternUserTable.tsx - Hard to test, impossible to reuse
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuthStore } from '../stores/authStore';
 
-#### Can one component be both?
-- **The Engine Mechanism (Why it behaves this way):** Yes, and in practice, many components are both — especially at the feature level. A `UsersPage` component might fetch data (container behavior) and render the table (presentational behavior) in the same function. This is acceptable when the component is small, the data logic is simple, and splitting it would add unnecessary indirection. React doesn't enforce the separation — it's an architectural guideline. The key is intentional choice: combine when the boundary is small and clear, split when the component grows complex or when the presentational part needs to be reused elsewhere. Custom hooks make this easier — the container logic lives in a hook, and the component function stays focused on rendering.
-- **The Unforgettable Mental Model:** The **Studio Apartment vs. the House**. A studio (combined component) has the kitchen, bedroom, and living room in one space — fine for one person. A house (split components) has separate rooms — better for families. The right choice depends on how much space (complexity) you need.
-- **The Trap:** Rigidly enforcing the split for every component, creating files that export two components where one would suffice. The pattern serves clarity, not bureaucracy.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Yes, components can be both, and often are at the feature level. A UsersPage might fetch data and render the table in the same function. I combine them when the component is small and the presentational part isn't reused elsewhere. I split them when the presentational component is used in multiple places or when the data logic is complex enough to warrant its own custom hook. The pattern is a tool for clarity, not a rule to follow rigidly."
+export function AntiPatternUserTable() {
+  const [data, setData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const token = useAuthStore((s) => s.token);
+  const page = Number(searchParams.get('page')) || 1;
 
-## 8. Active recall test
-1. **What does a container own?**
-   - **Explanation:** A container owns data fetching, state management, route parameter reading, business logic, and data transformation. It orchestrates how data flows into the application and shapes it for presentation.
-2. **What does a presentational component own?**
-   - **Explanation:** A presentational component owns how the UI looks and behaves visually — rendering JSX from props, handling user interactions through callbacks, managing minimal internal UI state (like toggle states), and ensuring accessibility.
-3. **Why did hooks reduce strict container/presentational separation?**
-   - **Explanation:** Before hooks, only class components could hold state and lifecycle methods, forcing a file-level split. Hooks allow any function component to use state, effects, and data-fetching hooks, so the separation became a concern-level split within a file rather than a file-level split.
-4. **Where should route params usually be read?**
-   - **Explanation:** Route params should be read in container components or custom hooks, not in presentational components. This keeps presentational components decoupled from the routing system and makes them reusable in non-routed contexts (like modals or embedded views).
-5. **How does this pattern help reuse?**
-   - **Explanation:** By separating data logic from rendering, presentational components become portable — they can be used with any data source, in any feature, because they only depend on props. Container components can also be reused when the same data is needed in different UI presentations.
+  useEffect(() => {
+    // Tightly coupled to a specific URL endpoint and auth mechanism
+    fetch(`/api/v2/users?page=${page}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        setData(json.items);
+        setLoading(false);
+      });
+  }, [page, token]);
 
-## 9. Mistakes / traps
-- Treating the pattern as a strict rule for every file.
-- Putting API calls inside shared UI components.
-- Passing raw server responses too deep without shaping them.
-- Making presentational components know about routes.
-- Splitting tiny components unnecessarily.
+  if (loading) return <div className="spinner">Loading users...</div>;
 
-## 10. Compare with related concepts
-- **Presentational vs container:** rendering-focused vs orchestration-focused.
-- **Container vs page:** a page is often a route-level container.
-- **Presentational vs dumb:** avoid dismissive naming; presentational components still need good design and accessibility.
+  return (
+    <div className="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((user) => (
+            <tr key={user.id}>
+              <td>{user.full_name}</td>
+              <td>{user.email_address}</td>
+              <td><span className="badge">{user.role_name}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button onClick={() => setSearchParams({ page: String(page + 1) })}>
+        Next Page
+      </button>
+    </div>
+  );
+}
+```
 
-## 11. Summary from memory
-Explain how you would split a users page into data container and reusable table components.
+---
 
-## 12. Spaced revision prompts
-- After 1 day: Define presentational and container components.
-- After 3 days: Explain how hooks changed this pattern.
-- After 7 days: Refactor a data-heavy component into two parts.
-- After 14 days: Decide where API fetching should live.
+### The Refactored Pattern: Clean Separation
+
+#### Step 1: The Presentational Component (Pure UI)
+
+This component knows nothing about network requests, URLs, or authentication. It accepts typed props and renders UI.
+
+```tsx
+// components/UserTable.tsx
+import React from 'react';
+
+export interface UserRowViewModel {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+interface UserTableProps {
+  users: UserRowViewModel[];
+  isLoading: boolean;
+  currentPage: number;
+  onNextPage: () => void;
+  onPrevPage: () => void;
+}
+
+export function UserTable({
+  users,
+  isLoading,
+  currentPage,
+  onNextPage,
+  onPrevPage,
+}: UserTableProps) {
+  if (isLoading) {
+    return <div className="p-8 text-center text-gray-500">Loading user records...</div>;
+  }
+
+  if (users.length === 0) {
+    return <div className="p-8 text-center text-gray-500">No users found.</div>;
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 shadow-sm">
+      <table className="min-w-full divide-y divide-gray-200">
+        <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
+          <tr>
+            <th className="px-4 py-3">Name</th>
+            <th className="px-4 py-3">Email</th>
+            <th className="px-4 py-3">Role</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100 bg-white text-sm text-gray-800">
+          {users.map((user) => (
+            <tr key={user.id} className="hover:bg-gray-50">
+              <td className="px-4 py-3 font-medium">{user.name}</td>
+              <td className="px-4 py-3 text-gray-500">{user.email}</td>
+              <td className="px-4 py-3">
+                <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                  {user.role}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Pagination controls emit callbacks instead of mutating router directly */}
+      <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+        <button
+          type="button"
+          disabled={currentPage <= 1}
+          onClick={onPrevPage}
+          className="rounded border px-3 py-1 text-sm disabled:opacity-50"
+        >
+          Previous
+        </button>
+        <span className="text-sm text-gray-600">Page {currentPage}</span>
+        <button
+          type="button"
+          onClick={onNextPage}
+          className="rounded border px-3 py-1 text-sm"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+#### Step 2: The Orchestration Hook (Container Logic)
+
+All side effects, routing, caching, and data reshaping are encapsulated inside a custom hook:
+
+```tsx
+// hooks/useUsersList.ts
+import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { UserRowViewModel } from '../components/UserTable';
+
+interface RawApiUser {
+  user_id: string;
+  first_name: string;
+  last_name: string;
+  email_address: string;
+  role_name: string;
+}
+
+export function useUsersList() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(1, Number(searchParams.get('page')) || 1);
+
+  const query = useQuery({
+    queryKey: ['users', page],
+    queryFn: async (): Promise<UserRowViewModel[]> => {
+      const res = await fetch(`/api/v2/users?page=${page}`);
+      if (!res.ok) throw new Error('Failed to fetch users');
+      const data: { items: RawApiUser[] } = await res.json();
+
+      // Transform raw backend DTO into clean View Model
+      return data.items.map((item) => ({
+        id: item.user_id,
+        name: `${item.first_name} ${item.last_name}`.trim(),
+        email: item.email_address,
+        role: item.role_name,
+      }));
+    },
+  });
+
+  const goToNextPage = () => setSearchParams({ page: String(page + 1) });
+  const goToPrevPage = () => setSearchParams({ page: String(Math.max(1, page - 1)) });
+
+  return {
+    users: query.data ?? [],
+    isLoading: query.isLoading,
+    isError: query.isError,
+    errorMessage: query.error instanceof Error ? query.error.message : null,
+    currentPage: page,
+    goToNextPage,
+    goToPrevPage,
+  };
+}
+```
+
+#### Step 3: The Route / Container Component
+
+The route component serves as the glue, wiring the container logic to the presentational component:
+
+```tsx
+// pages/UsersPage.tsx
+import { useUsersList } from '../hooks/useUsersList';
+import { UserTable } from '../components/UserTable';
+
+export function UsersPage() {
+  const {
+    users,
+    isLoading,
+    isError,
+    errorMessage,
+    currentPage,
+    goToNextPage,
+    goToPrevPage,
+  } = useUsersList();
+
+  if (isError) {
+    return <div className="rounded bg-red-50 p-4 text-red-700">{errorMessage}</div>;
+  }
+
+  return (
+    <div className="mx-auto max-w-4xl p-6">
+      <h1 className="mb-6 text-2xl font-bold text-gray-900">User Management</h1>
+      <UserTable
+        users={users}
+        isLoading={isLoading}
+        currentPage={currentPage}
+        onNextPage={goToNextPage}
+        onPrevPage={goToPrevPage}
+      />
+    </div>
+  );
+}
+```
+
+---
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is the fundamental distinction between presentational and container components?**
+
+Presentational components govern how things look; container components govern how things work.
+
+Presentational components receive data and callbacks exclusively through props and return JSX. They do not initiate network requests, read route parameters, or subscribe to global state stores. They are deterministic and pure with respect to their props.
+
+Container components orchestrate side effects: data fetching, caching, error states, route management, and state mutations. They shape raw data into clean view models and pass that data down to presentational components.
+
+---
+
+**Q: Can a presentational component hold internal state, or must it be completely stateless?**
+
+Presentational components can hold internal state, provided that state is purely local and visual.
+
+The misconception is equating "presentational" with "stateless". A presentational component should not manage business or domain state (e.g., user profiles, cart items, authentication tokens). However, it frequently manages visual interaction state:
+- Whether an accordion section is collapsed or expanded.
+- Whether a custom dropdown menu is open.
+- Which tab is visually active in a tab bar.
+- Ephemeral hover, focus, or tooltip animations.
+
+These state values dictate visual presentation, not application business rules.
+
+---
+
+**Q: Dan Abramov wrote an update saying he no longer promotes this pattern. Does that mean we should not use it?**
+
+No. Dan Abramov clarified that he no longer promotes the rigid practice of splitting every UI feature into two physical wrapper components (`ThingContainer.jsx` wrapping `Thing.jsx`).
+
+Before Hooks in React 16.8, class components were the only way to hold state and lifecycle methods, making wrapper components necessary to keep presentation functions pure. With React Hooks, stateful logic can be encapsulated inside Custom Hooks (`useThing()`) instead of wrapper components.
+
+The underlying principle—**Separation of Concerns between data orchestration and UI rendering**—remains a fundamental pillar of scalable frontend architecture. Hooks changed the implementation mechanism, not the architectural goal.
+
+---
+
+**Q: Where should data fetching and route parameters live in a clean React architecture?**
+
+Data fetching and route parameters should live at the boundary: in page-level route components, container components, or dedicated custom hooks.
+
+They should never live inside reusable UI components (like buttons, modals, cards, or tables). If a shared `<UserProfileCard />` component directly calls `useParams()` or `fetch('/api/user')`, it cannot be rendered inside a preview popover, a search results dropdown, or a test environment without setting up fake routes and network mocks. Keeping shared UI dependent only on props ensures maximum portability.
+
+---
+
+**Q: How does this pattern improve unit testing and Storybook development?**
+
+It decouples visual testing from infrastructure testing:
+
+1. **For Presentational Components:** You test UI rendering, accessibility, and user events using simple props without mocking `fetch`, setting up Redux store providers, or configuring `MemoryRouter`. Tests run in milliseconds in jsdom and are completely deterministic. In Storybook, you can render empty states, loading states, error states, and populated states simply by passing different mock prop objects.
+2. **For Container Hooks / Logic:** You test data transformations, retry mechanisms, and pagination state machines using hook testing utilities (`renderHook`) with network mocks (like MSW). You verify that the hook returns the correct state without asserting on DOM nodes or CSS classes.
+
+---
+
+**Q: When should you NOT split a component into presentational and container layers?**
+
+You should not split when the component is small, localized, and has low probability of reuse.
+
+If you are building a simple 30-line feedback form that appears on a single settings sub-page, creating `FeedbackFormContainer.tsx`, `FeedbackFormView.tsx`, and `useFeedbackForm.ts` adds needless indirection and cognitive overhead. Start with a single cohesive component. Split into container logic and presentational views only when:
+- The UI needs to be reused with different data sources.
+- The UI needs to be developed or documented in Storybook.
+- The component's state or side-effect logic grows complex enough that testing UI and logic together becomes painful.
+
+---
+
+## 6. The Traps — What Goes Wrong
+
+### Trap 1: Leaking Domain DTOs into Shared UI Primitives
+- **The Mistake:** Passing raw backend database payloads directly into a shared UI component (e.g., `<DataTable data={rawBackendSqlResponse} />`).
+- **Why It Fails:** The presentational component becomes coupled to backend database column names (like `usr_frst_nm` or `created_at_epoch_ms`). If the backend schema changes, your UI breaks.
+- **The Fix:** The container (or custom hook) should map backend DTOs into a sanitized View Model (`{ id, name, formattedDate }`) before passing them as props to the presentational component.
+
+---
+
+### Trap 2: Hidden Global Dependencies in "Shared" Components
+- **The Mistake:** Placing a component in the `src/components/shared/` folder, but having it internally call `const user = useAuthStore((s) => s.user)`.
+- **Why It Fails:** It looks like a shared component, but it has a hidden dependency on a specific global store slice. Dropping it into a public landing page or an isolated test immediately causes runtime errors.
+- **The Fix:** Pass `user` (or the specific fields it needs, like `avatarUrl` and `displayName`) explicitly through props.
+
+---
+
+### Trap 3: Premature File Splitting (Indirection Overkill)
+- **The Mistake:** Enforcing a strict repository rule that every single component must have a matching `.container.tsx` file.
+- **Why It Fails:** Developers spend time writing pass-through boilerplate for components with zero business logic. Navigating the codebase requires jumping between two files for every minor change.
+- **The Fix:** Keep simple feature components unified. Extract custom hooks for data fetching when logic expands, and extract presentational components when visual reuse or Storybook isolation is needed.
+
+---
+
+## 7. Compare With Related Concepts
+
+| Pattern / Concept | Primary Focus | Where Logic Lives | When to Choose |
+| :--- | :--- | :--- | :--- |
+| **Presentational Component** | Visual rendering, markup, and local UI interaction. | None (props in, JSX out). Minimal ephemeral UI state. | Building reusable UI primitives, tables, modals, cards, and design system elements. |
+| **Container Component** | Data orchestration, store subscriptions, and side effects. | Component lifecycle / body, delegating UI to children. | Orchestrating top-level page views, route entry points, and multi-component workflows. |
+| **Custom Hook** | Headless business logic, async state, and event handling. | Encapsulated inside hook functions (`useUsersList`). | Sharing stateful logic across multiple components without adding wrapper nodes to the React tree. |
+| **Headless UI / Compound Components** | Behavior and accessibility primitives with flexible markup slots. | Context and internal state machines; consumer provides JSX. | Building complex interactive widgets (e.g., Radix UI, Headless UI, Select menus) where consumers need custom styling. |
+
+---
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+**Containers care about the plumbing; presentational components care about the canvas.**
+
+- **The Plumbing (Container / Hook):** Fetches data, manages state, connects routes, and handles errors.
+- **The Canvas (Presentational Component):** Takes props in, paints pixels out, and emits user clicks.
+- **The Modern Shift:** Custom hooks let you separate the plumbing from the canvas without building extra component walls.
