@@ -126,3 +126,43 @@ All files rewritten to **Canonical Format A** (8-section teaching contract):
 ---
 
 *Last updated: 2026-08-25 by orchestrator agent*
+
+---
+
+## ✅ Backend System Design — `src/full-stack/backend/system-design/` (30 / 30 complete)
+
+All rewritten to **Canonical Format D** (system design whiteboard structure).
+
+| # | File | Commit | Status |
+|---|------|--------|--------|
+| 1 | `design-a-url-shortener.md` | `9a08446` | ✅ rewritten |
+| 2 | `design-a-file-upload-service.md` | `78dffde` | ✅ rewritten |
+| 3 | `design-an-image-upload-and-resize-service.md` | `4611a6f` | ✅ rewritten |
+| 4 | `design-an-authentication-system.md` | `c1c2ac3` | ✅ rewritten |
+| 5 | `design-a-role-based-access-system.md` | `1af9153` | ✅ rewritten |
+| 6 | `design-a-notification-system.md` | `ea91591` | ✅ rewritten |
+| 7 | `design-an-email-delivery-system.md` | `cb1e3a1` | ✅ rewritten |
+| 8 | `design-a-real-time-chat-system.md` | `21c0e6e` | ✅ rewritten |
+| 9 | `design-a-logging-system.md` | `27fb959` | ✅ rewritten |
+| 10 | `design-an-audit-log-system.md` | `d174059` | ✅ rewritten |
+| 11 | `design-a-payment-system.md` | `03d7029` | ✅ rewritten |
+| 12 | `design-an-order-management-system.md` | `3ea9e1b` | ✅ rewritten |
+| 13 | `design-an-inventory-management-system.md` | `ad5d498` | ✅ rewritten |
+| 14 | `design-a-booking-system.md` | `d86fac5` | ✅ rewritten |
+| 15 | `design-a-ride-booking-backend.md` | `7f86159` | ✅ rewritten |
+| 16 | `design-a-food-delivery-backend.md` | `a2f80a5` | ✅ rewritten |
+| 17 | `design-a-social-media-feed.md` | `8696169` | ✅ rewritten |
+| 18 | `design-a-search-autocomplete-system.md` | `150df03` | ✅ rewritten |
+| 19 | `design-a-rate-limiter.md` | `d9c6a51` | ✅ rewritten |
+| 20 | `design-a-recommendation-backend.md` | `6032d6c` | ✅ rewritten |
+| 21 | `design-a-multi-tenant-saas-backend.md` | `2f5ada4` | ✅ rewritten |
+| 22 | `design-a-webhook-processing-system.md` | `d964fad` | ✅ rewritten |
+| 23 | `design-a-background-job-system.md` | `ad07b7e` | ✅ rewritten |
+| 24 | `design-a-report-generation-system.md` | `c933a48` | ✅ rewritten |
+| 25 | `design-an-analytics-dashboard-backend.md` | `20e3a22` | ✅ rewritten |
+| 26 | `design-a-comments-system.md` | `1c97f1d` | ✅ rewritten |
+| 27 | `design-a-like-follow-system.md` | `fc356b0` | ✅ rewritten |
+| 28 | `design-a-scalable-rest-api.md` | `b8a960a` | ✅ rewritten |
+| 29 | `design-a-cache-layer.md` | `968a595` | ✅ rewritten |
+| 30 | `design-a-distributed-notification-service.md` | `8ad64b1` | ✅ rewritten |
+
