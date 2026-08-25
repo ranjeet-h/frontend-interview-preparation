@@ -1,135 +1,229 @@
-# Custom new Operator
+# Custom `new` Operator
 
-## Detailed explanation
-Custom `new` implementation tests prototype, constructor calls, `this`, and object return rules. `new Fn(args)` creates object linked to `Fn.prototype`, calls `Fn` with that object as `this`, and returns constructor's object return if present.
+## 1. Why This Exists — The Problem First
 
-Frontend relevance lower, but common senior JS coding exercise.
+An interview or a legacy JavaScript codebase may ask you to recreate `new` without using the keyword. The easy answer—“make an object and call the function”—is incomplete. A correct implementation must preserve three observable behaviors: the instance delegates to the constructor’s prototype, the constructor runs with that instance as `this`, and an explicitly returned object or function can replace the instance.
 
-## 1. One-line mental model
-`new` creates object, links prototype, calls constructor, returns object.
+If any step is missed, the bug is concrete. Methods defined on the prototype disappear when `{}` is used, constructor fields are written to the wrong object when `this` is not bound, and factory-style constructors return the wrong value when object returns are ignored. The useful interview skill is therefore not memorizing a snippet; it is tracing what `new Constructor(args)` makes visible to the caller.
 
-## 2. Problem it solves
-Explains constructor behavior and prototype chain.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Create object with constructor prototype.
-- Call constructor with object as `this`.
-- Pass arguments.
-- If constructor returns object/function, use it.
-- Otherwise return created object.
+Think of `new` as a workshop order for a reusable product template. First, the workshop gives the product an empty shell and attaches the template’s shared instruction manual—the constructor’s `prototype`. Then a worker runs the constructor while holding that shell as `this`, filling in instance data such as `name` or `id`. Finally, the shipping desk checks the worker’s explicit return: a non-null object or function is shipped instead; a primitive return is ignored and the prepared shell is shipped.
 
-## 4. Visual / analogy
-`new` builds house shell, lets constructor furnish it, then hands back house.
+The instruction manual is shared by instances, while the shell is private to one call. Also, the constructor’s `.prototype` property and the instance’s internal `[[Prototype]]` link are different things: the first is a property on the constructor function, and the second is the link used during property lookup.
 
-```mermaid
-flowchart LR
-  Create --> LinkProto --> CallCtor --> ReturnObj
+```txt
+new Ctor(args)
+    │
+    ├─ create shell with [[Prototype]] = Ctor.prototype
+    ├─ call Ctor with shell as this
+    └─ return object/function result, otherwise shell
 ```
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+For an ordinary constructable function, `new Ctor(...args)` follows this observable sequence:
+
+1. Create a fresh object. Its prototype is the object in `Ctor.prototype`. If that property is not an object, the native operation uses the default object prototype instead.
+2. Call `Ctor` with the fresh object as `this`, forwarding the arguments.
+3. If the constructor returns a non-null object or a function, return that value. Otherwise—including `undefined`, `null`, numbers, strings, and booleans—return the fresh object.
+
+`Object.create(Ctor.prototype)` performs the first step when `Ctor.prototype` is a valid object. `Ctor.apply(instance, args)` performs the second step for an ordinary function. The final test must treat functions as objects for this rule, and must exclude `null` because `typeof null` is the historical string `"object"`.
+
+There is one important observable difference that this helper does not reproduce: `Ctor.apply(instance, args)` is an ordinary function call, so `new.target` inside `Ctor` is `undefined`. Native `new Ctor(...args)` invokes the constructor through construct semantics, so `new.target` is `Ctor` (or the derived constructor when construction is delegated). A userland helper cannot replace the built-in `new.target` binding while still using `apply`; preserving it requires a construct operation such as `Reflect.construct`, which changes the manual shell-and-`apply` algorithm and brings native construction boundaries with it.
 
 ```js
 function myNew(Ctor, ...args) {
-  const obj = Object.create(Ctor.prototype);
-  const result = Ctor.apply(obj, args);
-  return result !== null && (typeof result === "object" || typeof result === "function")
+  if (typeof Ctor !== "function") {
+    throw new TypeError("Ctor must be a constructor function");
+  }
+
+  const proto = Ctor.prototype;
+  const instance = Object.create(
+    proto !== null && (typeof proto === "object" || typeof proto === "function")
+      ? proto
+      : Object.prototype,
+  );
+  const result = Ctor.apply(instance, args);
+
+  return result !== null &&
+    (typeof result === "object" || typeof result === "function")
     ? result
-    : obj;
+    : instance;
 }
 ```
 
-## 6. Real-world example
+That helper intentionally targets ordinary function constructors. It is not a universal replacement for the language operator: ES classes cannot be invoked with `.apply`, and native construction also involves internal construct behavior that user code cannot reproduce for every built-in or exotic callable. A production API should normally use `new` directly; `myNew` is a teaching and interview implementation.
+
+Prototype lookup explains why the link matters. If `instance.describe` is absent as an own property, JavaScript checks the object referenced by `Ctor.prototype`, then continues up that object’s prototype chain. Reassigning `Ctor.prototype` later changes the prototype used by future constructions; it does not retroactively change existing instances.
+
+## 4. Real Code — See It Working
+
+Run this complete fixture with `node custom-new-demo.js` (or paste it into Node). It verifies instance fields, shared prototype methods, forwarded arguments, primitive and `null` returns, object replacement, function replacement, invalid input, and the native fallback when `.prototype` is not an object.
 
 ```js
-function Person(name) {
-  this.name = name;
-}
-const p = myNew(Person, "Asha");
-```
+"use strict";
 
-## 7. Common interview questions
-
-#### What does `new` do?
-- **The Engine Mechanism (Why it behaves this way):** When the `new` operator is invoked with a constructor function (e.g. `new Foo(...)`), the V8 engine executes the following internal sequence defined in the ECMAScript spec:
-  1. It allocates a brand-new, empty, plain JavaScript object in the heap memory.
-  2. It links this newly created object's internal prototype pointer (`[[Prototype]]`, accessible via `__proto__` or `Object.getPrototypeOf`) to the constructor function's `prototype` property object. If `Constructor.prototype` is not an object (e.g., it is `null`), it defaults to linking to the standard `Object.prototype`.
-  3. It executes the constructor function, binding the newly created object as the `this` execution context for that stack frame. It passes any constructor arguments as parameters.
-  4. It evaluates the return value of the constructor: if the constructor returns a non-null object reference (like `{}` or `[]`) or a function object, the engine discards the created object and returns the constructor's returned reference instead. Otherwise (if it returns a primitive, `null`, or undefined), it returns the newly created object.
-- **The Unforgettable Mental Model:** A specialized assembly line at a car factory. The factory first builds a standard, empty metal chassis (`Object.create`). Next, they stamp the official brand logo and engineering schematics onto the engine frame (`Ctor.prototype`). Then, they send the chassis to the assembly mechanics (`Ctor.apply`) to bolt on seats and doors (`this.name = ...`). Finally, the supervisor checks if the customer brought their own custom sports car inside a box (an object return)—if yes, they hand them that box; if not, they hand them the shiny new car they just assembled.
-- **The Trap:** Believing that classes and constructors are identical under the hood. While a class constructor behaves similarly, you *cannot* call a class constructor directly without the `new` operator (doing so throws a `TypeError: Class constructor cannot be invoked without 'new'`), whereas standard ES5 constructors can be called directly, in which case `this` silently pollutes the global scope or evaluates to `undefined` in strict mode.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The `new` operator executes four distinct phases under the hood. First, it instantiates an empty object in memory. Second, it configures the object's `[[Prototype]]` link to point to the constructor's `prototype` object. Third, it executes the constructor, binding the new object as the `this` context. Finally, it evaluates the return value: returning the constructor's return value if it is a non-null object or function, otherwise defaulting to the newly constructed object instance."
-
-#### How implement custom `new`?
-- **The Engine Mechanism (Why it behaves this way):** Implementing a custom `new` (e.g., `myNew`) requires replicating all four steps of the ES specification. We achieve this by:
-  1. Creating the new object and establishing the prototype linkage in a single step using `Object.create(Ctor.prototype)`.
-  2. Calling the constructor using `Ctor.apply(obj, args)` to explicitly bind the newly created object as `this` and pass the arguments.
-  3. Inspecting the returned value `result` using a rigorous typeof check: `result !== null && (typeof result === 'object' || typeof result === 'function')`. If this evaluates to `true`, we return `result`. Otherwise, we return the instantiated `obj`.
-- **The Unforgettable Mental Model:** An open-heart surgeon replicating a native biological organ (the native keyword `new`) using a custom artificial pump (`myNew`). Every step (linkage, context binding, and return checks) must be perfectly calibrated to match the natural body's mechanics, otherwise the patient's cells (the calling code) will reject the synthetic organ and crash the system.
-- **The Trap:** Using `typeof result === 'object'` without verifying that `result` is not `null`. In JavaScript, `typeof null` evaluates to `"object"` due to a historical V8 memory layout bug where object pointers were labeled with a type tag of 0, which `null` also shared. If your constructor returns `null` and you do not filter it out, your custom `new` will incorrectly return `null` instead of the instantiated object.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A custom `new` implementation, which we can call `myNew`, must take a constructor function and rest parameters. We use `Object.create(Ctor.prototype)` to instantiate the object and link its prototype in a single, high-performance operation. We then execute the constructor utilizing `Ctor.apply`, capturing the returned value. Finally, we execute a strict type check to ensure that if the constructor returns a non-null object or function, we return that reference; otherwise, we default to returning our constructed instance."
-
-```js
 function myNew(Ctor, ...args) {
-  const obj = Object.create(Ctor.prototype);
-  const result = Ctor.apply(obj, args);
-  const isObject = result !== null && typeof result === "object";
-  const isFunction = typeof result === "function";
-  return isObject || isFunction ? result : obj;
+  if (typeof Ctor !== "function") {
+    throw new TypeError("Ctor must be a constructor function");
+  }
+
+  const proto = Ctor.prototype;
+  const instance = Object.create(
+    proto !== null && (typeof proto === "object" || typeof proto === "function")
+      ? proto
+      : Object.prototype,
+  );
+  const result = Ctor.apply(instance, args);
+
+  return result !== null &&
+    (typeof result === "object" || typeof result === "function")
+    ? result
+    : instance;
+}
+
+function User(name, role) {
+  this.name = name;
+  this.role = role;
+  return "ignored primitive";
+}
+
+User.prototype.label = function label() {
+  return `${this.name} (${this.role})`;
+};
+
+const user = myNew(User, "Asha", "admin");
+console.log(user.label()); // Asha (admin)
+console.log(Object.getPrototypeOf(user) === User.prototype); // true
+
+function ReturnsObject() {
+  this.discarded = true;
+  return { kind: "replacement" };
+}
+
+function ReturnsFunction() {
+  return function replacement() {};
+}
+
+function ReturnsNull() {
+  this.kept = true;
+  return null;
+}
+
+console.log(myNew(ReturnsObject)); // { kind: "replacement" }
+console.log(typeof myNew(ReturnsFunction)); // function
+console.log(myNew(ReturnsNull).kept); // true
+
+function LoosePrototype() {}
+LoosePrototype.prototype = null;
+const fallback = myNew(LoosePrototype);
+console.log(Object.getPrototypeOf(fallback) === Object.prototype); // true
+
+function ReadsNewTarget() {
+  this.seenNewTarget = new.target;
+}
+
+const customTarget = myNew(ReadsNewTarget);
+const nativeTarget = new ReadsNewTarget();
+console.log(customTarget.seenNewTarget === undefined); // true: apply is an ordinary call
+console.log(nativeTarget.seenNewTarget === ReadsNewTarget); // true: native new supplies new.target
+
+try {
+  myNew({});
+} catch (error) {
+  console.log(error instanceof TypeError); // true
 }
 ```
 
-#### What if constructor returns object?
-- **The Engine Mechanism (Why it behaves this way):** If a constructor function explicitly returns a non-null object (such as an object literal `{ ... }`, an array `[ ... ]`, a regex `/.../`, or another function), the JavaScript engine respects this return value as an override. The engine immediately discards the newly created instance that was bound to `this` during the constructor call. The V8 heap allocation remains for the discarded object until it is swept by garbage collection (since no references point to it), and the calling code receives the returned object instead.
-- **The Unforgettable Mental Model:** Going to a tailor to custom-fit a suit (`this`). You stand there while the tailor measures you and stitches the fabric onto your body. But just before you pay, the tailor says: "Actually, look at this ready-made designer tuxedo over here on the rack instead." They hand you the rack tuxedo (the returned object), and dump the custom suit they just stitched for you directly into the trash bin.
-- **The Trap:** Thinking that returning a primitive (like a string, boolean, or number) will also override the return value. It does not. If a constructor returns a primitive (e.g. `return 42` or `return "hello"`), the engine completely ignores the return value and returns the constructed `this` object.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: If a constructor explicitly returns a non-null object or function, the JS engine bypasses its default behavior and returns that reference directly, discarding the newly instantiated object that was bound to `this`. However, if the constructor returns a primitive value, the return statement is silently ignored by the runtime, and the newly created instance is returned instead."
+The discarded `this` in `ReturnsObject` is not observable after the constructor returns because the replacement object is the value the caller receives. The assignments made before the return still happened on the temporary instance; the return rule determines which reference escapes.
 
-#### How prototype linked?
-- **The Engine Mechanism (Why it behaves this way):** Prototype linkage is established via the internal `[[Prototype]]` property of an object. When an object is created via `new Ctor()`, the engine links the object's `[[Prototype]]` to point directly to the object currently referenced by `Ctor.prototype`. This forms a node-and-pointer network. When you query a property on the instance (e.g. `obj.hasOwnProperty` or `obj.someMethod`), V8 first checks the instance's own properties. If not found, it traverses the `[[Prototype]]` pointer to check the constructor's prototype, recursively walking up the chain until it either finds the property or reaches `Object.prototype.__proto__`, which is `null`, and returns `undefined`.
-- **The Unforgettable Mental Model:** A train chain coupler. Each object instance is a train car. When you search for a snack (a method), you look inside your own cabin (instance properties) first. If you don't find it, you walk through the coupler door (`[[Prototype]]` pointer) into the next train car (the prototype object) and check there, repeating this until you either find the snack or reach the caboose.
-- **The Trap:** Confusing `Ctor.prototype` with the actual instance's prototype (`Object.getPrototypeOf(obj)` or `__proto__`). `Ctor.prototype` is a standard, public property on the constructor *function* that acts as a blueprint. The actual *instance* does not have a `.prototype` property; its prototype is hidden under the internal `[[Prototype]]` link.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Prototype linkage is established by setting the internal `[[Prototype]]` pointer of the newly created object to reference the constructor's public `prototype` object. This forms a chain of reference delegations. When a property lookup occurs, V8 traverses this pointer chain recursively to find inherited methods. We can inspect this link on the client using `Object.getPrototypeOf(instance)` or `__proto__`."
+A native class shows an important boundary:
 
-#### What is `this` inside constructor?
-- **The Engine Mechanism (Why it behaves this way):** Inside the constructor, `this` is a reference pointing directly to the empty object allocated in the heap memory during step 1 of the `new` process. During the execution of the constructor's call frame, this object is dynamic and active. Properties and methods attached to `this` (e.g. `this.name = name`) are written directly to the object's own property descriptor map in memory. If you execute a constructor *without* the `new` operator in non-strict mode, `this` defaults to the global `window` or `globalThis` object, causing accidental global variable pollution. In strict mode (`"use strict"`), `this` evaluates to `undefined`, and attempting to attach properties (like `this.name = name`) will immediately throw a `TypeError`.
-- **The Unforgettable Mental Model:** A blank sheet of paper handed to you when you enter a room. Inside the room (the constructor scope), the paper is labeled `this`. You write your name, address, and age directly onto the paper. When you leave the room, you take the paper with you, and that paper is now your custom identity document.
-- **The Trap:** Using arrow functions as constructor functions. Arrow functions do not possess their own dynamic `this` context or a public `.prototype` property. If you try to invoke `new MyArrowFunction()`, the engine throws a `TypeError: MyArrowFunction is not a constructor`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Inside a constructor, `this` is a dynamic reference to the newly created, uninitialized object instance allocated in the heap. If the function is invoked with the `new` operator, properties assigned to `this` write directly to that specific instance. However, if the function is invoked without `new`, `this` will default to `undefined` in strict mode or the global object in non-strict mode, which can lead to accidental global state mutation."
+```js
+class Account {
+  constructor(id) {
+    this.id = id;
+  }
+}
 
-## 8. Active recall test
+const account = new Account("acct-7");
+console.log(account.id); // acct-7
 
-#### 1. What is the very first step the JavaScript engine performs when executing a function with the new operator?
-It allocates a brand-new, empty, plain object in heap memory.
+// Account.apply({}, ["acct-8"]); // TypeError: class cannot be invoked this way
+```
 
-#### 2. How is prototype linkage established under the hood in a custom new implementation?
-By setting the internal `[[Prototype]]` link of the new object to reference the constructor's public `.prototype` object, which is most cleanly accomplished via `Object.create(Ctor.prototype)`.
+Classes are constructable through `new`, but their constructors deliberately reject ordinary calls. A custom helper based on `apply` cannot faithfully invoke them.
 
-#### 3. What does the keyword "this" resolve to during constructor execution?
-It points directly to the newly allocated, empty object instance that is currently being initialized by the constructor function call frame.
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### 4. Detail the constructor return override rules when returning primitives vs objects.
-If the constructor returns a non-null object or function, that reference is returned to the caller, completely discarding the newly instantiated `this` object. If it returns a primitive value (like a number, string, boolean, or `null`), the return statement is ignored, and the initialized `this` object is returned instead.
+**Q: What are the four steps of `new`?**
 
-#### 5. Why is Object.create preferred over setting obj.__proto__ directly in modern JavaScript?
-Because `__proto__` is a legacy accessor property that carries heavy performance penalties in modern V8 engines when modified after creation. `Object.create` configures the prototype relationship atomically at instantiation time, allowing the engine to optimize object shape compilation.
+Create a fresh object, link it to the constructor’s prototype, call the constructor with that object as `this`, and return a non-null object/function returned by the constructor; otherwise return the fresh object. Prototype linkage and constructor execution are separate steps even though `Object.create` and `apply` make the custom version compact.
 
-## 9. Mistakes / traps
-- Ignoring constructor object return.
-- Using `{}` without prototype link.
-- Not passing args.
-- Forgetting functions can be returned too.
+**Q: Why use `Object.create` instead of `{}`?**
 
-## 10. Compare with related concepts
-- **`new` vs Object.create:** constructor call + prototype link vs object creation only.
-- **Constructor vs class:** classes use constructor semantics with syntax.
-- **Prototype vs instance:** shared methods vs created object.
+`{}` creates an object whose prototype is `Object.prototype`. It does not connect the result to `Ctor.prototype`, so inherited constructor methods and `instanceof Ctor` behavior are lost. `Object.create(Ctor.prototype)` establishes the intended `[[Prototype]]` link at creation time.
 
-## 11. Summary from memory
-Explain custom `new` in four steps.
+**Q: Why is `result !== null` required?**
 
-## 12. Spaced revision prompts
-- 1 day: List `new` steps.
-- 3 days: Implement `myNew`.
-- 7 days: Explain return object rule.
-- 14 days: Compare with Object.create.
+Because `typeof null` is `"object"`. Without the explicit null check, a constructor that returns `null` would incorrectly replace the fresh instance. Native `new` ignores `null` for the return override rule.
 
+**Q: What happens when a constructor returns a primitive?**
+
+The primitive is ignored and the object created by `new` is returned. This includes `undefined`, `null`, numbers, strings, and booleans. Only a non-null object or a function replaces the created instance.
+
+**Q: Why must functions count as replacement objects?**
+
+The specification’s replacement category includes objects and functions. A constructor returning a function therefore returns that function. Checking only `typeof result === "object"` would be incomplete.
+
+**Q: What is the difference between `Ctor.prototype` and `Object.getPrototypeOf(instance)`?**
+
+`Ctor.prototype` is a normal property on the constructor function. `Object.getPrototypeOf(instance)` reads the instance’s `[[Prototype]]` link. For a normal construction they initially refer to the same object, but they are different locations and can be changed independently.
+
+**Q: Why can’t the helper call an ES class with `apply`?**
+
+An ES class constructor has construct behavior but rejects ordinary function calls. `Ctor.apply(instance, args)` is an ordinary call, so it throws for a class. Matching all native constructable values would require runtime-internal behavior unavailable to a simple userland helper.
+
+**Q: Does `myNew` preserve `new.target`?**
+
+No. The constructor is reached through `Ctor.apply(instance, args)`, which is an ordinary call, so `new.target` is `undefined` inside it. Native `new Ctor()` sets `new.target` to `Ctor`. `Reflect.construct(Ctor, args, Ctor)` can request native construct semantics, but that changes the helper from a manual emulation into a wrapper around the runtime’s construction operation.
+
+**Q: Is `myNew` equivalent to native `new` for every constructor?**
+
+No. It models ordinary user-defined function constructors. Native `new` supports built-ins and internal slots, enforces constructor-specific behavior, and invokes internal `[[Construct]]` semantics. State the scope of the helper instead of claiming a complete replacement.
+
+## 6. The Traps — What Goes Wrong
+
+- **Using `{}` for the shell.** Wrong assumption: any empty object is enough. Why it fails: the result will not delegate to `Ctor.prototype`. What actually happens: own fields may work, but prototype methods and the expected prototype identity do not.
+
+- **Calling `Ctor(...args)` without binding `this`.** Wrong assumption: the constructor will automatically initialize the shell. Why it fails: ordinary function calls choose `this` from their call site. What actually happens: strict constructors see `undefined`, while sloppy constructors can write to the global object.
+
+- **Checking only `typeof result === "object"`.** Wrong assumption: functions cannot be constructor replacements. Why it fails: the return rule includes functions. What actually happens: a function result is incorrectly discarded.
+
+- **Forgetting `null`.** Wrong assumption: every value reported as an object is a valid replacement. Why it fails: `typeof null` is `"object"`. What actually happens: `null` escapes instead of the initialized instance.
+
+- **Treating a primitive return as an override.** Wrong assumption: any explicit `return` wins. Why it fails: native construction only honors non-null object/function returns. What actually happens: the fresh instance is still returned.
+
+- **Claiming the helper supports classes.** Wrong assumption: every constructor function accepts `.apply`. Why it fails: class constructors reject ordinary calls. What actually happens: `TypeError` is thrown, even though `new ClassName()` works.
+
+- **Assuming `apply` preserves `new.target`.** Wrong assumption: binding a fresh object as `this` makes the call equivalent to construction. Why it fails: `apply` performs an ordinary call, where `new.target` is `undefined`. What actually happens: constructors that branch on `new.target` can observe different behavior under `myNew` and native `new`; use native construction when that distinction matters.
+
+- **Ignoring a non-object `.prototype`.** Wrong assumption: `Object.create(Ctor.prototype)` always matches native behavior. Why it fails: native construction falls back to `Object.prototype` when the prototype property is not an object. What actually happens: a naive helper can throw or create the wrong prototype.
+
+- **Confusing the constructor property with an instance method.** Wrong assumption: every instance has its own `.prototype`. Why it fails: `.prototype` is normally a property of the constructor function. What actually happens: inspect `Object.getPrototypeOf(instance)` to examine the instance link.
+
+## 7. Compare With Related Concepts
+
+| Compared ideas | Key difference | When to use |
+| --- | --- | --- |
+| `new` vs `Object.create` | `new` links a prototype, runs a constructor, forwards arguments, and applies return rules; `Object.create` only creates an object with a chosen prototype. | Use `Object.create` when no constructor side effects or initialization call is wanted. |
+| `new` vs a factory function | `new` supplies a fresh `this` and prototype linkage; a factory explicitly creates and returns its result. | Prefer factories when explicit return values, composition, or private closures are clearer than prototype construction. |
+| `Ctor.prototype` vs instance own properties | Prototype properties can be shared through lookup; assignments such as `this.name = name` create own properties on each instance. | Put shared methods on the prototype and per-instance state on `this`. |
+| constructor call vs ordinary call | `new Ctor()` invokes construct behavior and supplies a new receiver; `Ctor()` is a normal call whose `this` depends on strictness and call site. | Use `new` only for constructable functions designed to initialize instances. |
+| function constructor vs class | Both support `new`, but a function constructor can also be called ordinarily; a class constructor rejects ordinary calls. | Use classes for modern syntax, while remembering that userland `apply` cannot emulate class construction. |
+| native `new` vs `myNew` | Native `new` uses engine-level `[[Construct]]` behavior for all supported constructors; the helper models ordinary function constructors. | Use `myNew` to demonstrate mechanics or solve a constrained interview exercise, not as a general production replacement. |
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+`new` is a four-stop workshop: make the shell, attach the prototype manual, run the constructor with the shell as `this`, then ship a non-null object/function return—or the shell if the return is primitive. Remember **shell → prototype → `this` → return**, and a custom `myNew` becomes a traceable sequence instead of a magic snippet.
