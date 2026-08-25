@@ -1,130 +1,437 @@
-# Conditional Rendering
+# Conditional Rendering in React
 
-## Detailed explanation
-Conditional rendering means returning different JSX depending on state, props, permissions, feature flags, or fetched data. React does not need a special template syntax for conditions because JSX is JavaScript. You can use `if`, ternaries, early returns, logical operators, or lookup maps.
+## 1. Why This Exists — The Problem First
 
-This concept appears everywhere in real apps: loading screens, error pages, empty states, authenticated layouts, validation messages, disabled actions, and responsive feature variations.
+Every web application faces unpredictable runtime conditions: network latency, network errors, empty database queries, unauthenticated sessions, and fine-grained permission flags. Without conditional rendering, components assume data is always present, leading directly to production crashes like `TypeError: Cannot read properties of undefined (reading 'name')` when accessing user profiles before API responses arrive.
 
-## 1. One-line mental model
-Conditional rendering means showing different UI based on current state, props, or data.
+Even when code doesn't crash, poor conditional handling creates broken visual experiences. A developer writes `{items.length && <ProductList items={items} />}` thinking it renders nothing when empty, but the browser displays a stray `0` directly on the screen. Another developer uses four independent boolean flags (`isLoading`, `isError`, `isSuccess`, `isEmpty`), creating 16 theoretical combinations where a user might see both a loading spinner and an error banner simultaneously while background layout shifts cause severe visual flicker.
 
-## 2. Problem it solves
-Apps need to show loading states, error states, empty states, authenticated screens, feature flags, validation messages, and different layouts. Conditional rendering keeps those UI branches tied to data.
+Conditional rendering is the architectural pattern of driving your entire visual interface deterministically from state snapshots. Instead of manually mutating DOM nodes when conditions change, your component returns a completely predictable tree of UI elements for each distinct state.
 
-## 3. Core idea
-- Use normal JavaScript conditions to choose JSX.
-- Common tools are `if`, ternary, `&&`, early returns, and lookup maps.
-- Prefer explicit branches for loading/error/empty/success states.
-- Avoid deeply nested conditions inside JSX.
-- Make impossible states impossible when using TypeScript unions.
+## 2. The Analogy — Make It Obvious
 
-## 4. Visual / analogy
-Conditional rendering is a traffic signal for UI: the current state decides which path the user sees.
+Think of conditional rendering like a **theater stage manager operating live scene backdrops**:
 
-```mermaid
-flowchart TD
-  DataState["Data state"] --> Loading["Loading UI"]
-  DataState --> Error["Error UI"]
-  DataState --> Empty["Empty UI"]
-  DataState --> Success["Success UI"]
-```
+- **The State Snapshot is the Script Cue:** The script dictates what is currently happening—`Scene 1: Dark Dungeon`, `Scene 2: Castle Courtyard`, or `Intermission`.
+- **The Early Return is the Emergency Curtain:** If an actor sprains an ankle (an error state) or props aren't set yet (a loading state), the stage manager drops an immediate safety curtain before anyone sees the half-built set.
+- **Mounting and Unmounting is Swapping Physical Sets:** When switching from the Dungeon to the Castle, stagehands completely strike the Dungeon set, unplug its lighting, and wheel in the Castle. Any props left on the Dungeon set are hauled off to storage and reset to default.
+- **Tree Position and Identity is Keeping the Same Actor in Costume:** If the script calls for an actor standing at center stage to switch from a red hat to a blue hat (`<Actor hat="red" />` to `<Actor hat="blue" />`), the stage manager doesn't fire the actor and hire a new one. The same actor stays on their mark at center stage and simply swaps hats. Their internal memory and makeup stay intact. But if the script replaces the actor with a completely different performer (`<Dog />`), the actor leaves the stage and all their active state vanishes.
 
-## 5. Minimal example
+In React, the component function is the stage manager calculating which set pieces and actors belong on stage for the current moment in time.
+
+## 3. How It Actually Works — The Full Explanation
+
+In React, JSX is syntactic sugar for `React.createElement` (or the modern JSX runtime `_jsx`). Because JSX compiles down to standard JavaScript function calls and objects, React does not need custom templating syntax like `*ngIf` or `v-if`. Any standard JavaScript control flow mechanism—`if/else`, ternary expressions, logical operators, `switch` statements, or object lookup tables—executes during the component render phase to produce the next Virtual DOM (Fiber) tree.
+
+### Core Rendering Patterns
+
+**1. Early Return Guard Clauses**
+When a component cannot or should not render its primary UI due to prerequisites (such as loading spinners, network errors, or missing authentication), the function exits early:
 
 ```tsx
-function Status({ isOnline }: { isOnline: boolean }) {
-  return <p>{isOnline ? "Online" : "Offline"}</p>;
+if (status === 'loading') return <Spinner />;
+if (status === 'error') return <ErrorMessage error={error} />;
+if (data.length === 0) return <EmptyPlaceholder />;
+return <MainContent data={data} />;
+```
+
+This flattens component architecture, eliminating nested indentation and making guard logic readable from top to bottom.
+
+**2. Inline Ternary Operators (`condition ? <A /> : <B />`)**
+Ternaries handle mutually exclusive binary branches inside JSX expressions where an `if` statement cannot be placed inline:
+
+```tsx
+<button className={isSubmitting ? 'opacity-50' : 'opacity-100'}>
+  {isSubmitting ? <Spinner /> : 'Save Changes'}
+</button>
+```
+
+**3. Short-Circuit Logical Operators (`condition && <Element />` / `condition || <Fallback />`)**
+JavaScript's `&&` evaluates left-to-right, returning the first falsy operand or the last truthy operand. React interprets `false`, `null`, and `undefined` as instructions to render nothing. However, if the left-hand side evaluates to `0` or `""` (empty string), JavaScript returns that value, and React renders the literal `0` or empty text node directly into the DOM.
+
+To use `&&` safely, ensure the left operand is strictly boolean: `items.length > 0 && <List />` or `Boolean(user) && <Profile />`.
+
+**4. Record / Map Lookup Tables for Multi-State Machines**
+When a UI transitions between three or more states, chaining nested ternaries causes unreadable code. An explicit lookup object or switch statement maps status keys directly to their respective view components:
+
+```tsx
+const VIEW_MAP: Record<TabState, React.ComponentType> = {
+  overview: OverviewTab,
+  analytics: AnalyticsTab,
+  settings: SettingsTab,
+};
+
+function TabContainer({ activeTab }: { activeTab: TabState }) {
+  const ActiveView = VIEW_MAP[activeTab] ?? FallbackTab;
+  return <ActiveView />;
 }
 ```
 
-## 6. Real-world example
+### Reconciliation, Mounting, and State Destruction
+
+React's reconciliation engine tracks components by their position in the Fiber tree and their element `type`. When conditional rendering changes the returned element tree between renders, React applies strict reconciliation rules:
+
+**Falsy Node Handling**
+When an element evaluates to `null`, `undefined`, `false`, or `true`, React leaves the position intact in the Virtual DOM hierarchy as an empty slot without creating an underlying DOM node.
+
+**Same Type at the Same Position (Preserved State)**
+When a condition changes props on the same component type at the exact same tree location:
 
 ```tsx
-function UsersPage() {
-  const users = useUsersQuery();
+// Render 1
+<div>{isVIP ? <ProfileCard badge="gold" /> : <ProfileCard badge="silver" />}</div>
+```
 
-  if (users.isLoading) return <PageSkeleton />;
-  if (users.isError) return <ErrorState onRetry={users.refetch} />;
-  if (users.data.length === 0) return <EmptyState title="No users found" />;
+React inspects the Fiber node at child index 0. The element type is `ProfileCard` on both renders. React does not unmount the component; it retains the existing Fiber node, keeps all internal `useState` and `useRef` values, and triggers a re-render with updated props.
 
-  return <UserTable rows={users.data} />;
+**Different Type at the Same Position (State Destroyed)**
+When a condition returns a different component or HTML tag at that tree location:
+
+```tsx
+// Render 1: <AdminDashboard /> -> Render 2: <UserDashboard />
+<div>{isAdmin ? <AdminDashboard /> : <UserDashboard />}</div>
+```
+
+React sees that the element type changed from `AdminDashboard` to `UserDashboard`. It completely unmounts `AdminDashboard`, runs all `useEffect` cleanup functions, deletes its entire subtree and internal state from memory, and mounts `UserDashboard` with fresh initial state.
+
+**Explicit State Resets with Keys**
+If two branches render the same component type but represent fundamentally distinct entities whose internal state should never leak across transitions, assign unique `key` props:
+
+```tsx
+{isEditingProfile ? (
+  <Form key="profile-form" initialData={profileData} />
+) : (
+  <Form key="settings-form" initialData={settingsData} />
+)}
+```
+
+Because the `key` changes, React treats them as two distinct elements, destroying the old form's uncommitted draft state and initializing the new form cleanly.
+
+### Discriminated Unions for Impossible States
+
+Managing asynchronous lifecycle with scattered booleans leads to invalid UI states:
+
+```tsx
+// Antipattern: 8 possible permutations (e.g. isLoading=true AND isError=true)
+const [isLoading, setIsLoading] = useState(false);
+const [isError, setIsError] = useState(false);
+const [data, setData] = useState<User[] | null>(null);
+```
+
+Modeling state as a TypeScript discriminated union enforces compile-time and runtime guarantees:
+
+```tsx
+type FetchState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: User[] }
+  | { status: 'error'; error: Error };
+```
+
+TypeScript narrows the type in each conditional branch, ensuring `data` cannot be accessed during loading and `error` cannot be accessed during success.
+
+## 4. Real Code — See It Working
+
+Here is a complete, production-grade implementation demonstrating early returns, discriminated unions, safe logical short-circuits, key-based state resets, and map-driven views:
+
+```tsx
+import React, { useState } from 'react';
+
+interface Project {
+  id: string;
+  name: string;
+  taskCount: number;
+}
+
+// 1. Discriminated union modeling all mutual lifecycle states
+type AsyncData<T> =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'success'; data: T };
+
+interface ProjectListProps {
+  projectState: AsyncData<Project[]>;
+  onRetry: () => void;
+}
+
+export function ProjectManager({ projectState, onRetry }: ProjectListProps) {
+  const [activeView, setActiveView] = useState<'grid' | 'table'>('grid');
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+
+  // Early Return 1: Loading state
+  if (projectState.status === 'loading') {
+    return (
+      <div className="flex items-center justify-center p-12 text-slate-500">
+        <span className="animate-spin mr-2">⏳</span> Loading projects...
+      </div>
+    );
+  }
+
+  // Early Return 2: Error state with retry callback
+  if (projectState.status === 'error') {
+    return (
+      <div className="rounded-md bg-red-50 p-4 text-red-800">
+        <p className="font-semibold">Failed to load projects</p>
+        <p className="text-sm">{projectState.message}</p>
+        <button
+          onClick={onRetry}
+          className="mt-3 rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  // Early Return 3: Empty dataset state (data is safely narrowed to Project[])
+  const projects = projectState.data;
+  if (projects.length === 0) {
+    return (
+      <div className="text-center p-8 border-2 border-dashed rounded-lg">
+        <h3 className="text-lg font-medium text-slate-700">No projects found</h3>
+        <p className="text-sm text-slate-500">Create your first project to get started.</p>
+      </div>
+    );
+  }
+
+  // Main UI: Rendered only when data exists and is valid
+  return (
+    <div className="space-y-6">
+      {/* Header with safe numeric short-circuiting */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold">
+          Active Projects
+          {/* Safe boolean check prevents rendering '0' when empty */}
+          {projects.length > 0 && (
+            <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+              {projects.length}
+            </span>
+          )}
+        </h2>
+
+        {/* Binary toggle using clean inline ternary */}
+        <button
+          onClick={() => setActiveView(prev => (prev === 'grid' ? 'table' : 'grid'))}
+          className="text-sm text-slate-600 hover:text-slate-900 font-medium"
+        >
+          Switch to {activeView === 'grid' ? 'Table View' : 'Grid View'}
+        </button>
+      </div>
+
+      {/* Conditional rendering with key-driven isolation */}
+      {activeView === 'grid' ? (
+        <div className="grid grid-cols-3 gap-4">
+          {projects.map(project => (
+            <div
+              key={project.id}
+              onClick={() => setSelectedProjectId(project.id)}
+              className="p-4 border rounded shadow-sm hover:border-blue-500 cursor-pointer"
+            >
+              <h4 className="font-semibold">{project.name}</h4>
+              <p className="text-xs text-slate-500">{project.taskCount} tasks</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <table className="w-full border-collapse border border-slate-200">
+          <thead>
+            <tr className="bg-slate-50 text-left text-sm">
+              <th className="p-2 border">Project Name</th>
+              <th className="p-2 border">Open Tasks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map(project => (
+              <tr key={project.id} className="hover:bg-slate-50">
+                <td className="p-2 border">{project.name}</td>
+                <td className="p-2 border">{project.taskCount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Distinct key forces state reset when changing selected entity */}
+      {selectedProjectId && (
+        <ProjectEditorModal
+          key={selectedProjectId}
+          projectId={selectedProjectId}
+          onClose={() => setSelectedProjectId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProjectEditorModal({
+  projectId,
+  onClose,
+}: {
+  projectId: string;
+  onClose: () => void;
+}) {
+  const [draftNotes, setDraftNotes] = useState('');
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded p-6 max-w-md w-full">
+        <h3 className="font-bold">Edit Project #{projectId}</h3>
+        <textarea
+          value={draftNotes}
+          onChange={e => setDraftNotes(e.target.value)}
+          placeholder="Type project notes..."
+          className="w-full border p-2 mt-2 rounded"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-1 text-sm border rounded">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 ```
 
-This keeps each state readable and avoids one large nested JSX block.
+## 5. The Interview Questions — All of Them, Done Properly
 
-## 7. Common interview questions
-#### What is conditional rendering?
-- **The Engine Mechanism (Why it behaves this way):** Conditional rendering means returning different JSX based on runtime conditions like state, props, or data. Since JSX is JavaScript, you can use any JavaScript control flow — `if` statements, ternary operators, logical `&&`, early returns, or lookup maps — to choose which elements to return. During the render phase, React executes the component function, evaluates the conditions, and receives the resulting element tree. When conditions change, React's reconciliation algorithm compares the new tree with the old one, adds newly rendered elements, removes no-longer-rendered elements, and updates changed elements.
-- **The Unforgettable Mental Model:** The **Traffic Light**. The current state (red, yellow, green) determines which light is on. Only one light is visible at a time, and the switch between them is automatic based on the timer (state).
-- **The Trap:** Using `&&` with values that are falsy but renderable, like `0`. `0 && <Component />` renders `0` on screen because `0` is falsy but React renders falsy numbers.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Conditional rendering is showing different UI based on runtime conditions like state, props, or data. Since JSX is JavaScript, I can use if statements, ternaries, logical AND, early returns, or lookup maps to choose what to render. For example, I show a loading spinner when data is fetching, an error message when the request fails, and the actual content when data arrives. The key is making the UI a direct reflection of the current state."
+**Q: How does conditional rendering work in React compared to template-based frameworks like Angular or Vue?**
 
-#### Ternary vs `&&` rendering?
-- **The Engine Mechanism (Why it behaves this way):** A ternary operator `condition ? <A /> : <B />` always renders one of two branches — either A or B. The logical AND `condition && <A />` renders A when condition is truthy, and nothing (null) when condition is falsy. The critical difference is that `&&` has a trap: if the left side is `0`, React renders `0` on screen because `0` is falsy in JavaScript but React renders numbers as text. Ternaries don't have this trap because both branches are explicit. During reconciliation, switching between branches in a ternary causes React to unmount one subtree and mount the other, while `&&` simply adds or removes a subtree.
-- **The Unforgettable Mental Model:** The **Fork in the Road vs. the Toll Gate**. A ternary is a fork in the road — you always go left or right. `&&` is a toll gate — if you have the ticket (truthy), you pass through; if not, you get nothing (or in the case of `0`, you get charged unexpectedly).
-- **The Trap:** Using `count && <Badge />` when `count` can be `0`. This renders the literal `0` on screen. Use `count > 0 && <Badge />` or a ternary instead.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use ternaries when I have two explicit branches — like loading vs. content — because both outcomes are clear. I use `&&` when I want to render something or nothing — like showing an error banner only when there's an error. But I'm careful with `&&` because if the left side is 0, React renders 0 on screen. So I avoid `count && <Badge />` and use `count > 0 && <Badge />` or a ternary instead."
+In template-based frameworks (like Angular with `*ngIf` or Vue with `v-if`), conditional rendering is handled by a specialized template compiler that parses custom HTML directives into DOM-manipulation instructions. In React, JSX is not a template language—it compiles directly into JavaScript `React.createElement` or `_jsx` calls.
 
-#### Why use early returns?
-- **The Engine Mechanism (Why it behaves this way):** Early returns (guard clauses) exit the component function before the main JSX, returning a different UI for edge cases like loading, error, or empty states. This keeps the main render path clean and readable because it doesn't need to wrap everything in nested conditionals. During the render phase, React executes the component function from top to bottom — if an early return is hit, React receives that element tree and stops executing the rest of the function. This is more efficient than evaluating the entire function and then choosing a branch, though the performance difference is negligible in practice.
-- **The Unforgettable Mental Model:** The **Security Checkpoint**. Early returns are like security checkpoints at an airport — if you don't pass the first check (loading), you don't proceed to the gate (main content). Each checkpoint handles one condition and either lets you through or stops you.
-- **The Trap:** Having too many early returns that make the function hard to follow. If there are 5+ guard clauses, consider extracting them into separate components or using a state machine pattern.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Early returns keep the main render path clean by handling edge cases at the top of the component. Instead of nesting the entire JSX inside `if (!loading && !error && data.length > 0)`, I return early for loading, error, and empty states, then the main content renders without any wrapping conditionals. This makes the code more readable and easier to maintain because each state is handled in its own block."
+Because component rendering is simply JavaScript execution, you have full access to native control structures (`if/else`, ternaries, logical short-circuits, `switch` blocks, and object lookups). During the render phase, React runs your component function, evaluates these JavaScript expressions, and receives an immutable object tree describing the desired UI. React then reconciles this new tree with the previous fiber tree to compute the minimal set of real DOM mutations.
 
-#### How do you render loading/error/empty states?
-- **The Engine Mechanism (Why it behaves this way):** Loading, error, and empty states are rendered as conditional branches based on the state of a data-fetching operation. The typical pattern uses early returns: check `isLoading` first and return a skeleton or spinner, check `isError` and return an error message with a retry button, check if data is empty and return an empty state illustration, then render the main content. React's reconciliation handles the transitions between these states by unmounting the previous state's elements and mounting the new ones. Each state is a separate UI tree, and React efficiently swaps between them.
-- **The Unforgettable Mental Model:** The **Weather Forecast**. The app shows different screens based on the weather: rain screen, sun screen, snow screen. Only one is visible at a time, and the transition is automatic based on the current conditions.
-- **The Trap:** Not handling the empty state. Many apps handle loading and error but show a blank screen when data loads successfully but contains zero items. Empty states should guide the user on what to do next.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I render loading, error, and empty states as early returns at the top of the component. First, I check if data is loading and return a skeleton. Then I check for errors and return an error message with a retry button. Then I check if data is empty and return an empty state with guidance. Finally, I render the main content. This pattern ensures every possible state has a corresponding UI, and the early returns keep the main content path clean and readable."
+**Q: Why does `{count && <Badge />}` render the number `0` when `count === 0`, and what are the standard fixes?**
 
-#### How do feature flags affect rendering?
-- **The Engine Mechanism (Why it behaves this way):** Feature flags are boolean (or multi-value) configuration values that control whether certain UI or functionality is rendered. During the render phase, the component reads the flag value (from context, a hook, or props) and conditionally renders the feature. Feature flags enable gradual rollouts, A/B testing, and safe deployment of incomplete features. React handles flag changes like any other state change — when the flag value changes, React re-renders affected components and reconciles the new element tree. Flags can be evaluated at render time (client-side) or at build time (server-side with static rendering).
-- **The Unforgettable Mental Model:** The **Light Switch**. A feature flag is like a light switch — flip it on, the feature appears; flip it off, it disappears. The wiring (code) is already there; the switch controls whether electricity (rendering) flows.
-- **The Trap:** Leaving dead code behind after a flag is permanently enabled. Feature flags should have a cleanup plan — once a feature is fully rolled out, the flag and the old code path should be removed.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Feature flags let me conditionally render features based on configuration values. I read the flag value during render and use it in a conditional to show or hide the feature. This enables gradual rollouts, A/B testing, and safe deployment of incomplete features. I always plan for flag cleanup — once a feature is fully rolled out, I remove the flag and the old code path to avoid accumulating dead conditionals."
+This occurs because of JavaScript's logical AND (`&&`) evaluation rules combined with React's JSX rendering behavior. JavaScript's `&&` operator evaluates expressions left to right. When the left operand is falsy, JavaScript short-circuits and returns the exact value of the left operand—not a boolean `false`.
 
-#### What is the trap with `0 && <Component />`?
-- **The Engine Mechanism (Why it behaves this way):** In JavaScript, `0 && <Component />` evaluates to `0` because `0` is falsy, so the `&&` operator short-circuits and returns the left operand. React renders `0` as text on screen because numbers are valid renderable values. This is different from `false && <Component />`, which evaluates to `false` and React renders nothing (React ignores boolean values in JSX). The trap occurs when a count variable can be zero: `{itemCount && <Badge count={itemCount} />}` will render `0` when `itemCount` is zero, which is almost never the intended behavior.
-- **The Unforgettable Mental Model:** The **Bouncer Who Charges You**. The `&&` operator is like a bouncer who checks if you're on the list (truthy). If you're not (falsy), instead of just turning you away, the `0` bouncer charges you an entry fee (renders the zero on screen).
-- **The Trap:** Assuming all falsy values behave the same in `&&`. `false`, `null`, and `undefined` render nothing, but `0` and `""` (empty string) render as visible text.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The trap with `0 && <Component />` is that it renders the literal 0 on screen. This happens because JavaScript's && operator returns the left operand when it's falsy, and React renders numbers as text. To avoid this, I use an explicit boolean comparison: `count > 0 && <Badge />` or a ternary: `count > 0 ? <Badge /> : null`. I also avoid `&&` when the left side could be an empty string, which similarly renders as visible whitespace."
+When `count` is `0`, the expression `0 && <Badge />` evaluates directly to the number `0`. In React, booleans (`false`, `true`), `null`, and `undefined` are ignored during rendering and produce zero DOM nodes. However, numbers and strings are valid renderable values. React converts the returned `0` into a text node and renders it to the screen.
 
-#### How do TypeScript unions help conditional rendering?
-- **The Engine Mechanism (Why it behaves this way):** TypeScript discriminated unions model state as a type with a discriminant property that determines which fields are available. For example, `type DataState = { status: 'loading' } | { status: 'success'; data: User[] } | { status: 'error'; error: string }`. When you check `state.status` in a conditional, TypeScript narrows the type within that branch, giving you autocomplete and type safety for the available fields. This makes impossible states impossible — you can't access `state.data` in the loading branch because TypeScript knows it doesn't exist. During compilation, TypeScript erases these types, so they have zero runtime cost.
-- **The Unforgettable Mental Model:** The **ID Badge**. The discriminant (`status`) is like an ID badge that tells you which role a person plays. Once you see the badge says "admin," you know they have admin privileges (access to `data`). If it says "guest," they don't.
-- **The Trap:** Using separate boolean flags like `isLoading`, `isError`, `isSuccess` instead of a union. This allows impossible states like `isLoading: true && isError: true` simultaneously.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: TypeScript discriminated unions let me model state as a type with a discriminant property that determines which fields are available. For data fetching, I use a union like 'loading' | 'success' | 'error' with associated data for each state. When I check the status in a conditional, TypeScript narrows the type and gives me autocomplete for the available fields. This makes impossible states impossible — I can't have loading and error at the same time, and I can't access data in the loading branch. It's much safer than separate boolean flags."
+The three production fixes are:
+1. **Explicit boolean conversion:** `{Boolean(count) && <Badge />}`
+2. **Strict comparison:** `{count > 0 && <Badge />}`
+3. **Explicit ternary:** `{count ? <Badge /> : null}`
 
-## 8. Active recall test
-1. **Name three ways to render conditionally.**
-   - **Explanation:** (1) Early returns / guard clauses — return different JSX at the top of the component based on conditions. (2) Ternary operators — `condition ? <A /> : <B />` for inline branching. (3) Logical AND — `condition && <A />` for render-or-nothing patterns. Other options include lookup maps (objects keyed by state) and switch statements.
-2. **Why are early returns useful?**
-   - **Explanation:** Early returns handle edge cases (loading, error, empty) at the top of the component, keeping the main render path clean and readable. They avoid deeply nested conditionals and make each state's UI self-contained in its own block.
-3. **What should a data-fetching screen render first?**
-   - **Explanation:** It should check the loading state first and return a loading indicator (skeleton/spinner). Then check for errors and return an error state with retry. Then check for empty data and return an empty state. Only after all these checks should it render the main content. This ordering ensures the user always sees the most relevant state.
-4. **What happens with `{count && <Badge />}` when `count` is `0`?**
-   - **Explanation:** It renders the literal `0` on screen. JavaScript's `&&` operator returns the left operand (`0`) when it's falsy, and React renders numbers as text. The fix is to use `count > 0 && <Badge />` or a ternary: `count > 0 ? <Badge /> : null`.
-5. **How would you model loading/success/error states?**
-   - **Explanation:** Using a TypeScript discriminated union: `type State = { status: 'loading' } | { status: 'success'; data: T } | { status: 'error'; error: string }`. This makes impossible states impossible — you can't have loading and error simultaneously, and TypeScript narrows the type when you check `status`, providing type-safe access to `data` or `error`.
+**Q: What happens to a component's internal state when it is conditionally unmounted and remounted?**
 
-## 9. Mistakes / traps
-- Using `condition &&` when the left side can be `0`.
-- Nesting ternaries until the JSX is unreadable.
-- Forgetting empty states.
-- Rendering private UI before auth state is known.
-- Duplicating conditions in many places instead of extracting a component.
+When a component is conditionally removed from the element tree (for example, switching from `<Editor />` to `null` via an early return or ternary), React unmounts that Fiber node. During unmounting, React:
+1. Executes all cleanup functions from active `useEffect` and `useLayoutEffect` hooks.
+2. Removes all associated DOM nodes from the document.
+3. Completely destroys the Fiber node and discards its hook state list (`useState`, `useRef`, `useReducer`).
 
-## 10. Compare with related concepts
-- **Conditional rendering vs conditional styling:** rendering changes the tree; styling changes appearance.
-- **Conditional rendering vs routing:** routing chooses screens by URL; conditional rendering chooses UI by runtime state.
-- **Conditional rendering vs feature flags:** flags are one input that may drive conditions.
+When the condition later flips back to true and `<Editor />` returns to the tree, React creates a brand-new Fiber node. The component executes its initialization lifecycle from scratch, resetting all `useState` variables to their initial arguments. If you need state to persist across visibility toggles, lift that state up to a parent component, store it in an external cache/store, or hide the element visually using CSS (`display: none`).
 
-## 11. Summary from memory
-Explain how you would render a users page with loading, error, empty, and success states.
+**Q: How does React decide whether to preserve or reset state when switching between two branches of a ternary?**
 
-## 12. Spaced revision prompts
-- After 1 day: List conditional rendering patterns.
-- After 3 days: Explain the `0 &&` trap.
-- After 7 days: Rewrite nested ternaries into early returns.
-- After 14 days: Model data state with a discriminated union.
+React determines whether to preserve or reset state by inspecting the **element type** and the **tree position** (key index) in the Fiber hierarchy:
+
+1. **Different element type at the same position:**
+   `{isAdmin ? <AdminPanel /> : <UserPanel />}`
+   The type changes from `AdminPanel` to `UserPanel`. React tears down the old component tree, discards its state, and mounts the new component fresh.
+
+2. **Same element type at the same position:**
+   `{isPersonal ? <AccountForm type="personal" /> : <AccountForm type="business" />}`
+   The element type is `AccountForm` in both branches. React assumes it is updating the existing instance, preserves the Fiber node and all internal state (like dirty form inputs), and only delivers the updated `type` prop.
+
+3. **Same element type with explicit keys:**
+   `{isPersonal ? <AccountForm key="personal" /> : <AccountForm key="business" />}`
+   Because the `key` attribute differs, React recognizes them as two distinct entities. It unmounts the old instance and mounts a fresh instance with clean state.
+
+**Q: What are the architectural trade-offs between conditionally unmounting a component versus hiding it with CSS (`display: none`)?**
+
+- **Conditional Unmounting (`{isOpen && <Modal />}`):**
+  - *Pros:* Conserves browser memory and CPU by destroying inactive DOM nodes, stopping background timers, and canceling active subscriptions.
+  - *Cons:* Incurs mount/unmount overhead (creating DOM nodes, running layout effects) whenever toggled. State is completely reset unless lifted to a parent.
+  - *When to use:* Modals, heavy dashboards, large lists, or features accessed infrequently.
+
+- **CSS Visibility (`<div style={{ display: isOpen ? 'block' : 'none' }}>`):**
+  - *Pros:* Instantaneous visual toggle without DOM creation overhead. Preserves internal component state, scroll positions, and uncommitted form inputs.
+  - *Cons:* Inactive components stay in the DOM tree, consuming memory. Child `useEffect` hooks, event listeners, and polling intervals continue running in the background unless explicitly gated.
+  - *When to use:* Tabbed interfaces, media players that must retain playback state, or frequently toggled tooltips.
+
+**Q: Why are TypeScript discriminated unions preferred over multiple boolean flags for asynchronous UI states?**
+
+Using independent boolean flags (such as `const [isLoading, setIsLoading] = useState(false)` and `const [isError, setIsError] = useState(false)`) permits $2^N$ possible states, including invalid and impossible combinations like `isLoading: true` and `isError: true` simultaneously. This forces defensive conditional checks in your JSX and frequently causes UI bugs like error banners showing behind loading skeletons.
+
+A discriminated union models async status as mutually exclusive objects tagged with a common discriminant field:
+
+```tsx
+type AsyncState<T> =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; error: string };
+```
+
+This guarantees that only one state exists at any time. Inside conditional blocks (`if (state.status === 'success')`), TypeScript's control flow analysis automatically narrows the type, providing type-safe access to `state.data` while preventing runtime access to undefined properties.
+
+## 6. The Traps — What Goes Wrong
+
+**Trap 1: The Falsy Number and Empty String Leak**
+- *The Mistake:* Writing `{notifications.length && <Badge count={notifications.length} />}` or `{user.nickname && <span>{user.nickname}</span>}`.
+- *Why It Breaks:* In JavaScript, `0 && <Component />` evaluates to `0`, and `"" && <Component />` evaluates to `""`. React renders both numbers and strings as visible DOM text nodes, outputting an accidental `0` or blank gap on the page.
+- *The Fix:* Always cast to a boolean: `{notifications.length > 0 && <Badge />}` or `{Boolean(user.nickname) && <span>{user.nickname}</span>}`.
+
+**Trap 2: Violating the Rules of Hooks with Conditional Early Returns**
+- *The Mistake:* Placing a hook call after a conditional early return:
+  ```tsx
+  function UserProfile({ userId }: { userId: string | null }) {
+    if (!userId) return <EmptyState />;
+    // ❌ Error: Rendered fewer hooks than expected
+    const [profile, setProfile] = useState<Profile | null>(null);
+    useEffect(() => { /* fetch */ }, [userId]);
+    return <div>{profile?.name}</div>;
+  }
+  ```
+- *Why It Breaks:* React relies on the exact invocation order of hooks across renders to maintain internal state indices on the Fiber node. If an early return executes before all hooks are declared, hook counts differ between renders, corrupting internal fiber state and throwing a fatal runtime invariant error.
+- *The Fix:* Always declare all hooks at the very top level of the component before any conditional early returns.
+
+**Trap 3: Accidental State Leakage Across Conditional Branches**
+- *The Mistake:* Conditionally rendering the same component type for two distinct entities without keys:
+  ```tsx
+  // User switches from editing Alice to editing Bob
+  {selectedUser.role === 'admin' ? (
+    <UserForm initialRole="admin" />
+  ) : (
+    <UserForm initialRole="member" />
+  )}
+  ```
+- *Why It Breaks:* Because both branches return `<UserForm />` at the exact same index in the parent's JSX, React updates the existing component instance instead of remounting. Any dirty local input state typed into Alice's form remains inside Bob's form.
+- *The Fix:* Add a unique `key` prop: `<UserForm key={selectedUser.id} />`.
+
+**Trap 4: The Nested Ternary "Pyramid of Doom"**
+- *The Mistake:* Nesting ternaries three or four levels deep inside JSX expressions:
+  ```tsx
+  return (
+    <div>
+      {isLoading ? <Spinner /> : isError ? <Error /> : data ? <List items={data} /> : <Empty />}
+    </div>
+  );
+  ```
+- *Why It Breaks:* Deeply nested ternaries are difficult to scan, easy to misread, and prone to edge-case bugs when additional states are introduced.
+- *The Fix:* Extract edge cases into top-level early returns, or use a lookup table / sub-component if branching within an inline layout.
+
+**Trap 5: Rendering Protected UI Before Auth Resolution**
+- *The Mistake:* Checking `if (user.isAdmin)` when `user` is still `null` during initial session verification:
+  ```tsx
+  function AdminPage() {
+    const { user } = useAuth(); // user is null while token validates
+    if (!user.isAdmin) return <Navigate to="/unauthorized" />;
+    return <AdminDashboard />;
+  }
+  ```
+- *Why It Breaks:* The application flashes a false "Unauthorized" error or prematurely redirects the user to the login page for 100ms before the authentication token finishes validating.
+- *The Fix:* Explicitly handle the pending authentication status: `if (authStatus === 'loading') return <AuthSkeleton />`.
+
+## 7. Compare With Related Concepts
+
+| Concept | Primary Purpose | Lifecycle & DOM Impact | Rule of Thumb |
+| :--- | :--- | :--- | :--- |
+| **Conditional Rendering** | Returning different JSX structures based on runtime state snapshots. | Completely mounts or unmounts component subtrees; destroys unmounted fiber state and DOM nodes. | Use for distinct application states (loading, error, empty), access control, and modal popups. |
+| **Conditional CSS (`display: none`)** | Toggling visual visibility of elements already mounted in the DOM. | DOM nodes and component state remain fully intact in memory; effects continue running. | Use for tabs, accordions, and media players where state and scroll positions must persist. |
+| **Client-Side Routing (`react-router`)** | Conditionally rendering entire page trees based on the browser URL path. | Unmounts old route layout, mounts new route layout, manages browser history and parameters. | Use for top-level navigation, deep-linkable URLs, and screen transitions. |
+| **`React.lazy` & Suspense** | Conditionally loading and rendering code-split component bundles on demand. | Defers script download until condition is triggered; renders fallback during network fetch. | Use for heavy, infrequently visited routes or complex widgets (e.g. rich text editors, charts). |
+
+## 8. 🧠 The Memory Hook
+
+React conditional rendering is not template magic—it is pure JavaScript executed against a state snapshot. If you return `0`, it prints `0`; if you swap component types, React tears down the set and burns the state; if you keep the same component type at the same position, state survives unless you brand it with a `key`.
