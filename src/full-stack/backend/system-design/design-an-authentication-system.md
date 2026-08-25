@@ -1,129 +1,270 @@
-# Design an authentication system
+# Design an Authentication System
 
-## Detailed explanation
+## 1. Understand the Problem First — Clarify Before Designing
 
-Design an authentication system is a backend system design exercise that checks API design, data modeling, scaling, reliability, and operational thinking. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Picture 2:00 AM on a Friday: an automated botnet launches a distributed credential stuffing attack against your `/login` endpoint, hammering it with 500,000 username-password pairs leaked from a third-party breach across 20,000 residential IP addresses. At the exact same moment, an enterprise security admin notices an employee's laptop was stolen and demands an immediate, single-click session revocation across all active devices. If your system was built on pure stateless JSON Web Tokens (JWTs) with 24-hour lifetimes, that stolen laptop retains complete access to your microservices for another 22 hours unless you take down your API gateway or push an emergency database migration. If your system was built on pure database-backed sessions, every single microservice call across your fleet makes a synchronous round-trip to a centralized database or cache, turning your authentication store into your biggest bottleneck and primary single point of failure.
 
-## 1. One-line mental model
+Before drawing boxes on a whiteboard, a senior engineer always pins down the requirements, scale, and operational boundaries:
 
-Design data flow, APIs, storage, scaling, failure handling, and observability together.
+- **Traffic Scale & Throughput:** Are we designing for 50 million Daily Active Users (DAU), 100 million registered accounts, a peak login rate of 5,000 requests per second (RPS), and a downstream token verification load of 150,000 RPS across hundreds of internal services?
+- **Authentication Modalities:** Do we support traditional email and password, federated Single Sign-On (OAuth 2.0 / OpenID Connect with Google, GitHub, Apple, and enterprise SAML/Okta), Multi-Factor Authentication (TOTP via authenticator apps, SMS OTP fallback, WebAuthn/FIDO2 hardware passkeys), and machine-to-machine API keys?
+- **Client Diversity:** Will clients be Single-Page Applications in browsers (React, Vue), mobile native applications (iOS Keychain, Android Keystore), server-side rendered applications (Next.js), or third-party API consumers?
+- **Performance & Availability SLAs:** We need sub-200ms latency on compute-heavy password hashing, sub-5ms latency on token verification at the gateway, and 99.999% availability for API request authorization.
+- **Security & Threat Model:** Zero plain-text password exposure (even during memory dumps or SQL injection), defense against Cross-Site Scripting (XSS) and Cross-Site Request Forgery (CSRF), automated token replay detection, instant session revocation, strict rate limiting to defeat brute force, and audit logging compliant with SOC 2 and GDPR.
 
-## 2. Problem it solves
+## 2. The Core Insight — The Decision Everything Else Flows From
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+The central dilemma of modern authentication architecture is the tension between **Verification Latency vs. Instant Revocation**.
 
-## 3. Core idea
+Stateless tokens (JWTs) eliminate database lookups at the edge, scaling horizontally to hundreds of thousands of requests per second. However, because they are self-contained, they cannot be natively revoked before they expire. Stateful server-side sessions give you instant revocation and granular device management, but force every single microservice request to hit a centralized session store, creating massive latency overhead and a crippling single point of failure.
 
-- Clarify requirements and scale.
-- Define APIs and data model.
-- Choose storage, cache, queues, and workers.
-- Plan consistency, failure handling, and security.
-- Add observability and rollout strategy.
+The architectural decision that unlocks both requirements is a **Hybrid Tiered Token Architecture**:
 
-## 4. Visual / analogy
+1. **Short-Lived Asymmetric Access Tokens (JWTs):** Valid for 5 to 15 minutes. Signed using an asymmetric private key (RS256 or Ed25519) by the Auth Service. Downstream microservices and API gateways verify signatures locally and completely statelessly in memory using the cached public key set (JWKS). Zero database hits on the hot path.
+2. **Opaque, Stateful Refresh Tokens with Token Rotation:** Valid for 7 to 30 days. Cryptographically random strings stored securely in an `HttpOnly`, `Secure`, `SameSite` cookie on the web (and hardware-backed keystores on mobile). The refresh token maps to a session record in a fast distributed store (Redis / PostgreSQL) and is exchanged for a new access token when the short-lived token expires.
+3. **Out-of-Band Revocation and Token Versioning:** For high-security events (password reset, account compromise, admin ban), the system updates a numeric `token_version` on the user record and broadcasts it to edge gateway caches. Tokens presenting an outdated version are rejected immediately without checking the primary database on every call.
+
+Every other component in this design—browser storage strategies, cryptographic key distribution, token theft detection, and rate limiting—is built around making this hybrid model bulletproof.
+
+## 3. High-Level Architecture — Components and Why Each Exists
+
+To handle authentication at scale securely and reliably, the system separates the compute-intensive identity operations from the high-throughput authorization verification hot path.
 
 ```txt
-Clients -> API -> services -> database/cache/queue -> observability
+                           +-------------------------------------------------------------+
+                           |                     Client Applications                     |
+                           |  - Web Browser (HttpOnly Cookies)   - Mobile Native (Keychain) |
+                           +------------------------------+------------------------------+
+                                                          |
+                                                          | HTTPS (Credentials / Bearer)
+                                                          v
+                           +-------------------------------------------------------------+
+                           |               WAF & API Gateway / Edge Proxy                |
+                           |  - DDoS & Bot Mitigation  - Rate Limiter (Token Bucket)     |
+                           |  - Stateless Access Token (JWT) Verification via local JWKS |
+                           |  - Local Revocation Cache Check (Redis / Bloom Filter)      |
+                           +--------------+------------------------------+---------------+
+                                          |                              |
+                  (Auth Routes: /login,   |                              | (Protected API Routes:
+                   /refresh, /oauth, /mfa)|                              |  /orders, /billing)
+                                          v                              v
+                           +------------------------------+       +----------------------+
+                           |         Auth Service         |       | Downstream Services  |
+                           |  - Password Hashing (Argon2) |       | (Orders, Billing,    |
+                           |  - MFA Engine (TOTP/FIDO2)   |       |  User Profile, etc.) |
+                           |  - Token Issuer & Rotator    |       |                      |
+                           |  - OAuth2/OIDC Orchestrator  |       +----------------------+
+                           +-------+--------------+-------+
+                                   |              |
+                      +------------+              +------------+
+                      |                                        |
+                      v                                        v
++------------------------------------------+  +------------------------------------------+
+|          Redis Distributed Cache         |  |         Primary Relational DB            |
+|  - Refresh Token Families & Metadata     |  |         (PostgreSQL Cluster)             |
+|  - Revocation Denylist / Token Versions  |  |  - Users & Roles Tables                  |
+|  - Rate Limiting Counters & Sliding Logs |  |  - Salted Password Hashes (Argon2id)    |
+|  - Transient MFA Handshake States (TTL)  |  |  - Active Devices & Audit Trail Logs     |
++------------------------------------------+  +------------------------------------------+
+                      |
+                      v (Security Audit Events & Notifications)
++----------------------------------------------------------------------------------------+
+|      Message Queue (Kafka)  -->  Worker Fleet  -->  Transactional Email / SMS / Alerts |
++----------------------------------------------------------------------------------------+
 ```
 
-## 5. Minimal example
+Here is why each component exists and what breaks if you remove it:
+
+- **Client Applications (Web & Mobile):** Web browsers hold session cookies configured with `HttpOnly` (blocks JavaScript XSS access), `Secure` (ensures transit over HTTPS only), and `SameSite=Lax` or `Strict` (neutralizes cross-site CSRF attacks). Mobile apps store tokens in hardware-backed storage (iOS Keychain / Android Keystore) and transmit tokens via standard `Authorization: Bearer <token>` headers.
+- **WAF & API Gateway (Cloudflare / Envoy / Kong):** Acts as the entry point for all incoming traffic. Terminates TLS, runs distributed rate-limiting algorithms, inspects request headers, and performs fast in-memory signature verification on incoming JWT access tokens. If the access token is valid and unexpired, the gateway injects trusted identity headers (such as `X-User-Id`, `X-User-Roles`, `X-Tenant-Id`) and proxies the request directly to downstream services. Downstream microservices never parse raw cookies or re-verify cryptographic signatures.
+- **Auth Service (Identity Provider):** A dedicated microservice cluster responsible for identity workflows: user registration, password verification using memory-hard hashing, MFA challenge orchestration, OAuth2/OIDC authorization code exchange, session lifecycle management, and token issuance. It holds the asymmetric private signing keys and is isolated from general application business logic.
+- **Primary Relational Database (PostgreSQL with Read Replicas):** Stores core user identities, email addresses, password hashes (with individual salts), user permission tables, and immutable security audit logs. Relational ACID transactions are critical here to prevent race conditions during account creation (such as duplicate email registrations).
+- **Distributed Cache & Session Store (Redis Cluster):** Houses mutable, time-sensitive state: active refresh token records organized into token family trees, sliding-window rate limit counters, temporary MFA challenge tokens (with 5-minute TTLs), and global user revocation timestamps. Redis provides sub-millisecond lookups for token refresh operations.
+- **Message Queue & Asynchronous Workers (Kafka / RabbitMQ + Worker Fleet):** Decouples slow, non-blocking side-effects from the user login path. When a user logs in from a new device, resets a password, or fails authentication multiple times, the Auth Service publishes an event to Kafka. Background workers handle transactional email delivery, SMS OTP dispatch, Slack security webhooks, and analytics ingestion without adding milliseconds to the login response.
+
+Let us trace a complete request end-to-end for a user logging in and accessing their dashboard:
+
+1. **The Login Step:** The user submits their email and password over HTTPS to `/api/v1/auth/login`. The API Gateway checks the IP-based rate limit in Redis. The Auth Service fetches the user record from PostgreSQL, extracts the stored salt, computes the Argon2id hash of the submitted password, and performs a constant-time comparison.
+2. **The MFA Challenge:** If the user has TOTP enabled, the Auth Service issues a temporary, short-lived `mfa_token` (stored in Redis with a 5-minute TTL) and prompts for a 6-digit TOTP code. The client posts the code back to `/api/v1/auth/mfa/verify`. The Auth Service computes the expected HMAC-SHA1 code for the current 30-second time step using the user's encrypted secret.
+3. **Token Issuance:** Upon verification, the Auth Service generates a 15-minute asymmetric JWT access token signed with its private key (RS256) and a cryptographically random 32-byte opaque refresh token. The refresh token's SHA-256 hash is saved to Redis under a new Token Family identifier. The refresh token is returned in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie, while the access token is returned in the JSON payload or a separate short-lived cookie.
+4. **Accessing Protected Resources:** When the client fetches `/api/v1/orders`, the API Gateway intercepts the request. It extracts the JWT from the `Authorization` header, validates the signature against its in-memory public key cache, checks that `exp` is in the future, verifies that the user's `token_version` in local cache matches the token claim, adds `X-User-Id: 10842` to the request headers, and routes it to the Orders Service.
+5. **Silent Token Refresh:** After 15 minutes, the access token expires. The client's HTTP interceptor receives a 401 Unauthorized, pauses outgoing requests, and calls `/api/v1/auth/refresh`. The Auth Service validates the refresh token against Redis, invalidates the old refresh token, issues a brand new access token and a brand new refresh token, and updates the token family tree.
+
+## 4. Key Technical Decisions — With Real Tradeoffs
+
+Every architectural choice in an authentication system comes with explicit tradeoffs between security, latency, complexity, and operational cost.
+
+**Decision 1: Asymmetric JWT Access Tokens (RS256/EdDSA) vs Symmetric Tokens (HS256) vs Pure Stateful Sessions**
+- **Chosen:** Asymmetric signed JWTs for access tokens + Opaque tokens for refresh sessions.
+- **Alternatives Considered:**
+  - *Symmetric JWTs (HS256):* Requires sharing the identical private secret key with every single microservice and API gateway in the company. If one internal reporting service is compromised, the attacker gains the ability to forge valid authentication tokens for any user across the entire platform.
+  - *Pure Stateful Sessions (Redis on every request):* Eliminates JWT complexity and makes revocation instant, but introduces a hard network dependency on Redis for every single HTTP request across all microservices, multiplying latency and creating a critical cluster-wide failure point.
+- **Why We Chose Asymmetric JWTs:** The Auth Service holds the private key and signs tokens. All edge gateways and internal services only need the public key (distributed via a JWKS endpoint) to verify tokens. Services can verify tokens locally in CPU memory without sharing sensitive secrets or executing remote network calls.
+- **Tradeoff Accepted:** Access tokens cannot be revoked instantaneously in a purely stateless manner. We mitigate this by enforcing ultra-short lifetimes (10 to 15 minutes) and using lightweight token versioning for emergency administrative revocations.
+
+**Decision 2: Client Token Storage — HttpOnly SameSite Cookies vs Web LocalStorage**
+- **Chosen:** `HttpOnly`, `Secure`, `SameSite=Lax` cookies for browser clients; Hardware Keystore for mobile clients.
+- **Alternatives Considered:**
+  - *HTML5 LocalStorage / SessionStorage:* Extremely easy to implement in client JavaScript (`localStorage.setItem('token', jwt)`), but completely accessible to any JavaScript running on the origin. If a third-party npm package, CDN script, or user-input vulnerability creates a Cross-Site Scripting (XSS) exploit, the attacker can silently extract the token and hijack the user's session permanently.
+- **Why We Chose HttpOnly Cookies:** The browser prevents client-side JavaScript from ever reading or modifying `HttpOnly` cookies. The browser automatically attaches the cookie to outbound requests. Setting `SameSite=Lax` (or `Strict`) combined with standard custom headers (such as `X-Requested-With` or custom CSRF tokens) prevents malicious third-party websites from executing Cross-Site Request Forgery attacks.
+- **Tradeoff Accepted:** Cookies require precise domain and path configuration across multiple subdomains (e.g. `api.domain.com` vs `app.domain.com`), and require handling CORS `credentials: include` headers properly.
+
+**Decision 3: Password Hashing — Argon2id vs bcrypt vs PBKDF2 vs SHA-256**
+- **Chosen:** Argon2id (Memory cost: 64 MB, Time cost: 3 iterations, Parallelism: 4 threads) with unique per-user 16-byte cryptographically random salt and an application-wide Pepper stored in a secret manager.
+- **Alternatives Considered:**
+  - *SHA-256 / SHA-512 / MD5:* General-purpose cryptographic hash functions designed for speed. A modern GPU cluster can compute over 100 billion SHA-256 hashes per second, making cracked passwords trivial via brute-force or dictionary attacks.
+  - *Bcrypt:* A battle-tested password hashing algorithm with configurable CPU work factors. However, bcrypt has a fixed memory footprint (4 KB) and a hard 72-byte password length truncation limit. Because it is not memory-hard, high-end FPGA and ASIC hardware can crack bcrypt hashes significantly faster than Argon2id.
+- **Why We Chose Argon2id:** Argon2id is the winner of the Password Hashing Competition. It combines memory-hardness (defeating GPU/ASIC parallel brute-forcing by requiring dedicated RAM per thread) with resistance against side-channel timing attacks.
+- **Tradeoff Accepted:** High server CPU and RAM consumption per login attempt (~150ms to 250ms of CPU compute). If left unprotected, attackers can flood the login endpoint to cause CPU exhaustion Denial of Service (DoS). We counteract this with aggressive edge rate limiting and dedicated worker thread isolation.
+
+**Decision 4: Session Invalidation and Revocation Strategy — Token Versioning + Redis Denylist**
+- **Chosen:** Hybrid Revocation using User Token Versioning and a JTI (JWT ID) Denylist in Redis.
+- **Alternatives Considered:**
+  - *No Revocation (Wait for JWT expiry):* Unacceptable for enterprise security standards.
+  - *Database query on every single request:* Defeats the entire performance purpose of using stateless tokens.
+- **Why We Chose Hybrid Revocation:**
+  - *Global / Device Revocation (Password change, "Log out all devices"):* We increment a numeric `token_version` on the user record in the primary DB and sync it to Redis (`user:10842:version = 5`). The user's access token carries `tver: 4`. The API Gateway checks this cached integer in local memory. Since `4 < 5`, the token is rejected immediately.
+  - *Single Token Revocation (Standard logout):* The token's unique ID (`jti`) is placed into a Redis Denylist with an automatic TTL equal only to the remaining lifespan of that specific access token (maximum 15 minutes). Redis memory usage remains tiny because expired entries are automatically evicted.
+- **Tradeoff Accepted:** Requires edge proxies and gateways to maintain a fast connection to a Redis cache, but keeps the hot-path lookup to sub-millisecond speeds.
+
+**Decision 5: Federated Identity — OAuth 2.0 / OpenID Connect Authorization Code Flow with PKCE**
+- **Chosen:** OAuth 2.0 Authorization Code Flow with Proof Key for Code Exchange (PKCE, RFC 7636) for all client types.
+- **Alternatives Considered:**
+  - *OAuth 2.0 Implicit Flow:* Previously popular for browser SPAs, where the identity provider returned tokens directly in the URL fragment hash. This flow is officially deprecated by OAuth 2.1 because tokens leak in browser history, HTTP Referer headers, and server logs.
+- **Why We Chose PKCE:** PKCE generates a dynamic cryptographic verifier and challenge (`code_verifier` and `code_challenge`) for every login request. Even if a malicious app or man-in-the-middle intercepts the authorization code returned by Google or Okta, they cannot exchange it for an access token without knowing the original secret verifier.
+
+## 5. Deep Dives — The Parts That Actually Matter
+
+**Deep Dive 1: Refresh Token Rotation and Automated Token Theft Detection**
+
+The biggest vulnerability of long-lived refresh tokens is that if an attacker intercepts one, they can maintain persistent access indefinitely. We eliminate this with **Refresh Token Rotation with Replay Detection**:
 
 ```txt
-Input  -> validate
-Work   -> apply backend system design rule
-Output -> success or structured error
+[ Normal Flow ]
+1. User logs in        --> Family F1 created. Issues RefreshToken_1.
+2. 15 mins later       --> Client presents RefreshToken_1.
+3. Server validates    --> Invalidates RefreshToken_1. Issues RefreshToken_2 (Family F1).
+4. 15 mins later       --> Client presents RefreshToken_2.
+5. Server validates    --> Invalidates RefreshToken_2. Issues RefreshToken_3 (Family F1).
+
+[ Attack / Theft Detected ]
+1. Attacker intercepted RefreshToken_1 earlier.
+2. Legitimate client already used RefreshToken_1 to get RefreshToken_2.
+3. Attacker presents RefreshToken_1 to /auth/refresh.
+4. Server checks Redis --> Finds RefreshToken_1 is marked "ALREADY_USED" in Family F1!
+5. SECURITY ALERT TRIGGERED:
+   - Immediate invalidation of entire Family F1 (RefreshToken_2 and RefreshToken_3 destroyed).
+   - Increment user's token_version in PostgreSQL and Redis.
+   - All active access tokens for this user are now rejected across all gateways.
+   - Security event logged to Kafka; automated alert email sent to user.
 ```
 
-## 6. Real-world example
+How this is structured in Redis:
 
-In a production full-stack app, design an authentication system affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+- Every session is assigned a `family_id` (UUIDv4).
+- When a refresh token is issued, its cryptographic SHA-256 hash is stored as a key in Redis: `auth:refresh:<token_hash>`.
+- The value contains `{ "user_id": 10842, "family_id": "fam_99", "status": "ACTIVE", "expires_at": 1740000000 }`.
+- When exchanged, the Auth Service executes an atomic Redis transaction (using a Lua script): it checks if the token status is `ACTIVE`. If yes, it flips the status to `USED`, sets a 60-second grace-period TTL on the old token (to prevent race conditions from concurrent network retries), and creates a new key for the new token.
+- If a request arrives with a token whose status is `USED` past the grace period, the Lua script instantly deletes all keys matching `auth:family:fam_99:*`, effectively terminating the session for both the attacker and the victim and forcing a secure re-authentication.
 
-## 7. Common interview questions
+**Deep Dive 2: Multi-Layered Defense Against Credential Stuffing and Brute Force**
 
-#### How do you securely store passwords?
-- **The Engine Mechanism (Why it behaves this way):** Passwords must never be stored in plain text. Use a slow, adaptive hashing algorithm designed for passwords: Argon2id (recommended), bcrypt, or scrypt. These algorithms are intentionally computationally expensive and memory-hard, making brute-force attacks impractical. Each password gets a unique random salt (16+ bytes) appended before hashing, preventing rainbow table attacks. The salt is stored alongside the hash. Never use fast hash functions like MD5 or SHA-256 for passwords — they can be computed billions of times per second on GPUs.
-- **The Unforgettable Mental Model:** The **Industrial Shredder**. Fast hashes (MD5) are like a paper shredder — quick but reversible with enough effort. Password hashes (Argon2id) are like an industrial incinerator — slow, thorough, and practically impossible to reverse. Each document gets mixed with unique confetti (salt) before burning.
-- **The Trap:** Using SHA-256 with a salt. While better than plain SHA-256, it's still a fast hash that GPUs can compute at billions per second. Always use a password-specific algorithm (Argon2id, bcrypt) that's designed to be slow.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use Argon2id with a memory cost of at least 64MB and a time cost that targets ~200ms per hash. Each password gets a unique 16-byte random salt. The salt and hash are stored together in the database. Argon2id is resistant to both GPU brute-force attacks (memory-hard) and side-channel attacks (data-independent). If Argon2id isn't available, bcrypt with a cost factor of 12+ is the fallback. I'd never use MD5, SHA-1, or even SHA-256 for passwords."
+Authentication endpoints are the primary target for automated abuse. Protecting them requires a multi-layered filter:
 
-#### JWT vs. session tokens — which should you use?
-- **The Engine Mechanism (Why it behaves this way):** JWTs are self-contained tokens that carry claims (user ID, roles, expiration) and are cryptographically signed. The server validates the signature without database lookup — stateless. Session tokens are random strings that map to server-side session data stored in Redis or a database — stateful. JWTs scale horizontally without shared state but can't be revoked until expiration. Sessions can be revoked instantly but require shared session storage. JWTs are larger (hundreds of bytes vs. 32 bytes for session IDs). Short-lived JWTs (5-15 minutes) with refresh tokens combine the benefits of both.
-- **The Unforgettable Mental Model:** The **Passport vs. Hotel Key Card**. A JWT is like a passport — it contains all your info, is self-validating (stamp/signature), and works anywhere without calling home. But if it's stolen, you can't cancel it until it expires. A session token is like a hotel key card — the front desk (server) checks the registry (Redis) to verify it's still valid. If you report it lost, they can deactivate it immediately.
-- **The Trap:** Using long-lived JWTs (30 days) without a revocation mechanism. If a JWT is stolen, the attacker has access until expiration. Always use short-lived access tokens (15 minutes) with refresh tokens that can be revoked.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: For most web applications, I'd use short-lived JWTs (15-minute access tokens) with refresh tokens stored in httpOnly, secure cookies. The access token is stateless and fast to validate. The refresh token is stored server-side in Redis, allowing revocation on logout or suspicious activity. For internal microservices, I'd use JWTs with short TTLs since service-to-service communication doesn't need instant revocation. For traditional server-rendered apps, I'd use session tokens in Redis for simplicity and instant revocation capability."
+```txt
+Incoming Request --> [Layer 1: Edge WAF & IP Rate Limiting]
+                              | (Pass)
+                              v
+                     [Layer 2: Sliding Window Account-Level Rate Limiter]
+                              | (Pass)
+                              v
+                     [Layer 3: Constant-Time Credential Validation]
+                              | (Pass)
+                              v
+                     [Layer 4: Anomaly Detection & Adaptive Challenges]
+```
 
-#### How do you implement secure token refresh?
-- **The Engine Mechanism (Why it behaves this way):** The refresh token flow: (1) Client sends expired access token + refresh token to /auth/refresh; (2) Server validates the refresh token (signature + database/Redis lookup); (3) Server checks if the refresh token is revoked (logout, password change); (4) Server issues a new access token and optionally a new refresh token (rotation); (5) Old refresh token is invalidated. Refresh token rotation (issuing a new refresh token on each use) detects token theft — if both the old and new refresh token are used, the system knows the token was stolen and revokes all tokens for that user. Refresh tokens are stored in httpOnly, secure, SameSite=Strict cookies to prevent XSS theft.
-- **The Unforgettable Mental Model:** The **Rolling Combination Lock**. Each time you open the safe (get a new access token), the combination changes (refresh token rotation). If someone tries to use the old combination, the safe locks permanently and alerts the owner (token theft detection).
-- **The Trap:** Storing refresh tokens in localStorage. localStorage is accessible to JavaScript, so any XSS vulnerability exposes the refresh token. Always use httpOnly cookies that JavaScript cannot read.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement refresh token rotation. The refresh token is stored in an httpOnly, secure, SameSite=Strict cookie. On each refresh, the server validates the token, issues a new access token AND a new refresh token, and invalidates the old one. If a stolen refresh token is used after rotation (both old and new tokens appear), the system detects the theft and revokes all tokens for that user, forcing re-authentication. The access token lives for 15 minutes, the refresh token for 7-30 days depending on security requirements."
+- **Layer 1: Edge IP & ASN Token Bucket:** The API Gateway enforces a rate limit of 10 requests per minute per IP on `/api/v1/auth/login`. Requests exceeding this threshold receive HTTP 429 Too Many Requests immediately at the edge without touching backend application servers.
+- **Layer 2: Per-Account Sliding Window Log in Redis:** Attackers bypass IP limits by rotating through 50,000 residential proxies (distributed brute force). We track failed attempts by targeted email address: `auth:failed_attempts:<email_hash>`. If an account experiences 5 failed attempts within 15 minutes, the system triggers progressive friction:
+  - Attempt 1–3: Standard response.
+  - Attempt 4–5: Mandatory invisible CAPTCHA verification (Cloudflare Turnstile).
+  - Attempt 6+: Temporary 15-minute account lock. The user receives a security notification with a magic link to unlock their account immediately.
+- **Layer 3: Constant-Time Execution and Elimination of User Enumeration:** If an attacker attempts to log in with an email that does not exist, a naive system returns immediately with `User not found` in 5ms, whereas a valid user takes 200ms for password hashing. Attackers use this timing difference to harvest valid email lists. To eliminate timing attacks:
+  - The Auth Service always executes an identical dummy Argon2id calculation against a fixed static salt when an email does not exist in the database.
+  - The response for both invalid password and non-existent user is strictly identical: `{"error": "invalid_credentials"}`.
+  - Password reset requests always respond with: `"If an account exists with this email, a reset link has been sent."`
+- **Layer 4: Breached Password Screening (Have I Been Pwned Integration):** During user registration and password changes, the Auth Service hashes the candidate password with SHA-1, extracts the first 5 characters (the prefix), and queries the Have I Been Pwned API using the k-Anonymity model. The external API returns all hash suffixes matching that 5-character prefix without ever learning the user's password. If the user's full hash matches a known breached password, registration is rejected with an instruction to choose a stronger password.
 
-#### How do you handle password reset securely?
-- **The Engine Mechanism (Why it behaves this way):** The secure password reset flow: (1) User requests reset with email; (2) Server generates a cryptographically random token (32+ bytes, URL-safe); (3) Token is stored in the database with an expiration (1 hour) and single-use flag; (4) Token is sent via email as a link; (5) User clicks link, enters new password; (6) Server validates the token (exists, not expired, not used), hashes the new password, invalidates the token, and optionally invalidates all existing sessions. The token must be single-use and time-limited. Rate limit reset requests per email to prevent enumeration attacks.
-- **The Unforgettable Mental Model:** The **One-Time Key**. The bank (server) gives you a key (reset token) that opens the vault once and then dissolves. It also has a timer — if you don't use it within an hour, it self-destructs. Even if someone intercepts the key, they can only use it once before it's gone.
-- **The Trap:** Not invalidating existing sessions after a password reset. If an attacker had access to the account, they still have valid session tokens after the password change. Always revoke all sessions on password reset.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd generate a 32-byte cryptographically random token, store it with a 1-hour expiration and single-use flag, and email it as a reset link. When the user submits their new password, I validate the token, hash the password with Argon2id, invalidate the token, and revoke all existing sessions for that user. I'd rate-limit reset requests per email to prevent enumeration, and I'd always respond with the same message whether the email exists or not to avoid user enumeration attacks."
+**Deep Dive 3: Cryptographic Key Rotation Without Downtime (JWKS)**
 
-#### How do you prevent brute-force and credential stuffing attacks?
-- **The Engine Mechanism (Why it behaves this way):** Multiple layers of protection: (1) Rate limiting — exponential backoff on failed attempts per account (1s, 2s, 4s, 8s delay) and per IP (sliding window); (2) Account lockout — temporary lock after N consecutive failures (15-30 minutes); (3) CAPTCHA after N failures to block bots; (4) Credential stuffing detection — check submitted credentials against known breached password databases (Have I Been Pwned API); (5) Progressive delays — increase delay between login attempts exponentially; (6) Monitor for distributed attacks — multiple IPs trying the same account, or same IP trying multiple accounts.
-- **The Unforgettable Mental Model:** The **Bank Vault with Increasing Locks**. First wrong combination: 1-second delay. Second: 2 seconds. Third: 4 seconds. After 5 attempts, the vault locks for 30 minutes and calls security (CAPTCHA, alert). The vault also recognizes if someone is trying combinations from multiple locations simultaneously.
-- **The Trap:** Permanent account lockout. This enables denial-of-service attacks — an attacker can lock out any user by intentionally failing login attempts. Always use temporary lockouts with automatic expiration.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement progressive rate limiting — exponential backoff on failed attempts per account, with a sliding window rate limit per IP. After 5 consecutive failures, I'd require CAPTCHA and temporarily lock the account for 15 minutes. I'd also check passwords against the Have I Been Pwned API during registration and password changes. Importantly, I'd use temporary lockouts, not permanent ones, to prevent denial-of-service attacks. All failed attempts are logged with IP and user agent for anomaly detection."
+In production, cryptographic signing keys must be rotated regularly (e.g., every 90 days) or immediately if a private key is suspected of compromise. The system must support key rotation without logging out millions of active users or dropping in-flight API requests.
 
-#### How do you implement multi-factor authentication (MFA)?
-- **The Engine Mechanism (Why it behaves this way):** MFA adds a second verification factor after password validation. Common methods: (1) TOTP (Time-based One-Time Password) — user scans a QR code to seed a shared secret in an authenticator app; the app generates a 6-digit code every 30 seconds using HMAC-SHA1; server validates by computing the same code with the shared secret and current time (with a ±1 window for clock drift); (2) SMS codes — less secure due to SIM swapping but widely used; (3) WebAuthn/FIDO2 — hardware security keys or biometrics, the most secure option. TOTP secrets are stored encrypted in the database. Backup codes (single-use) are generated for account recovery.
-- **The Unforgettable Mental Model:** The **Two-Key Safe**. The first key is your password (something you know). The second key is a code that changes every 30 seconds (something you have — your phone). You need both keys to open the safe. Even if someone steals your password, they can't open it without your phone.
-- **The Trap:** Implementing MFA without backup codes. If the user loses their phone, they're permanently locked out. Always generate and securely display single-use backup codes during MFA setup.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement TOTP as the primary MFA method using the RFC 6238 standard. During setup, the server generates a 20-byte secret, displays it as a QR code, and stores it encrypted. The authenticator app generates 6-digit codes every 30 seconds. On login, the server validates the code with a ±1 time window for clock drift. I'd also generate 10 single-use backup codes during setup and recommend WebAuthn/FIDO2 for high-security accounts. SMS-based MFA would be available but discouraged due to SIM swapping risks."
+The Auth Service exposes a public JSON Web Key Set (JWKS) at `https://auth.example.com/.well-known/jwks.json`.
 
-#### How do you handle logout and session invalidation?
-- **The Engine Mechanism (Why it behaves this way):** For session tokens: delete the session from Redis/database — instant invalidation. For JWTs: add the token to a blocklist (Redis with TTL matching the token's expiration) — the server checks the blocklist on each request. For refresh token rotation: mark the refresh token family as revoked in the database, invalidating all tokens in that chain. On password change or security event: invalidate all sessions/refresh tokens for the user by updating a session_version field in the user record — any token with an older version is rejected.
-- **The Unforgettable Mental Model:** The **Hotel Checkout**. Session logout is like returning your key card — the front desk immediately deactivates it. JWT logout is like adding your passport to a watchlist — it still looks valid, but the checkpoint (server) checks the list and denies entry. Password change is like changing all the locks — every existing key becomes useless.
-- **The Trap:** Thinking JWT logout is instant without a blocklist. Since JWTs are self-contained and stateless, the server can't invalidate them without maintaining a revocation list. If you don't implement this, the JWT remains valid until expiration.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: For session tokens, I simply delete the session from Redis — instant invalidation. For JWTs, I maintain a blocklist in Redis with a TTL matching the token's expiration. On logout, the access token JTI (JWT ID) is added to the blocklist. For refresh tokens, I use token family tracking — if any token in a family is used after rotation, the entire family is revoked. On password change, I increment a session_version in the user record, and all tokens with older versions are rejected. This gives me instant revocation across all token types."
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "key-2026-q1",
+      "n": "u1W3b...[base64-encoded public modulus]...",
+      "e": "AQAB"
+    },
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "alg": "RS256",
+      "kid": "key-2026-q2",
+      "n": "v8K2x...[base64-encoded new public modulus]...",
+      "e": "AQAB"
+    }
+  ]
+}
+```
 
-## 8. Active recall test
+Every issued JWT includes a Key ID (`kid`) in its header: `{"alg": "RS256", "typ": "JWT", "kid": "key-2026-q1"}`.
 
-1. **Why use Argon2id instead of SHA-256 for passwords?**
-   - **Explanation:** Argon2id is memory-hard and computationally expensive (~200ms per hash), making GPU brute-force attacks impractical. SHA-256 is fast and can be computed billions of times per second on GPUs, making it unsuitable for password storage.
+Here is the zero-downtime key rotation lifecycle:
 
-2. **What is the main trade-off between JWTs and session tokens?**
-   - **Explanation:** JWTs are stateless (no database lookup) but can't be revoked until expiration. Session tokens can be revoked instantly but require shared session storage (Redis). Short-lived JWTs with refresh tokens combine both benefits.
+1. **Phase 1 (Preparation):** Generate new key pair `key-2026-q2`. Publish its public key to `jwks.json` alongside `key-2026-q1`.
+2. **Phase 2 (Propagation):** API Gateways and microservices poll `jwks.json` periodically (or fetch on unknown `kid` with in-memory caching) and load the new public key into memory.
+3. **Phase 3 (Active Signing Switch):** Update the Auth Service configuration to sign all newly issued access tokens with the private key of `key-2026-q2`.
+4. **Phase 4 (Coexistence):** Existing active tokens signed with `key-2026-q1` continue to verify successfully at all gateways because `key-2026-q1` is still present in the cached JWKS public set.
+5. **Phase 5 (Retirement):** After the maximum access token TTL has elapsed (15 minutes), no valid tokens signed with `key-2026-q1` remain in circulation. Safely remove `key-2026-q1` from `jwks.json` and destroy its private key.
 
-3. **How does refresh token rotation detect token theft?**
-   - **Explanation:** Each refresh issues a new refresh token and invalidates the old one. If both the old and new refresh tokens are used (the legitimate user has the new one, the attacker has the old), the system detects the conflict and revokes all tokens for that user.
+## 6. Failure Modes and Resilience
 
-4. **Why invalidate all sessions after a password reset?**
-   - **Explanation:** If an attacker had access to the account, they still have valid session tokens after the password change. Revoking all sessions ensures the attacker is logged out immediately, even if they don't know the password changed.
+When designing an authentication system, you must plan for what happens when core infrastructure dependencies degrade or fail entirely.
 
-5. **How do you prevent user enumeration during login?**
-   - **Explanation:** Always return the same generic message ("If an account exists with that email, we've sent a reset link") whether the email exists or not. Use constant-time comparison for password hashing to prevent timing attacks.
+- **Failure Mode 1: Redis Cluster Outage or Network Partition**
+  - *What Happens:* The system cannot write new session states, refresh tokens cannot be rotated, and distributed rate limiting counters become inaccessible.
+  - *System Resilience & Recovery:* The hot-path access token verification at the API Gateway continues working at 100% capacity because JWT cryptographic signature verification is purely stateless and relies only on in-memory public keys. Existing logged-in users continue accessing protected resources seamlessly until their 15-minute access tokens expire. For refresh and login routes, the Auth Service falls back to an emergency read-replica database check or temporarily serves a graceful HTTP 503 while the Redis cluster executes automatic failover via Redis Sentinel / Cluster replication.
+- **Failure Mode 2: CPU Exhaustion Attack via Password Hashing Floods**
+  - *What Happens:* Because Argon2id consumes ~200ms of CPU compute per hash, an attacker bypassing edge filters could exhaust all available CPU cores across the Auth Service cluster, causing cascading timeouts for legitimate logins.
+  - *System Resilience & Recovery:* The Auth Service runs inside an isolated container cluster equipped with strict CPU resource limits and autoscaling policies. Password hashing tasks are executed on a dedicated thread worker pool decoupled from the HTTP connection event loop. The edge API Gateway implements aggressive IP rate limiting and introduces mandatory Proof-of-Work / Cloudflare Turnstile challenges the moment CPU utilization exceeds 70%.
+- **Failure Mode 3: Clock Drift Across Distributed Microservices**
+  - *What Happens:* If the Auth Service clock drifts 30 seconds ahead of an API Gateway or downstream service, newly minted JWTs will be rejected immediately by the gateway with `Token not yet valid (nbf)` or will expire 30 seconds earlier than expected.
+  - *System Resilience & Recovery:* All physical and virtual host instances synchronize continuously against an authoritative Network Time Protocol (NTP) pool (such as Amazon Time Sync Service). Additionally, all JWT verification libraries across the company are configured with a mandatory 60-second clock skew tolerance leeway (`clockTolerance: 60`).
+- **Failure Mode 4: Primary Relational Database Outage During Login Spikes**
+  - *What Happens:* Users cannot register, update passwords, or complete initial credential logins.
+  - *System Resilience & Recovery:* The Auth Service routes read-only credential lookups to PostgreSQL Read Replicas across multiple Availability Zones. Connection pooling is managed by PgBouncer to prevent database thread starvation. User login events and security audits are pushed to a fault-tolerant Kafka buffer so that downstream analytical and notification workers continue processing without locking database rows.
 
-6. **What is TOTP and how does it work?**
-   - **Explanation:** Time-based One-Time Password (RFC 6238). A shared secret is seeded in both the server and authenticator app. Every 30 seconds, both compute HMAC-SHA1(secret, current_time) and extract a 6-digit code. The server validates with a ±1 time window for clock drift.
+## 7. What Makes a Great Answer vs an Average One
 
-7. **How do you invalidate a JWT before its expiration?**
-   - **Explanation:** Maintain a blocklist in Redis keyed by the JWT's JTI (JWT ID) with a TTL matching the token's expiration. On each request, check if the token's JTI is in the blocklist. Alternatively, use a session_version field in the user record and reject tokens with older versions.
+In a senior-level system design interview for an authentication platform, interviewers listen for the difference between textbook memorization and battle-tested production engineering.
 
-## 9. Mistakes / traps
+- **Average Candidates:** Suggest storing JWTs in browser `localStorage` with a 7-day expiration so they "don't need a database."
+- **Great Candidates:** Point out immediately that storing tokens in `localStorage` creates severe XSS vulnerabilities, and that 7-day stateless JWTs make instant session revocation impossible. They recommend short-lived (15-minute) JWTs verified statelessly at the edge, paired with opaque, rotating refresh tokens stored in `HttpOnly`, `Secure`, `SameSite` cookies with replay attack detection.
+- **Average Candidates:** Propose using SHA-256 or standard MD5 to hash passwords "because it's encrypted."
+- **Great Candidates:** Explain that hashing is not encryption (it is a one-way mathematical function), and that fast algorithms like SHA-256 are disastrous for password storage because GPUs can compute billions of guesses per second. They advocate for memory-hard algorithms like Argon2id (or bcrypt with cost factor 12+), complete with unique per-user salts and an application pepper stored in a dedicated Key Management Service (KMS).
+- **Average Candidates:** Treat OAuth2 and OpenID Connect as simple third-party button widgets.
+- **Great Candidates:** Explain the exact cryptographic handshake of the OAuth 2.0 Authorization Code Flow with PKCE, detailing why the Implicit Flow was deprecated and how the authorization code is securely exchanged for an identity token (`id_token`) and access token on the backend server.
+- **Average Candidates:** Only design the happy path where a user enters the right password.
+- **Great Candidates:** Spend substantial time designing the defensive posture: constant-time password comparisons to stop timing attacks, distributed rate limiting with sliding logs in Redis to defeat credential stuffing botnets, k-Anonymity password breach screening, and zero-downtime asymmetric key rotation using JWKS.
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+## 8. 🧠 The Memory Hook
 
-## 10. Compare with related concepts
-
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
-
-## 11. Summary from memory
-
-Explain Design an authentication system in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
-
-## 12. Spaced revision prompts
-
-- Day 1: Define Design an authentication system in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**The Passport and the Border Registry**: An access token is like a **Passport**—stamped with your identity and cryptographically signed by the government so any border guard (microservice) can verify it in five milliseconds without calling capital headquarters. A refresh token is like your **Master Registry File at the Embassy**—kept under lock and key, checked only when your passport expires, and shredded immediately along with all your travel privileges the moment an imposter attempts to present a recycled copy.
+*Short-lived stateless keys for the high-speed hot path; stateful rotating secrets in secure cookies for the lifecycle.*
