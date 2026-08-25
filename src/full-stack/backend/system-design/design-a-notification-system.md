@@ -1,129 +1,326 @@
-# Design a notification system
+# Design a Notification System
 
-## Detailed explanation
+## 1. Understand the Problem First — Clarify Before Designing
 
-Design a notification system is a backend system design exercise that checks API design, data modeling, scaling, reliability, and operational thinking. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Imagine a flash sale campaign triggers 50 million promotional marketing emails at 10:00 AM on Black Friday. If your notification system uses a single shared queue, that massive marketing burst creates an enormous backlog. Five minutes later, a customer attempts to sign in from a new device and requests a two-factor authentication (OTP) code. That critical OTP gets stuck behind 40 million promotional flyers in the queue. The SMS arrives 45 minutes later—long after the login session has expired and the customer has abandoned their purchase.
 
-## 1. One-line mental model
+Alternatively, consider what happens when a downstream vendor like Twilio or SendGrid suffers a 15-minute partial outage. Without strict idempotency keys and circuit breaking, uncoordinated worker retries flood the failing provider, duplicate millions of push notifications to users' phones in the middle of the night, and generate tens of thousands of dollars in wasted SMS fees.
 
-Design data flow, APIs, storage, scaling, failure handling, and observability together.
+Before drawing architectural boxes on a whiteboard, clarify the exact functional and scale requirements:
 
-## 2. Problem it solves
+**Functional Requirements to Clarify:**
+- **Supported Channels:** Mobile Push (iOS APNs, Android FCM), SMS (Twilio, AWS SNS), Email (SendGrid, AWS SES), and In-App real-time alerts (WebSockets/SSE) backed by a persistent notification center inbox.
+- **User Preferences & Compliance:** Can users opt out of specific channels or categories (e.g., mute marketing but keep security alerts)? Do we enforce quiet hours (e.g., no non-critical alerts between 10:00 PM and 8:00 AM in the user's local timezone)?
+- **Notification Aggregation (Smart Collapsing):** If 50 people like a user's post in 5 minutes, do we send 50 individual push notifications, or aggregate them into "Alice and 49 others liked your post"?
+- **Multi-Device Support:** Can a single user have multiple registered devices (iPhone, iPad, Android phone, web browser), and how do we handle invalid/uninstalled device tokens?
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+**Scale & Latency SLAs:**
+- **Scale:** 10 million Daily Active Users (DAU), 100 million total notifications per day (~1,200/sec average, with marketing bursts peaking at 35,000–50,000/sec).
+- **Latency SLAs:**
+  - *High-Priority (Transactional, OTP, Security Alerts, Payment Confirmations):* Under 2 seconds p99 delivery.
+  - *Low-Priority (Marketing blasts, weekly digests, recommendations):* Minutes to hours is acceptable.
+- **Delivery Guarantee:** At-least-once delivery to external gateways, paired with end-to-end deduplication to ensure an effective exactly-once user experience. Zero message loss for transactional notifications.
 
-## 3. Core idea
+---
 
-- Clarify requirements and scale.
-- Define APIs and data model.
-- Choose storage, cache, queues, and workers.
-- Plan consistency, failure handling, and security.
-- Add observability and rollout strategy.
+## 2. The Core Insight — The Decision Everything Else Flows From
 
-## 4. Visual / analogy
+The foundational insight of a distributed notification platform is that **notifications are not a single pipeline; they are an asynchronous, multi-priority routing graph decoupled from upstream business services.**
+
+Upstream services (Auth, Checkout, Social, Billing) must never call third-party notification vendors synchronously, and they must never share a single message queue. An upstream service simply emits a standardized notification request (`POST /v1/notifications/send` or an internal Kafka domain event) and receives a `202 Accepted` response in under 10 milliseconds.
+
+Everything that follows—user preference resolution, quiet-hour calculations, multi-device fan-out, template compilation, localized rendering, rate limiting, deduplication, priority queue routing, provider failover, and delivery tracking—executes asynchronously across isolated, independently scaled worker pools.
+
+If a marketing blast fires 20 million messages or SendGrid experiences an outage, the high-priority OTP pipeline continues processing at sub-second latency with zero queue contention.
+
+---
+
+## 3. High-Level Architecture — Components and Why Each Exists
 
 ```txt
-Clients -> API -> services -> database/cache/queue -> observability
+[ Upstream Services ] (Auth, Payments, Social, Marketing)
+         │
+         ▼  (gRPC / HTTP REST API with Idempotency Key)
+[ Notification Ingestion API Gateway ]
+         │ ── Token Bucket Rate Limiting (Redis)
+         │ ── Atomic Idempotency Check (Redis SETNX)
+         │ ── Request Validation & Auth
+         ▼
+[ Notification Dispatcher & Rule Engine ]
+         ├── Lookup [ User Preferences & Quiet Hours (PostgreSQL / Redis Cache) ]
+         ├── Lookup [ Active Device Tokens (DynamoDB / PostgreSQL) ]
+         ├── Lookup [ Localized Template Engine (S3 / In-Memory Cache) ]
+         ▼
+[ Partitioned Priority Message Queues (Kafka / AWS SQS) ]
+  ├── [ High-Priority Queue ]    (OTP, Security, Password Reset, Payment)
+  ├── [ Medium-Priority Queue ]  (Direct Messages, Mentions, Order Tracking)
+  └── [ Low-Priority Queue ]     (Marketing Blasts, Newsletter, Weekly Digest)
+         │
+         ▼
+[ Channel Worker Fleets (Independent Auto-scaling Pools) ]
+  ├── [ Push Workers ]   ──► APNs (Apple) / FCM (Google)
+  ├── [ SMS Workers ]    ──► Twilio / AWS SNS (with Circuit Breaker & Failover)
+  ├── [ Email Workers ]  ──► SendGrid / AWS SES / Postmark
+  └── [ In-App Workers ] ──► Redis Pub/Sub ──► WebSocket Gateway Fleet ──► Active Client Apps
+         │
+         ▼
+[ Tracking, Observability & Resilience ]
+  ├── [ Delivery Status & Inbox DB (DynamoDB / PostgreSQL) ]
+  ├── [ Analytics & Audit Log (ClickHouse) ]
+  └── [ Dead-Letter Queue (DLQ) & Retry Worker (Exponential Backoff + Jitter) ]
 ```
 
-## 5. Minimal example
+**How Data Flows End-to-End:**
+
+1. **Notification Ingestion API Gateway:** Upstream services call `POST /v1/notifications/send` with a unique `idempotency_key`, target `user_id`, notification `type`, `priority`, and dynamic `payload_data`. The gateway validates the request, runs a fast Redis idempotency check, writes an initial tracking record, and immediately returns `202 Accepted` with a `notification_id`.
+2. **Notification Dispatcher & Rule Engine:**
+   - Checks the **User Preference Matrix** to confirm whether the user has enabled this channel/category.
+   - Checks the **Quiet Hours Engine** against the recipient's local timezone. If it is currently quiet hours and the notification is not marked `HIGH_PRIORITY`, the job is scheduled for future delivery via a delayed queue.
+   - Applies **Smart Collapsing / Aggregation** if multiple related events arrive within a debounce window.
+   - Resolves active device tokens for the user and renders localized templates with dynamic payload parameters.
+3. **Partitioned Priority Message Queues:** The dispatcher routes compiled notification tasks into physically isolated queues based on priority (`High`, `Medium`, `Low`). High-priority queues have strict queue-depth alarms and dedicated consumer pools that are never touched by bulk marketing traffic.
+4. **Channel-Specific Worker Fleets:** Stateless worker pools consume from their designated channel queues. Each worker formats the vendor-specific payload (e.g., APNs HTTP/2 headers, SendGrid JSON body), applies client-side circuit breakers, manages rate-limiting against provider quotas, and executes the external network call.
+5. **In-App Real-Time Gateway:** For in-app notifications, worker nodes write the notification to the user's persistent inbox table and publish a lightweight event to a Redis Pub/Sub backplane. Horizontally scaled WebSocket servers listen to the user's channel and push the badge/toast directly to active mobile/web sessions.
+6. **Delivery Tracker & Dead-Letter Queue (DLQ):** Downstream vendors deliver asynchronous delivery receipts via webhooks. Tracking workers update notification states (`QUEUED` -> `SENT` -> `DELIVERED` -> `READ` or `FAILED`). Messages that fail repeatedly due to transient errors enter an exponential backoff retry loop; unrecoverable poison pills are routed to a Dead-Letter Queue for alerting and manual triage.
+
+---
+
+## 4. Key Technical Decisions — With Real Tradeoffs
+
+**1. Queue Architecture: Physically Segregated Priority Queues vs. Single Shared Broker**
+- *Choice:* Partitioned message queues strictly segregated by SLA tier (`High`, `Medium`, `Low`) with separate worker autoscaling policies.
+- *Alternatives Considered:* A single shared Kafka topic using priority headers or single RabbitMQ queue with message priority integers.
+- *Why:* In a single queue with priority levels, high-volume bursts of millions of low-priority messages still cause head-of-line broker ingestion pressure, partition lag, and resource contention. Physical queue isolation guarantees that even if the low-priority queue has a 20-million-message backlog, high-priority OTPs flow through completely unimpeded.
+- *Tradeoff:* Requires managing separate queue topics, monitoring distinct lag metrics, and maintaining independent worker clusters.
+
+**2. Deduplication Strategy: Two-Tier In-Memory Lock + Storage Constraint**
+- *Choice:* Fast atomic deduplication in Redis (`SET key value NX EX <ttl>`) at the ingestion layer, backed by a unique composite database index `(user_id, idempotency_key, time_window)`.
+- *Alternatives Considered:* Performing a SQL `SELECT` before every `INSERT` or relying solely on client-side debouncing.
+- *Why:* Duplicate requests often arrive within milliseconds of each other (e.g., a user double-clicking a "Send OTP" button or an upstream network retry). Redis `SETNX` intercepts duplicate calls in under 1 millisecond without locking relational database rows.
+- *Tradeoff:* Consumes Redis memory for storing key hashes over a rolling 24-hour TTL window. If Redis experiences a node restart, the underlying database unique constraint acts as the safety net.
+
+**3. Storage Engine: Polyglot Persistence (PostgreSQL + DynamoDB + ClickHouse)**
+- *Choice:* PostgreSQL for relational configuration (user preferences, notification templates, channel rules); DynamoDB for user notification inbox feeds; ClickHouse for time-series delivery analytics and audit logs.
+- *Alternatives Considered:* Storing everything in a single PostgreSQL database or using MongoDB for all data.
+- *Why:* User preferences are relational, read-heavy, and require ACID transactional consistency during updates. In-app notification inboxes, however, are high-throughput time-series feeds partitioned cleanly by `user_id`. Delivery audit logs generate hundreds of millions of append-only rows daily, which would rapidly bloat relational tables and degrade indexing performance.
+- *Tradeoff:* Managing three distinct database systems increases operational overhead and infrastructure complexity, but prevents analytics reporting from degrading production user preference lookups.
+
+**4. In-App Notification Delivery: WebSockets with Redis Pub/Sub vs. Client HTTP Polling**
+- *Choice:* Persistent WebSockets managed by stateful gateway servers backed by Redis Pub/Sub for real-time notification push, combined with cursor-based REST API pagination for inbox history.
+- *Alternatives Considered:* Client short-polling (e.g., polling every 5 seconds) or long-polling.
+- *Why:* At 10 million DAU, client polling generates tens of thousands of wasted HTTP requests every second, placing unnecessary load on databases and API gateways. WebSockets deliver instant notifications with zero client polling overhead.
+- *Tradeoff:* Maintaining millions of concurrent idle WebSocket connections requires careful connection management, heartbeat ping/pongs, and graceful connection draining during server deployments.
+
+---
+
+## 5. Deep Dives — The Parts That Actually Matter
+
+### Deep Dive 1: Deduplication and Idempotency at Scale
+
+Duplicate notifications destroy user trust and cost money (especially on SMS). Deduplication must happen at two distinct points: at the **Ingestion Gateway** and at the **Channel Worker**.
+
+```typescript
+import { Redis } from 'ioredis';
+import crypto from 'crypto';
+
+interface NotificationRequest {
+  userId: string;
+  eventType: string;
+  entityId: string;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+  payload: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
+class IngestionDeduplicator {
+  constructor(private redis: Redis) {}
+
+  // Generate a deterministic idempotency hash if the client did not provide one
+  private generateDeduplicationKey(req: NotificationRequest): string {
+    if (req.idempotencyKey) {
+      return `idemp:${req.userId}:${req.idempotencyKey}`;
+    }
+    // Time-bucketed hash (e.g. 60-second window for rapid duplicate actions)
+    const timeBucket = Math.floor(Date.now() / 60000);
+    const rawSignature = `${req.userId}:${req.eventType}:${req.entityId}:${timeBucket}`;
+    const hash = crypto.createHash('sha256').update(rawSignature).digest('hex');
+    return `idemp:${req.userId}:${hash}`;
+  }
+
+  async shouldProcessNotification(req: NotificationRequest): Promise<{ shouldProcess: boolean; trackingId: string }> {
+    const key = this.generateDeduplicationKey(req);
+    const trackingId = crypto.randomUUID();
+
+    // Atomic SET if Not Exists with a 24-hour expiration (86400 seconds)
+    const acquired = await this.redis.set(key, trackingId, 'EX', 86400, 'NX');
+
+    if (!acquired) {
+      // Duplicate detected! Return existing tracking ID to caller
+      const existingTrackingId = await this.redis.get(key);
+      return { shouldProcess: false, trackingId: existingTrackingId || 'DUPLICATE' };
+    }
+
+    return { shouldProcess: true, trackingId };
+  }
+}
+```
+
+At the **Channel Worker level**, before calling an external vendor (like Twilio or Stripe), the worker passes the `idempotencyKey` directly in the vendor's API request header. If the worker crashes immediately after sending the network call but before acknowledging the message queue, the subsequent retry will send the identical idempotency key to Twilio, preventing double-billing and duplicate SMS transmission.
+
+### Deep Dive 2: Preference Matrices, Quiet Hours & Smart Collapsing
+
+A notification cannot be sent simply because an event occurred. It must pass through a multi-layer evaluation pipeline:
 
 ```txt
-Input  -> validate
-Work   -> apply backend system design rule
-Output -> success or structured error
+Incoming Event
+      │
+      ▼
+[ 1. User Preference Check ] ── Opted out of channel/category? ──► DROP
+      │ (Allowed)
+      ▼
+[ 2. Critical Priority Check ] ── Is OTP / Security alert? ─────► SEND IMMEDIATELY
+      │ (Non-Critical)
+      ▼
+[ 3. Quiet Hours Check ] ────── Is 10 PM - 8 AM in user TZ? ───► DELAY QUEUE (Schedule for 8:00 AM)
+      │ (Within Active Hours)
+      ▼
+[ 4. Smart Aggregation Check ] ─ Multiple likes/comments? ─────► DEBOUNCE & COLLAPSE
+      │ (Ready)
+      ▼
+[ Enqueue to Channel Worker ]
 ```
 
-## 6. Real-world example
+**1. The Preference Matrix:**
+Stored in PostgreSQL with an in-memory Redis cache layer. The schema maps `user_id × notification_category × channel` with inheritance:
+- Global Switch: Master mute on/off.
+- Category Level: `MARKETING = OFF`, `TRANSACTIONAL = ON`, `SOCIAL = ON`.
+- Channel Level: `SMS = OFF`, `PUSH = ON`, `EMAIL = ON`.
 
-In a production full-stack app, design a notification system affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+**2. Timezone-Aware Quiet Hours:**
+For non-critical notifications, the dispatcher looks up the recipient's timezone offset (e.g., `America/New_York` or `UTC+5:30`). If the current local time falls between 22:00 and 08:00:
+- The system calculates the target Unix timestamp for 08:05 AM in the user's local timezone.
+- The notification job is inserted into a Redis Sorted Set (`ZADD scheduled_notifications <target_timestamp> <payload_json>`) or an AWS SQS Delayed Message.
+- A background scheduler periodically queries `ZRANGEBYSCORE scheduled_notifications 0 <current_timestamp>` and releases matured jobs into the active queue.
 
-## 7. Common interview questions
+**3. Smart Collapsing (Notification Debouncing):**
+When a high-frequency social event occurs (e.g., 20 users liking a photo within 3 minutes), sending 20 push notifications causes user fatigue.
+- When like event #1 arrives: Enqueue an aggregation job with a 5-minute delay and store `post:123:likes = [user_1]` in Redis.
+- When like events #2 through #20 arrive: Simply append `post:123:likes` in Redis (`RPUSH`).
+- When the 5-minute timer expires: The worker reads the list length, formats a single consolidated message ("Alice, Bob, and 18 others liked your post"), and dispatches 1 push notification.
 
-#### How do you design a notification system that supports multiple channels?
-- **The Engine Mechanism (Why it behaves this way):** The system uses a channel-agnostic architecture: a notification event enters a queue, a dispatcher routes it to the appropriate channel handler (push, email, SMS, in-app, webhook), and each handler formats and delivers the message. The data model has: notifications (id, user_id, type, channel, status, payload, created_at), notification_templates (id, channel, type, template_body), and user_preferences (user_id, channel, type, enabled). The dispatcher reads user preferences to determine which channels to use, renders the template with payload data, and sends via the channel-specific provider (FCM for push, SendGrid for email, Twilio for SMS).
-- **The Unforgettable Mental Model:** The **Post Office Sorting Facility**. Mail (notification events) arrives and is sorted by delivery method (channel). Each sorting line (handler) has its own delivery vehicle (provider) — trucks for packages (email), bikes for letters (SMS), drones for urgent (push). The recipient's preference card (user_preferences) determines which delivery methods they accept.
-- **The Trap:** Hardcoding channel logic in the notification creation path. This makes adding new channels (e.g., Slack, WhatsApp) require code changes everywhere. Use a plugin architecture where each channel is a separate handler registered with the dispatcher.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use an event-driven, channel-agnostic architecture. Notifications enter as events with a type and payload. A dispatcher checks user preferences to determine which channels to use, renders the appropriate template for each channel, and routes to channel-specific handlers (FCM for push, SendGrid for email, Twilio for SMS). Each handler is a pluggable module, so adding a new channel like WhatsApp only requires registering a new handler. The data model separates notification events, templates, and user preferences for clean separation of concerns."
+### Deep Dive 3: Multi-Provider Failover and Circuit Breaking
 
-#### How do you handle notification delivery failures and retries?
-- **The Engine Mechanism (Why it behaves this way):** Delivery failures are categorized as transient (network timeout, provider rate limit) or permanent (invalid phone number, unsubscribed email). Transient failures are retried with exponential backoff (1s, 5s, 30s, 2m, 10m) and jitter to avoid thundering herd. Permanent failures are marked as failed and not retried. A dead-letter queue holds notifications that exceed max retries (typically 3-5). The notification status is updated in the database (pending → sending → delivered/failed). Idempotency keys prevent duplicate deliveries when retries overlap with provider responses.
-- **The Unforgettable Mental Model:** The **Persistent Delivery Driver**. First attempt: nobody home (timeout). Driver comes back in 5 minutes. Still nobody — comes back in 30 minutes. After 5 attempts, the driver marks it as undeliverable and returns to the depot (dead-letter queue). If the address is wrong (permanent failure), the driver knows immediately and doesn't bother retrying.
-- **The Trap:** Retrying permanent failures. An invalid phone number will never become valid. Retrying wastes resources and can get your sender ID blocked by providers. Always classify errors and only retry transient ones.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd classify delivery errors as transient or permanent. Transient errors (timeouts, 5xx from providers, rate limits) are retried with exponential backoff and jitter — up to 5 attempts. Permanent errors (invalid recipient, unsubscribed, blocked) are marked as failed immediately. Failed notifications after max retries go to a dead-letter queue for investigation. Each notification has an idempotency key to prevent duplicates when retries overlap with delayed provider responses. Status transitions (pending → sending → delivered/failed) are tracked in the database."
+Third-party notification vendors experience downtime, elevated latency, and rate-limiting 429s. If a worker fleet makes blocking HTTP calls to a degraded provider, worker threads exhaust their connection pools, causing the entire notification service to stall.
 
-#### How do you implement user notification preferences?
-- **The Engine Mechanism (Why it behaves this way):** User preferences are stored as a matrix: user_id × notification_type × channel → enabled/disabled. For example, user 123 wants "order_shipped" via email and push but not SMS. The dispatcher checks this matrix before sending. Preferences can have granularity levels: global (all notifications off), type-level (no marketing notifications), channel-level (no SMS ever), and frequency-level (digest daily instead of instant). A notification preference service provides an API for users to manage their settings. Default preferences are applied on user registration.
-- **The Unforgettable Mental Model:** The **TV Remote Control**. You can mute everything (global off), mute just commercials (type-level), turn off the sound but keep the picture (channel-level), or set a schedule (frequency-level — only notifications between 9am-9pm). Each user has their own remote.
-- **The Trap:** Not having default preferences. New users receive all notifications by default, which can be overwhelming and lead to churn. Set sensible defaults (critical notifications on, marketing off) and let users opt in.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd store preferences as a user_id × type × channel matrix with four granularity levels: global, type, channel, and frequency. The dispatcher checks preferences before every send. New users get sensible defaults — critical notifications (security alerts, order confirmations) are on by default, marketing is off. Users can manage preferences through a settings API. For frequency control, I'd implement a digest system that batches non-urgent notifications into daily or weekly summaries instead of sending each one instantly."
+```typescript
+enum CircuitState {
+  CLOSED,   // Normal operation: traffic flows to Primary Provider
+  OPEN,     // Provider degraded: traffic automatically diverted to Secondary Provider
+  HALF_OPEN // Testing recovery: sending small canary sample to Primary
+}
 
-#### How do you build real-time in-app notifications?
-- **The Engine Mechanism (Why it behaves this way):** Real-time in-app notifications use WebSockets or Server-Sent Events (SSE) to push notifications to connected clients. When a notification is created, it's published to a WebSocket channel (user-specific room). Connected clients receive it instantly and display a badge/toast. The server maintains a connection registry mapping user IDs to WebSocket connections. For horizontal scaling, use a pub/sub backend (Redis Pub/Sub, Kafka) so notifications published to one server instance are forwarded to all instances. Offline notifications are stored in the database and synced when the client reconnects. Unread count is maintained with a Redis counter.
-- **The Unforgettable Mental Model:** The **Pager System**. When someone pages you (notification), your pager beeps instantly (WebSocket push). If your pager was off (offline), you check the message log when you turn it back on (sync on reconnect). The front desk (server) knows which room you're in (connection registry) and can page you there.
-- **The Trap:** Storing the entire notification payload in the WebSocket message for offline users. If a user was offline for a week, they'd receive thousands of messages on reconnect. Instead, store notifications in the database and let the client fetch unread notifications on reconnect.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use WebSockets for real-time delivery with Redis Pub/Sub for horizontal scaling. Each user joins a WebSocket room keyed by their user ID. When a notification is created, it's published to the user's room via Redis Pub/Sub, and all server instances forward it to connected clients. For offline users, notifications are stored in the database. On reconnect, the client fetches unread notifications via a REST API. I'd maintain an unread count in Redis for fast badge updates. SSE is a simpler alternative if bidirectional communication isn't needed."
+class ProviderCircuitBreaker {
+  private state: CircuitState = CircuitState.CLOSED;
+  private failureCount = 0;
+  private readonly failureThreshold = 10;
+  private readonly resetTimeoutMs = 30000;
+  private lastStateChange = Date.now();
 
-#### How do you prevent notification spam and rate limit per user?
-- **The Engine Mechanism (Why it behaves this way):** Rate limiting is applied at multiple levels: (1) Per-user per-channel — max N notifications per hour via email, M per day via push; (2) Per-type — max N order updates per hour (consolidate into a single summary); (3) Global cooldown — minimum time between notifications of the same type to the same user; (4) Smart batching — group related notifications (e.g., "5 people liked your post" instead of 5 separate notifications). A rate limiter (token bucket or sliding window in Redis) tracks notification counts per user/channel/type. When the limit is exceeded, notifications are queued or dropped based on priority.
-- **The Unforgettable Mental Model:** The **Spam Filter + Mailbox Limit**. Your mailbox (user) has a capacity limit. If too many letters arrive (notifications), the post office (rate limiter) holds extras in a warehouse (queue) and delivers them in batches. Urgent letters (security alerts) bypass the limit. Duplicate letters are combined into one.
-- **The Trap:** Rate limiting without priority differentiation. A security alert ("your account was compromised") should never be rate-limited, while a marketing notification should be. Always classify notifications by priority and apply different rate limits.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement multi-level rate limiting using Redis token buckets. Each user has per-channel limits (e.g., 10 emails/hour, 50 push/day) and per-type limits (e.g., 5 order updates/hour). Critical notifications (security, payment failures) bypass rate limits entirely. For high-frequency events, I'd use smart batching — instead of sending 'X liked your post' 20 times, I'd wait 5 minutes and send '20 people liked your post.' When limits are exceeded, non-urgent notifications are queued for the next window or dropped based on priority."
+  constructor(
+    private primarySender: (msg: unknown) => Promise<void>,
+    private secondarySender: (msg: unknown) => Promise<void>
+  ) {}
 
-#### How do you design the notification data model?
-- **The Engine Mechanism (Why it behaves this way):** Core tables: notifications (id, user_id, type, channel, status, payload JSON, created_at, delivered_at, read_at), notification_templates (id, channel, type, subject_template, body_template, locale), user_preferences (user_id, type, channel, enabled, frequency), and notification_batches (id, user_id, type, status, count, first_notification_id, last_notification_id) for grouped notifications. The payload is stored as JSON to accommodate different notification types. Indexes on (user_id, status) for unread queries, (user_id, created_at) for notification history, and (type, channel) for analytics. Partition the notifications table by created_at for large-scale systems.
-- **The Unforgettable Mental Model:** The **Filing Cabinet**. Each drawer is a user. Inside, folders are notification types. Each document is a notification with its content (payload), delivery method stamp (channel), and status sticker (pending/delivered/read). The template book (notification_templates) has the standard forms for each type. The preference card (user_preferences) on top says which folders the user wants to receive.
-- **The Trap:** Storing rendered notification content instead of templates + payload. This wastes storage and makes it impossible to re-render notifications in different languages or with updated templates. Always store the template reference and payload separately.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The core table is notifications with id, user_id, type, channel, status, payload (JSON), and timestamps. I'd store templates separately so notifications can be re-rendered in different languages. User preferences control delivery. For high-volume systems, I'd partition the notifications table by month and use batch records for grouped notifications. Indexes on (user_id, status) support unread queries, and (user_id, created_at) supports the notification feed. The payload is JSON to accommodate varying notification structures."
+  async sendWithFailover(message: unknown): Promise<void> {
+    this.evaluateState();
 
-#### How do you monitor notification delivery health?
-- **The Engine Mechanism (Why it behaves this way):** Key metrics: delivery rate (delivered/sent), latency (time from creation to delivery), failure rate by channel and type, retry rate, dead-letter queue depth, user engagement (open rate, click-through rate), and preference opt-out rate. Dashboards show real-time delivery status, channel health (provider uptime, rate limit hits), and user impact (users not receiving notifications). Alerts fire on: delivery rate dropping below 95%, latency exceeding SLA, provider errors, and dead-letter queue growth. Per-provider metrics track FCM, SendGrid, Twilio health independently.
-- **The Unforgettable Mental Model:** The **Hospital Vital Signs Monitor**. Each notification channel has its own vital signs: heart rate (delivery rate), blood pressure (latency), temperature (error rate). If any vital sign goes abnormal, alarms sound. The doctor (on-call engineer) can see which patient (channel) is sick and diagnose the issue.
-- **The Trap:** Only tracking sent vs. delivered without tracking latency. A notification that arrives 2 hours late is effectively not delivered for time-sensitive use cases (OTP, security alerts). Always track delivery latency percentiles.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd track delivery rate, latency percentiles (p50/p95/p99), failure rate by channel and type, and dead-letter queue depth. Per-provider dashboards show FCM, SendGrid, and Twilio health independently. User engagement metrics (open rate, CTR) help identify content issues. Alerts fire when delivery rate drops below 95%, latency exceeds SLA thresholds, or the dead-letter queue grows beyond a threshold. I'd also track preference opt-out rates — a spike indicates notification spam."
+    if (this.state === CircuitState.OPEN) {
+      // Primary is down; route directly to secondary vendor (e.g., AWS SNS instead of Twilio)
+      return await this.secondarySender(message);
+    }
 
-## 8. Active recall test
+    try {
+      await this.primarySender(message);
+      if (this.state === CircuitState.HALF_OPEN) {
+        this.state = CircuitState.CLOSED;
+        this.failureCount = 0;
+      }
+    } catch (err) {
+      this.failureCount++;
+      if (this.failureCount >= this.failureThreshold) {
+        this.state = CircuitState.OPEN;
+        this.lastStateChange = Date.now();
+      }
+      // Fallback immediately on failure
+      await this.secondarySender(message);
+    }
+  }
 
-1. **What is the channel-agnostic notification architecture?**
-   - **Explanation:** Notifications enter as events with type and payload. A dispatcher checks user preferences, renders channel-specific templates, and routes to pluggable channel handlers (FCM, SendGrid, Twilio). Adding new channels requires only registering a new handler.
+  private evaluateState(): void {
+    if (this.state === CircuitState.OPEN && Date.now() - this.lastStateChange > this.resetTimeoutMs) {
+      this.state = CircuitState.HALF_OPEN;
+    }
+  }
+}
+```
 
-2. **How do you handle transient vs. permanent delivery failures?**
-   - **Explanation:** Transient failures (timeouts, rate limits) are retried with exponential backoff and jitter (up to 5 attempts). Permanent failures (invalid recipient, unsubscribed) are marked as failed immediately. Exhausted retries go to a dead-letter queue.
+### Deep Dive 4: Device Token Lifecycle & Invalidation
 
-3. **What are the four granularity levels for notification preferences?**
-   - **Explanation:** Global (all notifications off), type-level (no marketing), channel-level (no SMS), and frequency-level (digest daily instead of instant). Users can control notifications at each level independently.
+Users upgrade phones, uninstall apps, or revoke push permissions. When APNs or FCM attempts to deliver a push notification to an invalid token, they return specific status codes:
+- Apple APNs: HTTP `410 Gone` (Device token is no longer active for the topic) or HTTP `400 BadDeviceToken`.
+- Google FCM: `UNREGISTERED` or `INVALID_ARGUMENT`.
 
-4. **How do you deliver real-time in-app notifications at scale?**
-   - **Explanation:** WebSockets with Redis Pub/Sub for horizontal scaling. Each user joins a WebSocket room. Notifications are published to the user's room via Redis. Offline notifications are stored in the database and synced on reconnect.
+If the system continues sending push notifications to dead tokens, APNs and FCM will throttle your entire organization's API quota.
+- When a push worker receives a `410 Gone` or `UNREGISTERED` status, it immediately publishes a `TokenInvalidatedEvent(userId, deviceToken)`.
+- An asynchronous token cleanup consumer flags `is_active = false` or deletes the token record from the `user_devices` database table.
+- Future push dispatches for that user will bypass the dead device until the user logs in and registers a fresh APNs/FCM token.
 
-5. **How do you prevent notification spam?**
-   - **Explanation:** Multi-level rate limiting (per-user, per-channel, per-type), smart batching (combine related notifications), priority differentiation (critical notifications bypass limits), and minimum cooldown between same-type notifications.
+---
 
-6. **Why store templates and payloads separately instead of rendered content?**
-   - **Explanation:** Separating templates from payloads enables re-rendering in different languages, updating templates without changing stored notifications, and reducing storage. The payload is the data; the template is the presentation.
+## 6. Failure Modes and Resilience
 
-7. **What metrics are critical for monitoring notification health?**
-   - **Explanation:** Delivery rate, latency percentiles, failure rate by channel/type, dead-letter queue depth, user engagement (open rate, CTR), and preference opt-out rate. Track per-provider health independently.
+**1. Downstream 3rd-Party Provider Outage (e.g., SendGrid / Twilio Outage)**
+- *What Breaks:* Provider APIs return HTTP 500/503 or experience 10-second connection timeouts. Workers get stuck waiting for responses.
+- *User Impact:* SMS and emails fail to deliver or arrive significantly delayed.
+- *Resilience:* The client-side circuit breaker trips after 10 consecutive failures and automatically shifts traffic to a secondary vendor (e.g., Twilio -> AWS SNS; SendGrid -> AWS SES). Transient failures are requeued with exponential backoff and randomized jitter (`delay = min(max_delay, base * 2^attempt + random_jitter)`).
 
-## 9. Mistakes / traps
+**2. Head-of-Line Queue Blocking During Marketing Blasts**
+- *What Breaks:* A sudden broadcast of 30 million promotional push notifications fills the queue.
+- *User Impact:* Critical security alerts, password resets, and two-factor authentication codes get stuck at the back of the queue for hours.
+- *Resilience:* Strict physical isolation of queues. High-priority messages travel on dedicated message topics with independent compute pools. The high-priority queue depth is monitored independently; if lag exceeds 500 messages, alerts trigger immediately.
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+**3. Poison Pill Messages (Malformed Payloads / Unhandled Template Crashes)**
+- *What Breaks:* A notification payload contains invalid JSON or missing template variables that trigger an unhandled runtime exception in the worker. The worker crashes, restarts, re-reads the same message from the queue, and crashes again in an infinite loop.
+- *User Impact:* The entire consumer partition stalls, blocking valid messages behind the corrupted one.
+- *Resilience:* The message envelope carries a `retry_count` metadata header. If `retry_count >= 3`, the worker catches the error, wraps the message with the stack trace, routes it to a **Dead-Letter Queue (DLQ)**, and acknowledges the message on the primary queue to advance the partition offset.
 
-## 10. Compare with related concepts
+**4. Reconnection Storm on WebSocket Gateway Failure**
+- *What Breaks:* A WebSocket server hosting 200,000 active connections crashes. All 200,000 clients simultaneously attempt to reconnect to the remaining gateway fleet.
+- *User Impact:* The flood of simultaneous TLS handshakes, token authentications, and unread notification queries overwhelms the API gateways and databases (thundering herd).
+- *Resilience:* Mobile and web clients implement reconnect logic with **Exponential Backoff and Full Jitter**. Unread notification counts are cached as integer counters in Redis (`user:123:unread_count`), allowing clients to fetch badge counts in O(1) time without triggering heavy SQL queries upon reconnection.
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+**5. Consumer Crash After Provider Delivery (Duplicate Delivery Risk)**
+- *What Breaks:* A worker successfully triggers an SMS via Twilio, but crashes or suffers a network partition before it can acknowledge the message in Kafka/SQS. The broker redelivers the message to another worker.
+- *User Impact:* The user receives duplicate text messages and the company gets billed twice.
+- *Resilience:* Workers store a short-lived execution lock in Redis (`SET sent:notif_id 1 EX 86400 NX`) immediately before firing the vendor request. Furthermore, the vendor request includes a unique `Idempotency-Key` header so third-party gateways recognize and ignore the redundant request.
 
-## 11. Summary from memory
+---
 
-Explain Design a notification system in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+## 7. What Makes a Great Answer vs an Average One
 
-## 12. Spaced revision prompts
+| Evaluation Axis | Average Answer | Great Senior Answer |
+|---|---|---|
+| **Queue Architecture** | Draws a single generic queue connecting the API to workers; assumes priority is just an integer field. | Segregates queues physically into High, Medium, and Low priority tiers with dedicated worker autoscaling groups to prevent marketing blasts from blocking 2FA/OTPs. |
+| **Deduplication** | Mentions "we will deduplicate" without explaining where or how it is enforced. | Details a two-tier strategy: in-memory atomic Redis `SETNX` at the ingestion gateway, plus vendor-level idempotency keys to prevent duplicate billing during worker crash retries. |
+| **Provider Resilience** | Treats third-party APIs (APNs, Twilio, SendGrid) as 100% reliable black boxes. | Implements automated circuit breaking, multi-vendor failover (Twilio <-> AWS SNS, SendGrid <-> SES), exponential backoff with jitter, and dead-letter queues for poison pills. |
+| **User Experience & Compliance** | Treats all notifications as instant push events. | Incorporates user preference matrices (category x channel), timezone quiet hours with delayed queue rescheduling, and smart aggregation/collapsing for high-frequency social events. |
+| **Device & Token Management** | Assumes a user equals a phone number or single device. | Handles multi-device fan-out per user, listens to APNs/FCM feedback loops (`410 Gone`, `Unregistered`), and asynchronously prunes dead tokens to prevent provider quota throttling. |
+| **Storage Architecture** | Puts all notifications, logs, and preferences into a single SQL database. | Applies polyglot persistence: PostgreSQL for relational preferences and templates, DynamoDB for high-throughput inbox feeds, and ClickHouse for delivery analytics and audit logs. |
 
-- Day 1: Define Design a notification system in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+---
+
+## 8. 🧠 The Memory Hook
+
+**"Isolate by priority, deduplicate with keys, failover by circuit breaker."**
+
+Think of a notification system as an **Airport Priority Lane**: VIP passengers (critical 2FA OTPs and security alerts) move through an open, dedicated express lane with zero waiting, while tourist charter flights (promotional marketing blasts) board through the main terminal with strict luggage quotas. If a runway is blocked (third-party provider outage), air traffic control immediately diverts planes to an alternate airstrip (secondary backup vendor) without ever grounding the fleet.
