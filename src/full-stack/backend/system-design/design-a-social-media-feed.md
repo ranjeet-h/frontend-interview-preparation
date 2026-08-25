@@ -1,129 +1,249 @@
-# Design a social media feed
+# Design a Social Media Feed (Twitter / Instagram)
 
-## Detailed explanation
+## 1. Understand the Problem First — Clarify Before Designing
 
-Design a social media feed is a backend system design exercise that checks API design, data modeling, scaling, reliability, and operational thinking. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Imagine launching a social media application with a standard relational database. During internal testing with 100 accounts, everything runs smoothly. In production, a user following 1,200 active creators opens their app. The backend runs a relational query joining the `follows` table with the `posts` table across 80 million rows, sorts the results by creation timestamp, and takes 9.4 seconds to respond. Meanwhile, a global sports star with 110 million followers posts a victory photo. If your system naively iterates through every follower to write the post into their inbox, your message broker spikes to 110 million queued jobs in seconds, Redis CPU saturates at 100%, memory exhausts, and ordinary users stop seeing new posts for the next 40 minutes.
 
-## 1. One-line mental model
+Designing a social media feed requires structuring data and asynchronous pipelines so that generating a customized, fresh timeline takes milliseconds regardless of whether a user follows 5 people or 5,000, or whether an author has 10 followers or 100 million.
 
-Design data flow, APIs, storage, scaling, failure handling, and observability together.
+Before sketching architecture or choosing databases, clarify these essential dimensions with the interviewer:
 
-## 2. Problem it solves
+- **Feed Ordering & Logic:** Is this a reverse-chronological timeline (newest first, like early Twitter or Mastodon) or an algorithmic, ranked feed (personalized by engagement, relevance, and affinity, like Instagram, TikTok, or modern X)?
+- **Scale & Traffic Profiles:** What is the Daily Active User (DAU) count? For this design, let us assume **300 million DAU**. Social media systems are heavily read-skewed, typically between **100:1 and 500:1 read-to-write ratio**. If 300 million users check their feed 5 times a day, that generates **1.5 billion feed views per day (~17,500 queries per second average, ~35,000 peak read QPS)**. If 50 million users post once per day, that is **50 million posts per day (~600 writes per second average, ~2,000 peak write QPS)**.
+- **Latency & Availability Targets:** Read latency P99 must stay under **200 milliseconds** for the first page (top 20 posts). Write ingestion should return an acknowledgment to the author within **500 milliseconds**, with new posts appearing in follower feeds within **5 seconds**.
+- **Consistency vs Availability (CAP):** Availability and low latency strictly trump strong consistency. Eventual consistency is completely acceptable: if a follower sees a post 3 seconds later than another follower, user experience remains unaffected. Returning a 500 error or a blank screen is unacceptable.
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+## 2. The Core Insight — The Decision Everything Else Flows From
 
-## 3. Core idea
+The foundational architectural challenge of a social feed is the **Asymmetric Fan-Out Problem**: writes are cheap for ordinary users and disastrous for celebrities, whereas reads are fast if precomputed and painfully slow if generated dynamically across thousands of followees on every request.
 
-- Clarify requirements and scale.
-- Define APIs and data model.
-- Choose storage, cache, queues, and workers.
-- Plan consistency, failure handling, and security.
-- Add observability and rollout strategy.
+Two extreme strategies exist, and both fail when applied across the entire user base:
 
-## 4. Visual / analogy
+- **Pure Fan-Out on Write (Push Model):** When an author publishes a post, a background worker pushes that `post_id` directly into the precomputed timeline cache of every single follower. Reads become an instantaneous O(1) cache lookup. However, when an account with 80 million followers posts, the system must perform 80 million cache writes. This causes write amplification, message queue lag, and massive memory waste for inactive followers who may not open the app for months.
+- **Pure Fan-Out on Read (Pull Model):** When an author publishes, the system writes the post only to the author's own timeline. When a user requests their feed, the system looks up all accounts they follow, queries the latest posts from all those accounts, merges the lists in memory, sorts them, and returns the top 20. Writes are O(1), but reads become an expensive scatter-gather operation across hundreds of database shards, driving latency past several seconds for users with large follow graphs.
+
+The decision that anchors this entire system is the **Threshold-Based Hybrid Fan-Out Architecture**:
+
+- **Standard Users (< 25,000 followers):** Use **Fan-Out on Write**. When they post, their new post ID is immediately pushed into their active followers' Redis timeline caches.
+- **Celebrities & High-Follower Accounts (> 25,000 followers):** Use **Fan-Out on Read**. Their posts are written only to their personal post stream. They are never pushed to millions of follower caches. Instead, when a follower requests their feed, the feed service pulls the precomputed timeline from Redis, queries the recent posts of any followed celebrities, and merges them in memory at read time.
+- **Active vs Inactive User Filter:** Feed caches are maintained exclusively for **active users** (users who logged in within the past 7 days). Inactive users have no timeline in Redis; their feed is reconstructed on demand only when they open the app.
+
+## 3. High-Level Architecture — Components and Why Each Exists
+
+A production social feed separates the write path (post creation and fan-out distribution) from the read path (feed generation, merge, ranking, and hydration).
 
 ```txt
-Clients -> API -> services -> database/cache/queue -> observability
+[ WRITE PATH ]
+Client ──► API Gateway ──► Post Ingestion Service ──► Post Storage DB (Cassandra / Scylla)
+                                  │
+                       Emits PostCreatedEvent
+                                  ▼
+                            Apache Kafka
+                                  │
+                 ┌────────────────┴────────────────┐
+                 ▼                                 ▼
+      [Standard Creator Path]           [Celebrity Creator Path]
+         Fan-Out Workers                   Celebrity Post Stream
+                 │                                 │
+     Pushes post_id into active                    │ (Saved to author stream only)
+     follower Redis ZSET caches                    │
+                 │                                 │
+                 ▼                                 ▼
+         Redis Timeline Cache              Celebrity Timeline DB
+         (User Inbox ZSET)                 (Partitioned by Author)
+
+─────────────────────────────────────────────────────────────────────────────────
+
+[ READ PATH ]
+Client ──► CDN (Media/Static)
+   │
+   └──► API Gateway ──► Feed Aggregation Service
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+       Read Active User Inbox           Read Followed Celebrities
+       (Redis ZSET: Top IDs)            (Recent Post IDs from DB/Cache)
+               │                               │
+               └───────────────┬───────────────┘
+                               ▼
+                    In-Memory Merge & Dedupe
+                               ▼
+                    Ranking & Scoring Engine
+                               ▼
+                   Hydration Service (MGET)
+                   (Fetches text, author, media)
+                               ▼
+                   Client (JSON + Thumbnails)
 ```
 
-## 5. Minimal example
+Each component fulfills a dedicated responsibility:
+
+- **API Gateway & CDN:** Handles SSL termination, JWT authentication, rate limiting, and request routing. The CDN caches user avatars, image thumbnails, and static assets at edge locations close to users.
+- **Post Ingestion Service:** Validates post text and media signatures, writes the durable post record to the database, uploads raw media references to object storage, and emits an asynchronous event to the message broker.
+- **Apache Kafka (Event Broker):** Decouples post ingestion from the fan-out process. Kafka partitions events by `author_user_id` so that an author's posts are processed in strict chronological order while worker pools scale horizontally.
+- **Social Graph Service (Followers DB):** Maintains the directed follow relationships (`follower_id`, `followee_id`, `created_at`). Uses a distributed graph store or relational database with a read cache (Redis Set) to return follower lists in milliseconds.
+- **Fan-Out Workers:** Consumes `PostCreatedEvent`. Queries the Social Graph Service. If the author is under the follower threshold, workers fetch active follower IDs and insert the `post_id` into each follower's Redis Sorted Set. If over the threshold, workers skip fan-out.
+- **Redis Timeline Cache Cluster:** Stores a Sorted Set (`ZSET`) per active user. The member is the `post_id` and the score is the creation timestamp (or initial ranking score). Each set is capped to the most recent 800 items to bound memory usage.
+- **Feed Aggregation & Generation Service:** Coordinates the read path. It queries the user's Redis `ZSET`, looks up the user's followed celebrities, fetches recent celebrity post IDs, merges both streams, runs them through ranking filters, and coordinates hydration.
+- **Hydration Service & Post Cache:** Resolves the top 20 post IDs into full UI payloads (post text, author username, avatar URL, like count, comment count, and thumbnail URLs) via a single Redis `MGET` or primary database lookup.
+**End-to-End Request Walkthroughs:**
+
+**The Write Path (Creating a Post):**
+1. The user publishes a post via `POST /api/v1/posts`. The API Gateway authenticates the request and forwards it to the Post Ingestion Service.
+2. The service saves the post metadata and content to Post Storage DB (e.g., Cassandra / PostgreSQL), generates a unique 64-bit Snowflake ID, and returns HTTP 201 Created to the client with the created post object.
+3. Simultaneously, the service publishes a `PostCreatedEvent(post_id, author_id, timestamp, follower_count)` to Kafka.
+4. Fan-Out Workers consume the event. If `follower_count < 25,000`, the worker fetches the author's follower list from the Social Graph Service, filters for active users (last seen < 7 days), and dispatches batch pipeline commands (`ZADD` and `ZREMRANGEBYRANK`) to Redis timeline shards. If `follower_count >= 25,000`, the worker writes the post ID only to the author's public post list and terminates.
+
+**The Read Path (Loading the Feed):**
+1. The user requests their feed via `GET /api/v1/feed?cursor=1719283847291_984321&limit=20`.
+2. The Feed Aggregation Service queries Redis for the user's precomputed `ZSET` to retrieve the latest 100 post IDs below the cursor.
+3. Concurrently, the service checks the user's follow list for celebrity accounts. For each followed celebrity, it pulls their recent post IDs from a dedicated celebrity cache.
+4. The service merges the two lists, removes duplicates, and trims the candidate pool to ~100 items.
+5. The candidates pass through the Ranking & Diversity Filter, which computes final scores and selects the top 20 items.
+6. The Hydration Service fetches the full post entities and author summaries using a multi-key batch read (`MGET`) against the Post Cache.
+7. The API Gateway serializes and delivers the hydrated 20-post response with a `next_cursor` token to the client.
+
+## 4. Key Technical Decisions — With Real Tradeoffs
+
+Every major architectural choice in a high-scale feed involves deliberate tradeoffs between write complexity, read latency, memory footprint, and system resilience.
+
+**Decision 1 — Fan-Out Strategy: Hybrid Fan-Out over Pure Push or Pure Pull**
+
+- **Choice:** Threshold-based hybrid model. Accounts with fewer than 25,000 followers use Fan-Out on Write. Accounts with 25,000 or more followers use Fan-Out on Read.
+- **Alternatives Considered:** Pure Push (every author fans out to all followers) and Pure Pull (every feed request aggregates all followees live).
+- **Tradeoff Analysis:** Pure push offers fastest reads (O(1)) but collapses under celebrity posts (100M writes per post) and wastes terabytes of cache for dormant users. Pure pull eliminates fan-out write queues entirely, but forces every feed load to perform a distributed multi-shard scan and sort across hundreds of accounts, making sub-200ms P99 latencies impossible. The hybrid model maintains lightning-fast reads for 99.9% of user interactions while capping maximum write amplification per post to exactly 25,000 operations. The penalty is minor CPU overhead on the read path to merge celebrity arrays in memory.
+
+**Decision 2 — Timeline Cache Architecture: Redis Sorted Sets (`ZSET`) Storing IDs Only**
+
+- **Choice:** Redis Cluster storing timeline caches as `ZSET` data structures, containing only 64-bit integer `post_id`s scored by Unix timestamp in milliseconds.
+- **Alternatives Considered:** Storing complete serialized post JSON objects inside Redis Lists (`LPUSH` / `LRANGE`), or querying relational database indexes on every read.
+- **Tradeoff Analysis:** Storing complete JSON objects inside each follower's feed cache multiplies memory consumption by 50x–100x (a 1 KB post duplicated across 1,000 followers consumes 1 MB instead of 16 KB of raw IDs). Storing only IDs keeps memory per active user timeline under 10 KB (800 post IDs × 8 bytes + Redis overhead ≈ 8–10 KB). 100 million active users require less than 1 TB of total Redis RAM across the cluster. The tradeoff is a two-step read path: fetch IDs first, then hydrate post bodies via batch `MGET`. Because hydration reads against an in-memory post cache with high cache hit rates (>98%), the added latency is under 5ms.
+
+**Decision 3 — Pagination: Deterministic Cursor-Based over Offset-Based**
+
+- **Choice:** Cursor-based pagination where the cursor is an opaque base64-encoded token containing `(timestamp_ms, post_id)`.
+- **Alternatives Considered:** SQL-style `OFFSET` and `LIMIT` (e.g., `LIMIT 20 OFFSET 100`).
+- **Tradeoff Analysis:** Offset pagination suffers from two fatal flaws in dynamic feeds:
+  1. **Performance degradation:** As a user scrolls deeper (e.g., `OFFSET 10000`), the database or cache must scan and discard 10,000 records before returning 20, turning an O(1) query into an O(N) scan.
+  2. **Page drift (duplicate & skipped items):** If 5 new posts are published while a user is reading page 1, requesting page 2 with `OFFSET 20` shifts the window, causing the user to see the last 5 posts from page 1 a second time.
+  Cursor pagination uses `ZREVRANGEBYSCORE` or `WHERE (score, id) < (cursor_score, cursor_id) ORDER BY score DESC, id DESC LIMIT 20`. It delivers constant O(log N) lookup time regardless of scroll depth and remains immune to new item insertions.
+
+**Decision 4 — Asynchronous Ingestion: Apache Kafka over Synchronous Worker Calls**
+
+- **Choice:** Event-driven message broker (Apache Kafka) sitting between post ingestion and fan-out workers.
+- **Alternatives Considered:** Synchronous HTTP/gRPC calls from Post Ingestion Service to Fan-Out Workers, or direct database triggers.
+- **Tradeoff Analysis:** Synchronous fan-out couples the post creation API latency to downstream network health and follower graph sizes; a sudden burst of posts would exhaust API server threads and fail client requests. Kafka acts as an elastic buffer that absorbs traffic spikes without backpressure on the client. Partitions keyed by `author_user_id` guarantee that an individual creator's posts are processed strictly in sequence. The tradeoff is operational complexity in managing Kafka clusters and consumer group lag monitoring.
+
+## 5. Deep Dives — The Parts That Actually Matter
+
+**Deep Dive 1 — The Modern Ranking Pipeline: From Candidates to Renderable Feed**
+
+A production social feed rarely displays pure chronological order; it ranks content to maximize relevance, safety, and engagement. Ranking 10 million total posts in real time is computationally impossible, so modern feed architectures split ranking into a multi-stage funnel:
 
 ```txt
-Input  -> validate
-Work   -> apply backend system design rule
-Output -> success or structured error
+[ 10,000,000+ Total Posts in System ]
+                   │
+                   ▼  Stage 1: Candidate Generation (Retrieval)
+ [ 500 Candidates: 400 from Redis ZSET + 80 from Celebrities + 20 Explore ]
+                   │
+                   ▼  Stage 2: Feature Extraction & Scoring Model
+ [ 500 Scored Candidates: Point-in-time Affinity + Recency + Engagement ]
+                   │
+                   ▼  Stage 3: Business Logic, Diversity & Safety Filter
+ [ Top 20 Candidates: Deduplicated, Author-Spread, Muted-Filtered, Ads Injected ]
+                   │
+                   ▼  Stage 4: Batch Hydration
+ [ 20 Fully Formatted Post UI Objects Delivered to Client ]
 ```
 
-## 6. Real-world example
+- **Stage 1 — Candidate Generation (Retrieval):** The Feed Aggregator pulls candidate post IDs from three sources: the user's Redis `ZSET` (400 items), followed celebrity timelines (80 items), and an Explore/Recommendation embedding service (20 discovery items). The candidate pool is bounded to ~500 IDs.
+- **Stage 2 — Feature Extraction & Scoring:** Each candidate post is evaluated against real-time signals:
+  `RankingScore = w1 * Recency(t) + w2 * AuthorAffinity(u, a) + w3 * ContentTypePreference(u, c) + w4 * SocialProof(p)`
+  - `Recency(t)` applies exponential time decay: `e^(-lambda * delta_hours)` to ensure fresh content surfaces.
+  - `AuthorAffinity(u, a)` measures direct interactions: direct messages, profile visits, comment replies, and past like frequency between viewer `u` and author `a`.
+  - `ContentTypePreference(u, c)` adjusts for user consumption habits (e.g., higher weights for short-form video vs text).
+  - `SocialProof(p)` incorporates real-time like velocity, repost velocity, and comment depth.
+- **Stage 3 — Diversity, Safety, and Ad Injection:** The top-scoring posts pass through deterministic business rules:
+  - **Author Diversity:** No more than 2 consecutive posts from the same author to prevent feed dominance.
+  - **Safety & Moderation:** Filter out posts flagged by trust-and-safety classifiers or originating from blocked/muted accounts.
+  - **Monetization Insertion:** Insert sponsored/ad posts at deterministic intervals (e.g., slot 3, slot 11, slot 19).
+- **Stage 4 — Hydration & Assembly:** The final 20 post IDs are batched and hydrated with author metadata, high-resolution media URLs, and localized strings before serialization.
 
-In a production full-stack app, design a social media feed affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+**Deep Dive 2 — Handling Deletions, Edits, and Privacy Graph Changes**
 
-## 7. Common interview questions
+When a creator with 500,000 followers deletes a post, iterating through 500,000 Redis timeline caches to execute `ZREM` causes severe write amplification and locks cache shards.
 
-#### How do you generate a personalized feed for each user?
-- **The Engine Mechanism (Why it behaves this way):** Two main approaches: pull-based (fan-out on read) and push-based (fan-out on write). Pull-based: when the user loads their feed, query posts from all people they follow, sorted by timestamp or score. Simple but slow for users who follow many people. Push-based: when a user posts, push the post to all followers' feed caches (Redis lists). Fast reads but expensive for users with millions of followers (celebrities). Hybrid approach: push for normal users, pull for celebrities (users with >N followers). A ranking algorithm scores posts by recency, engagement, relationship strength, and content type to order the feed.
-- **The Unforgettable Mental Model:** The **Newspaper Delivery**. Push-based: when an author publishes, a copy is delivered to every subscriber's mailbox (fast to read, expensive to deliver). Pull-based: subscribers go to the newsstand and pick from all available papers (cheap to publish, slow to browse). Hybrid: regular authors get delivery, celebrities' papers are picked up at the newsstand.
-- **The Trap:** Using pure push-based for celebrities. If a user with 10M followers posts, you'd need to write to 10M feed caches — extremely expensive. Always use hybrid: push for normal users, pull for celebrities.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use a hybrid fan-out approach. For normal users (<50K followers), I use fan-out on write — when they post, the post is pushed to all followers' feed caches in Redis. For celebrities (>50K followers), I use fan-out on read — their posts are pulled at feed generation time. The feed is ranked by a scoring algorithm considering recency, engagement (likes, comments), relationship strength (how often they interact), and content type. This balances write cost with read performance across all user types."
+- **Tombstones & Read-Time Elimination:** Deletion never triggers an immediate fan-out sweep. Instead, the post status is set to `is_deleted = true` in the primary Post Storage DB and updated in the centralized Redis Post Metadata Cache. When any follower loads their feed, the Hydration Service inspects the post status during batch retrieval. If `is_deleted === true`, the item is silently dropped from the response list. A lazy background cleaner removes dead IDs from individual user `ZSET`s over time.
+- **Post Edits:** Because timeline caches store only immutable `post_id`s and timestamps, post text edits require zero updates to any follower's feed cache. The edit updates only the single record in Post Storage and invalidates the cached post entity in the Post Cache.
+- **Unfollows and Blocks:** If user A blocks or unfollows user B, cleaning user B's historical posts out of user A's Redis cache synchronously is expensive. Instead, user A's active block/unfollow set is stored in a fast local cache (or Redis Set). The Feed Aggregation Service filters out posts from blocked authors on the read path during Stage 3 filtering.
 
-#### How do you rank feed posts for relevance?
-- **The Engine Mechanism (Why it behaves this way):** A scoring function combines multiple signals: recency (newer posts score higher), engagement (posts with more likes/comments score higher), relationship strength (posts from users you interact with frequently score higher), content type preference (if you engage more with videos, video posts score higher), and diversity (avoid showing too many posts from the same user). The score = w1*recency + w2*engagement + w3*relationship + w4*content_preference + w5*diversity. Weights are tuned via A/B testing. Machine learning models (collaborative filtering, neural networks) can replace the linear scoring function for more personalized ranking.
-- **The Unforgettable Mental Model:** The **Restaurant Recommendation**. You prefer restaurants that are: nearby (recency), popular (engagement), recommended by friends (relationship), serve your favorite cuisine (content preference), and offer variety (diversity). The recommendation engine weights these factors to suggest the best options.
-- **The Trap:** Ranking purely by recency. This shows all posts in chronological order, including low-quality content from accounts the user doesn't care about. Engagement and relationship signals are essential for a relevant feed.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use a multi-signal scoring function: recency (decay over time), engagement (likes, comments, shares), relationship strength (interaction frequency), content type preference (learned from behavior), and diversity (limit posts from same user). Weights are tuned via A/B testing. For advanced systems, I'd use ML models — collaborative filtering for 'users like you also liked' and neural networks for complex pattern recognition. The ranking runs on the candidate set (posts from followed users) before pagination."
+**Deep Dive 3 — Cold Start and Inactive User Lifecycle**
 
-#### How do you handle feed pagination efficiently?
-- **The Engine Mechanism (Why it behaves this way):** Cursor-based pagination is used instead of offset-based. The feed is stored as a sorted list (Redis ZSET or database with score column). The client sends the last post's score (cursor) and the server returns the next N posts with scores less than the cursor. This is O(log n) regardless of page depth. For the hybrid approach, push-based feeds are stored in Redis ZSET (score = ranking score, value = post_id), and pull-based feeds are generated by querying the posts table with a WHERE clause on the cursor. The cursor encodes the score and post_id for stable ordering (same score posts are ordered by ID).
-- **The Unforgettable Mental Model:** The **Book Bookmark**. Instead of saying "show me page 50" (offset), you say "show me what comes after this bookmark" (cursor). It's always fast because you start from the bookmark, not from page 1. The bookmark includes both the page number and line number for exact positioning.
-- **The Trap:** Using offset-based pagination (LIMIT 20 OFFSET 1000). This becomes slower as the offset increases because the database scans and skips rows. Always use cursor-based pagination for feeds.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use cursor-based pagination with a sorted data structure. For push-based feeds, Redis ZSET stores posts sorted by ranking score. The client sends the last post's score as a cursor, and ZREVRANGEBYSCORE returns the next batch. For pull-based feeds, the query uses WHERE score < cursor ORDER BY score DESC LIMIT 20. The cursor encodes both score and post_id for stable ordering. This is O(log n) regardless of page depth, unlike offset pagination which degrades to O(n)."
+Memory is the most expensive operational component of a timeline cache. Storing 800 post IDs for 500 million total registered users requires massive RAM, even though only 300 million are active.
 
-#### How do you handle feed cache invalidation when a post is deleted?
-- **The Engine Mechanism (Why it behaves this way):** When a post is deleted, it must be removed from all followers' feed caches. For push-based feeds, this requires iterating through all followers' Redis lists and removing the post — O(n) where n is the follower count. For large follower counts, this is expensive. Optimization: use a tombstone approach — mark the post as deleted in a separate table, and filter deleted posts at read time. The feed cache is cleaned up asynchronously by a background job. For pull-based feeds, deletion is automatic — the post is filtered out at query time. A hybrid approach: for users with <10K followers, remove from cache immediately; for larger, use tombstones.
-- **The Unforgettable Mental Model:** The **Recall Notice**. When a product is recalled (post deleted), the manufacturer can: (1) Go to every store and remove it (cache removal — expensive for many stores), or (2) Put a "do not sell" sign on it (tombstone — cheap but the product still sits on the shelf). The manufacturer uses approach 1 for small distributors and approach 2 for large ones.
-- **The Trap:** Not handling post deletion in feed caches. Deleted posts continue appearing in followers' feeds until the cache expires. Always implement either immediate removal or tombstone filtering.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: For users with <10K followers, I remove the deleted post from all followers' feed caches immediately. For larger accounts, I use a tombstone approach — mark the post as deleted in a separate table and filter at read time. A background job asynchronously cleans up feed caches. For pull-based feeds, deletion is automatic since posts are queried fresh. The tombstone table has a TTL — after 30 days, deleted posts are permanently removed and tombstones expire."
+- **Active Cache Eviction:** Each user's Redis `ZSET` key is assigned a Time-To-Live (TTL) of 7 days. Every time a user requests their feed or opens the app, the TTL is renewed. If a user becomes inactive for 7 consecutive days, Redis automatically evicts their timeline key via standard expiration.
+- **On-Demand Reconstruction for Returning Users:** When an inactive user opens the app after 3 months:
+  1. The Feed Service detects a cache miss on the user's `ZSET` key in Redis.
+  2. The Feed Service queries the Social Graph Service to retrieve the user's followed accounts.
+  3. A fast SQL/Cassandra query pulls the most recent 2 posts from each followed account, sorted by timestamp, and returns the top 20 posts directly to the user to keep the first load under 300ms.
+  4. Concurrently, an asynchronous background job is enqueued to pull the top 800 historical posts, populate a fresh Redis `ZSET`, set the 7-day TTL, and warm the cache for subsequent pagination requests.
 
-#### How do you handle feed generation for a new user (cold start)?
-- **The Engine Mechanism (Why it behaves this way):** New users have no follow graph and no engagement history, so personalized ranking is impossible. Cold start strategies: (1) Show trending/popular posts globally; (2) Ask the user to select interests during onboarding and show posts from those categories; (3) Show posts from suggested accounts (verified, popular, or matching signup source); (4) Use geographic proximity — show posts from nearby users; (5) As the user starts following and engaging, gradually transition to personalized ranking. The cold start feed uses a simpler scoring function (trending score + recency) until enough engagement data is collected.
-- **The Unforgettable Mental Model:** The **New Student at School**. On the first day, you don't know anyone. The teacher (system) introduces you to popular students (trending), asks about your interests (onboarding), suggests clubs to join (suggested accounts), and seats you near your neighborhood (geographic). As you make friends (follow/engage), your social circle becomes personalized.
-- **The Trap:** Showing an empty feed to new users. An empty feed gives no reason to stay. Always populate with trending, suggested, or interest-based content to engage the user immediately.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: For new users, I'd show a mix of trending posts, interest-based content (from onboarding selections), suggested accounts, and geographically relevant posts. The scoring function uses trending score + recency instead of personalized signals. As the user follows accounts and engages with content, the system gradually transitions to personalized ranking. I'd track the cold start transition point — when the user has followed N accounts and engaged with M posts — and switch to the full ranking algorithm. This ensures a engaging experience from day one."
+## 6. Failure Modes and Resilience
 
-#### How do you handle media-rich posts (images, videos) in the feed?
-- **The Engine Mechanism (Why it behaves this way):** Media is stored separately from post metadata. The post record contains media_references (array of media IDs), and the media service serves optimized versions. For the feed, only media thumbnails are included (not full-resolution images) to reduce payload size. The frontend lazy-loads full-resolution media when the post enters the viewport. Videos are transcoded into multiple resolutions and served via adaptive bitrate streaming (HLS). A CDN caches media thumbnails globally. The feed API returns media URLs with size parameters (GET /media/{id}?size=thumb) so the frontend requests the appropriate size for each context.
-- **The Unforgettable Mental Model:** The **Magazine Layout**. The table of contents (feed) shows thumbnail images and headlines. When you turn to a page (scroll to post), the full-resolution image loads. The magazine uses smaller images in the index to save paper (bandwidth) and loads the full image only when you're looking at that page.
-- **The Trap:** Including full-resolution media URLs in the feed response. A feed with 20 posts, each with a 5MB image, is 100MB — too large for mobile networks. Always include thumbnail URLs in the feed and lazy-load full resolution.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Media is stored separately from post metadata. The feed API returns only thumbnail URLs (size=thumb) to keep the response small. The frontend lazy-loads full-resolution media when posts enter the viewport. Videos are transcoded to multiple resolutions and served via HLS for adaptive streaming. A CDN caches thumbnails globally. The media service supports size parameters so the frontend can request the right size for each context (thumbnail for feed, medium for post detail, full for fullscreen). This reduces feed payload by 80-90%."
+A resilient social feed system must withstand extreme traffic spikes, cache failures, and downstream database degradation without causing cascading outages.
 
-#### How do you scale feed generation for millions of users?
-- **The Engine Mechanism (Why it behaves this way):** Scaling involves: (1) Feed partitioning — each user's feed is stored on a specific Redis shard based on user_id hash; (2) Write fan-out distribution — when a user posts, fan-out writes are distributed across Redis shards in parallel; (3) Read replicas — feed reads are served from Redis, database reads go to replicas; (4) Asynchronous fan-out — fan-out writes are queued in Kafka and processed by workers, so the post creation is fast; (5) Feed pre-computation — for active users, pre-compute the next page of the feed in the background; (6) Sharding by geography — users in the same region are on the same shard for lower latency. The fan-out worker pool scales based on queue depth.
-- **The Unforgettable Mental Model:** The **Postal Sorting Network**. Each neighborhood (user shard) has its own sorting facility (Redis shard). When mail is sent (post), it's distributed to all relevant neighborhoods in parallel (fan-out). The sorting facilities work independently. If one neighborhood gets a lot of mail, more sorters are added (worker scaling). Mail for distant neighborhoods goes through regional hubs (geographic sharding).
-- **The Trap:** Doing fan-out synchronously during post creation. If a user has 10K followers, fan-out takes seconds and blocks the post creation. Always queue fan-out writes and process asynchronously.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd partition feeds across Redis shards by user_id hash. Fan-out writes are queued in Kafka and processed by a scalable worker pool — post creation returns immediately. Reads are served from Redis (push-based) or database replicas (pull-based). For active users, I'd pre-compute the next feed page in the background. Geographic sharding keeps users in the same region on the same shard for lower latency. The fan-out worker pool auto-scales based on Kafka queue depth. Celebrity posts use pull-based generation to avoid massive fan-out."
+```txt
+┌──────────────────────────────────────┬──────────────────────────────────────────┬────────────────────────────────────────────────────────┐
+│ Failure Point                        │ User & System Impact                     │ Detection & Mitigation Strategy                        │
+├──────────────────────────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────┤
+│ Celebrity Mega-Post Spike            │ Write queues back up; fan-out lag spikes │ Threshold check routes >25k follower accounts to       │
+│                                      │ to tens of minutes for all users.        │ read-path pull. Fan-out workers ignore celebrity       │
+│                                      │                                          │ followers. Rate limit author posting frequency.        │
+├──────────────────────────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────┤
+│ Redis Timeline Shard Outage          │ Cache misses spike for millions of       │ Redis Cluster with Master-Replica auto-failover        │
+│                                      │ users; fallback DB queries risk collapse.│ (Sentinel). Read-path circuit breaker throttles DB     │
+│                                      │                                          │ fallback; serves degraded chronological feeds.         │
+├──────────────────────────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────┤
+│ Kafka Consumer Lag Buildup           │ New posts take minutes to appear in      │ Horizontal Pod Autoscaling (HPA) triggered on consumer │
+│                                      │ follower timelines.                      │ group lag metric. Priority worker queues for active    │
+│                                      │                                          │ users over offline users.                              │
+├──────────────────────────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────┤
+│ Cache Stampede (Thundering Herd)     │ Viral post or mass login event causes    │ Single-flight request coalescing (e.g., Go singleflight│
+│                                      │ simultaneous cache miss queries to DB.   │ or Redis mutex locks); return stale cached data        │
+│                                      │                                          │ during background refresh.                             │
+├──────────────────────────────────────┼──────────────────────────────────────────┼────────────────────────────────────────────────────────┤
+│ Hydration Service Database Saturation│ Feed aggregation succeeds, but fetching  │ Read replicas with connection pooling; Multi-tiered    │
+│                                      │ post text/media metadata times out.      │ caching (L1 App In-Memory Cache + L2 Redis Cluster)    │
+│                                      │                                          │ for hot posts; fallback to minimal payload.            │
+└──────────────────────────────────────┴──────────────────────────────────────────┴────────────────────────────────────────────────────────┘
+```
 
-## 8. Active recall test
+- **Celebrity Fan-Out Protection:** High-follower accounts are automatically flagged in the database and social graph cache. The ingestion pipeline checks the author's follower count before emitting fan-out jobs. Accounts exceeding 25,000 followers bypass the worker pool completely, eliminating write queue saturation.
+- **Circuit Breaking on Fallback Paths:** If Redis crashes and the feed service falls back to generating feeds from the primary database, the database can easily be crushed by 35,000 read QPS. A circuit breaker monitors database latency and error rates. If the DB latency exceeds 500ms, the circuit trips: fallback queries are shedding, and users receive cached trending/discovery feeds from CDN edge memory until cache clusters recover.
+- **Singleflight Cache Coalescing:** When a viral post with millions of views expires from the Post Cache, thousands of concurrent feed aggregation requests attempt to query the primary database for that exact same post record at the same millisecond. Using the **Singleflight pattern**, the application server ensures only one request fetches the post from the database while all other concurrent requests pause and share the single returned result.
 
-1. **What is the hybrid fan-out approach for feed generation?**
-   - **Explanation:** Push-based (fan-out on write) for normal users (<50K followers) — posts are pushed to followers' feed caches. Pull-based (fan-out on read) for celebrities (>50K followers) — posts are pulled at feed generation time. Balances write cost with read performance.
+## 7. What Makes a Great Answer vs an Average One
 
-2. **How do you rank feed posts for relevance?**
-   - **Explanation:** Multi-signal scoring: recency, engagement, relationship strength, content preference, and diversity. Weights tuned via A/B testing. ML models (collaborative filtering, neural networks) can replace linear scoring for more personalization.
+In a senior or staff-level system design interview, the interviewer evaluates your ability to navigate nuanced production realities rather than repeat textbook architectures.
 
-3. **Why use cursor-based pagination for feeds?**
-   - **Explanation:** Cursor pagination (WHERE score < cursor ORDER BY score DESC LIMIT 20) is O(log n) regardless of page depth. Offset pagination (LIMIT 20 OFFSET 1000) degrades to O(n) as offset increases. The cursor encodes score + post_id for stable ordering.
+- **Quantifying Read/Write Asymmetry:**
+  - *Average:* "We need a database for posts and a cache for feeds."
+  - *Great:* "Social feeds operate at a 100:1 or higher read-to-write ratio. With 300M DAU and 1.5B daily reads, write latency can be traded for read speed. We precompute feeds on write for regular users to guarantee sub-200ms O(1) reads, and switch to on-demand read-merging for high-follower creators."
+- **Handling the Celebrity Edge Case:**
+  - *Average:* "When a user posts, we push it to all followers in Redis."
+  - *Great:* "A pure push model breaks at scale due to the 'Justin Bieber problem'—fanning out 100 million writes causes severe queue lag and memory amplification. We implement a hybrid model using a follower threshold (e.g., 25k followers) to bifurcate the write path from the read-merge path."
+- **Separating Cache Indexing from Entity Hydration:**
+  - *Average:* "We store the entire post object in each follower's feed list in Redis."
+  - *Great:* "Storing complete JSON objects in timeline caches explodes memory footprint and makes post edits or privacy updates nearly impossible to synchronize. We store only 64-bit post IDs in Redis `ZSET`s, capping sets at 800 items, and execute a single batch `MGET` against a shared post cache only for the 20 items selected after ranking."
+- **Handling Deletions & Edge Operations Cleanly:**
+  - *Average:* "When a post is deleted, we find every follower's feed and delete it."
+  - *Great:* "Iterating through millions of follower caches to remove a deleted post is an anti-pattern. We write a tombstone to the post entity and let the read-path hydration service discard deleted items on the fly, with lazy background scavenging."
+- **Pagination Realities:**
+  - *Average:* "We paginate using page numbers and SQL offset."
+  - *Great:* "Offset pagination causes severe performance degradation and visible post duplication when new items insert at the top of the feed. We use deterministic cursor pagination encoding timestamp and post ID, leveraging `ZREVRANGEBYSCORE` for constant O(log N) seeking."
 
-4. **How do you handle post deletion in feed caches?**
-   - **Explanation:** For <10K followers, remove from all feed caches immediately. For larger accounts, use tombstones (mark deleted, filter at read time). A background job asynchronously cleans up caches. Pull-based feeds auto-filter deleted posts.
+## 8. 🧠 The Memory Hook
 
-5. **How do you handle the cold start problem for new users?**
-   - **Explanation:** Show trending posts, interest-based content (from onboarding), suggested accounts, and geographic posts. Use a simpler scoring function (trending + recency). Transition to personalized ranking after the user follows N accounts and engages with M posts.
+**Push for the crowd, Pull for the stars, Cache only IDs, Hydrate at the gate.**
 
-6. **How do you optimize media-rich posts in the feed?**
-   - **Explanation:** Include only thumbnail URLs in the feed response. Lazy-load full-resolution media when posts enter the viewport. Videos use adaptive bitrate streaming (HLS). CDN caches thumbnails globally. Reduces feed payload by 80-90%.
-
-7. **How do you scale feed generation for millions of users?**
-   - **Explanation:** Partition feeds across Redis shards by user_id hash. Queue fan-out writes in Kafka for async processing. Serve reads from Redis or database replicas. Pre-compute next feed page for active users. Scale fan-out workers based on queue depth.
-
-## 9. Mistakes / traps
-
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
-
-## 10. Compare with related concepts
-
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
-
-## 11. Summary from memory
-
-Explain Design a social media feed in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
-
-## 12. Spaced revision prompts
-
-- Day 1: Define Design a social media feed in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+Regular creators push post IDs into follower Redis Sorted Sets; celebrities are pulled and merged dynamically at read time; feed caches store only lightweight sorted IDs to protect memory; and full post content is hydrated in a single batch right before leaving the server gate.
