@@ -1,116 +1,201 @@
 # Type Coercion and Equality
 
-## Detailed explanation
-Type coercion is JavaScript converting a value from one type to another. Equality operators expose this sharply: `==` allows coercion, while `===` compares without most coercion.
+## 1. Why This Exists — The Problem First
 
-Senior frontend engineers should know enough coercion rules to avoid traps, read legacy code, and explain why strict equality is the default in production code.
+A form submits `"0"`, a query parameter arrives as `"false"`, and an API may omit a field as `undefined` or send it as `null`. If those values flow straight into conditions and comparisons, a validation rule can accept an empty field, a cache lookup can miss a key, or a permission check can take the wrong branch. The bug is often not that JavaScript “does something random”; it is that the runtime followed a precise conversion rule that the code did not make explicit.
 
-## 1. One-line mental model
-Coercion converts types automatically; strict equality avoids most surprise conversions.
+This matters in interviews because equality is a small-looking operator with a large set of rules. A strong explanation connects the visible result to the conversion pipeline, then explains why production code usually normalizes data at its boundary and uses `===` inside the application.
 
-## 2. Problem it solves
-JavaScript operators need rules for comparing and combining values of different types.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- `===` compares type and value, except object identity rules still apply.
-- `==` may convert operands before comparing.
-- Objects convert through primitive conversion rules.
-- `null == undefined` is true, but neither equals other falsy values.
-- `Object.is` handles `NaN` and `-0` differently from `===`.
+Imagine a customs desk comparing two packages. A package already has a declared label such as “number” or “string.” Strict equality (`===`) checks both labels and contents: packages with different labels do not match, and two object packages match only when they are the very same package. Loose equality (`==`) allows the desk to translate labels before comparing, but it follows a fixed chain of translation rules rather than guessing what the developer meant.
 
-## 4. Visual / analogy
-Coercion is like translating currencies before comparing prices; sometimes the exchange rule surprises you.
+An object is a package with an outside wrapper and a possible “display label.” When the desk needs a primitive label, it asks the object for one through `valueOf()` or `toString()`; that is `ToPrimitive`. An array can therefore become the string `"a,b"`, while an ordinary object commonly becomes `"[object Object]"`. The key mapping is:
 
-```mermaid
-flowchart LR
-  A["value A"] --> Coerce["coercion for =="]
-  B["value B"] --> Coerce
-  Coerce --> Compare["comparison result"]
-```
+- the package’s declared label is its JavaScript type;
+- the translation desk is an abstract operation such as `ToPrimitive`, `ToNumber`, or `ToBoolean`;
+- `==` is the comparison that permits the desk to translate;
+- `===` is the comparison that requires the labels to match first;
+- explicit conversion is the developer writing the translation step on purpose before the package enters the business logic.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+JavaScript has two different ideas that are easy to mix up: conversion and truthiness. Conversion changes a value into another representation. Truthiness asks whether a value should count as true in a boolean position. All objects, including `[]` and `{}`, are truthy; that does not stop them from converting to an empty string or another primitive during a different operation.
+
+**`ToPrimitive`: objects must first become primitives**
+
+Operators such as `+`, comparison, and loose equality often need a primitive value. The runtime applies `ToPrimitive` to an object. With the default hint, it normally tries `valueOf()` first and then `toString()`; with the string hint, it prefers `toString()` first. If neither method returns a primitive, the operation throws a `TypeError`.
 
 ```js
-0 == false; // true
-0 === false; // false
+const invoice = {
+  amount: 1200,
+  valueOf() {
+    // WHY: arithmetic needs the domain's numeric primitive, not the wrapper object.
+    return this.amount;
+  },
+  toString() {
+    return `Invoice(${this.amount})`;
+  },
+};
 
-Number.isNaN(NaN); // true
-Object.is(NaN, NaN); // true
+invoice + 300; // 1500: valueOf() supplies a number
+String(invoice); // "Invoice(1200)": String() requests a string representation
+
+const emptyArray = [];
+String(emptyArray); // "": Array.prototype.toString() joins zero elements
+String({}); // "[object Object]": the ordinary object's default string form
 ```
 
-## 6. Real-world example
-Form inputs return strings. Comparing `input.value == 0` can accidentally treat empty strings and numeric zero similarly in validation logic.
+This is why object coercion is not a deep comparison and not a serialization strategy. It is a request for one primitive representation for one operation. Custom `valueOf()` and `toString()` can make that representation domain-specific, so avoid relying on surprising implicit behavior in shared application code.
 
-## 7. Common interview questions
+**The common conversion operations**
 
-#### What is type coercion?
-- **The Engine Mechanism (Why it behaves this way):** Type coercion is the automatic or implicit conversion of a value from one data type to another (e.g., from String to Number, or Object to Primitive) performed by the JS runtime engine during operations. The engine evaluates these using abstract operational algorithms defined in the ECMAScript specification, such as `ToPrimitive`, `ToNumber`, `ToString`, and `ToBoolean`. For example, in an addition operation `1 + '2'`, the binary `+` operator detects a string operand and triggers the implicit conversion of the number `1` to its string equivalent `'1'` via `ToString`, concatenating them to return `'12'`.
-- **The Unforgettable Mental Model:** A multi-national vending machine that automatically converts your coins (types) into the currency it expects. If you insert a euro coin (Number) into a dollar slot (String), the machine automatically routes your coin through a currency converter (coercion) behind the glass before dispensing the product.
-- **The Trap:** The difference between implicit coercion (triggered by operators) and explicit conversion (using built-in constructors like `Number()` or `String()`). Implicit coercion can yield silent runtime bugs (like `true + true === 2` or `[] + {} === '[object Object]'`) because JavaScript rarely throws runtime errors for type mismatches, opting to coerce them instead.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Type coercion is JavaScript's implicit conversion of values between different data types at runtime, driven by internal ECMAScript algorithms like `ToPrimitive` and `ToNumber`. Unlike statically typed languages that throw compile-time errors on type mismatches, the V8 engine silently coerces operands to compatible types to complete operations, which can lead to unpredictable side effects if the underlying operational rules are not thoroughly understood."
+`ToString` produces text: `String(42)` is `"42"`, `String(null)` is `"null"`, and `String(undefined)` is `"undefined"`. `ToNumber` turns numeric text into a number: `Number("42")` is `42`, `Number("")` is `0`, and invalid text becomes `NaN`. `ToBoolean` follows the falsy set: `false`, `0`, `-0`, `0n`, `NaN`, `""`, `null`, and `undefined` are falsy; every object is truthy.
 
-#### Difference between `==` and `===`?
-- **The Engine Mechanism (Why it behaves this way):** Loose equality (`==`) executes the internal `IsHTMLDDA`-aware *Abstract Equality Comparison Algorithm*. If the operands are of different types, the engine performs a series of recursive, implicit conversions (such as converting booleans to numbers, strings to numbers, or objects to primitives) until both operands share the same primitive type, and then compares them. Strict equality (`===`) executes the *Strict Equality Comparison Algorithm*. It checks the types of both operands first. If the types do not match, it immediately returns `false` without performing any conversion. If the types are identical, it compares the values (e.g., matching string characters, number values, or object memory addresses).
-- **The Unforgettable Mental Model:** `===` is a strict border patrol officer who checks both your passport country (type) and your name (value)—if your passport doesn't match the required country, you are immediately rejected. `==` is a lax officer who takes your foreign ID and translates it through a thick dictionary (coercion rules) to see if they can somehow map your identity to the local country before letting you pass.
-- **The Trap:** The common myth that `==` compares value and `===` compares type and value. Both operators compare values; the difference is that `==` allows type translation beforehand, whereas `===` fails immediately if types differ. Furthermore, neither operator performs deep structural comparison on objects; both use strict reference comparison (`===` and `==` on objects return `true` only if they reference the exact same memory address).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The key distinction is that strict equality, `===`, bypasses type coercion entirely: if the operand types differ, it immediately evaluates to `false`. Loose equality, `==`, triggers the ECMAScript Abstract Equality Comparison Algorithm, recursively coercing differing types—typically down to numeric values—before performing the comparison. For production systems, strict equality is the industry standard to eliminate the class of silent runtime bugs introduced by loose coercion rules."
+The empty-string rule is a production trap: `Number("")` is `0`, but an empty form field usually means “not provided,” not a real zero. Normalize presence separately from numeric conversion.
 
-#### Why is `[] == false` surprising?
-- **The Engine Mechanism (Why it behaves this way):** The comparison `[] == false` is surprising because an empty array `[]` is a truthy object (e.g., `if ([])` will execute its block). However, the loose equality operator (`==`) evaluates this through a multi-step coercion chain:
-  1. The engine sees an Object (`[]`) compared to a Boolean (`false`). According to step 7 of the Abstract Equality Comparison Algorithm, if one of the operands is a Boolean, it converts the Boolean to a Number: `Number(false)` is `0`. So the expression becomes `[] == 0`.
-  2. The engine now has an Object and a Number. It invokes the `ToPrimitive` algorithm on the array `[]`. This calls the array's `toString()` method, which joins elements with commas. For an empty array, this yields the empty string `""`. The expression becomes `"" == 0`.
-  3. The engine now has a String and a Number. According to the algorithm, a String is coerced to a Number: `Number("")` evaluates to `0`. The expression becomes `0 == 0`, which evaluates to `true`.
-- **The Unforgettable Mental Model:** A Rube Goldberg machine. You drop a ball labeled `[]` and a block labeled `false` into a sorting machine. The machine melts `false` into `0`, crushes `[]` into `""` (empty string), melts `""` into `0`, and then announces: "Look, they are both 0! They are equal!" despite them starting as entirely different objects.
-- **The Trap:** Believing that because `[] == false` is true, the array `[]` itself is falsy. In an `if` statement, there is no `==` operator, so the engine uses `ToBoolean([])`, which immediately returns `true` because all objects in JavaScript are truthy. Thus, `if ([]) { ... }` runs, but `[] == false` is `true`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The expression `[] == false` returns `true` because loose equality forces a cascading coercion chain. First, the boolean `false` is coerced to the number `0`. Next, the array `[]` undergoes a `ToPrimitive` conversion, calling its `toString` method to produce an empty string `""`. Finally, the empty string is coerced to the number `0`. Since `0 == 0` is true, the entire expression evaluates to `true`, even though an empty array is structurally a truthy object when evaluated directly in conditional statements."
+**What `==` does**
 
-#### What is `Object.is`?
-- **The Engine Mechanism (Why it behaves this way):** `Object.is()` executes the *SameValue* algorithm defined in ECMAScript. It behaves exactly like strict equality (`===`) except for two highly specific edge cases:
-  1. **NaN:** Under strict equality, `NaN === NaN` evaluates to `false` because the IEEE 754 standard dictates that a NaN (Not-a-Number) cannot equal anything, including itself. `Object.is(NaN, NaN)` evaluates to `true`.
-  2. **Signed Zeros:** Under strict equality, `-0 === +0` evaluates to `true`. However, in the CPU's memory register, signed zeros have distinct binary representations (differing in their most significant sign bit), which can affect mathematical calculations (e.g., `1 / -0` is `-Infinity`, while `1 / +0` is `+Infinity`). `Object.is(-0, +0)` evaluates to `false`.
-- **The Unforgettable Mental Model:** A hyper-detailed microscope. While standard reading glasses (`===`) see two piles of sand (`NaN` and `NaN`) as unrecognizable and therefore unequal, or positive and negative zero as the same flat number, the microscope (`Object.is`) inspects their precise atomic coordinates and correctly classifies them according to their exact physical structure.
-- **The Trap:** Thinking `Object.is()` performs deep comparison on objects. It does not. Like `===`, it compares objects by reference identity, not by structural value.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: `Object.is` is a static method that implements the ECMAScript SameValue algorithm. It behaves identically to strict equality, `===`, with two critical exceptions: first, it correctly identifies `NaN` as equal to itself, whereas `===` returns `false`. Second, it distinguishes between negative zero and positive zero, evaluating them as unequal due to their differing sign bits. This makes `Object.is` the standard primitive for checking structural mutations in reactive frameworks like React's reconciliation engine."
+Loose equality uses the Abstract Equality Comparison algorithm. The important path is:
 
-#### How should form input values be normalized?
-- **The Engine Mechanism (Why it behaves this way):** Web forms are bound to the DOM `HTMLInputElement` interface. By default, accessing `input.value` always returns a primitive `string` type, regardless of whether the input element's type attribute is set to `number`, `date`, or `range`. If JavaScript performs comparisons on raw values (e.g., `input.value === 0`), they will fail due to strict type matching. Normalization involves explicitly parsing inputs into their expected type schemas—using `Number()`, `parseInt()`, or `parseFloat()` for numbers, and `Boolean()` or custom comparison for checkboxes—immediately at the network/state boundary before any comparison or business logic is executed.
-- **The Unforgettable Mental Model:** A customs processing warehouse at a border. You don't let cargo containers pass straight into the country unopened (raw string inputs); you force every container to open, inspect its items, label them exactly by their content type (Number, Boolean, Date), and put them into standardized boxes before they enter the shipping yard (your state management code).
-- **The Trap:** Relying on implicit coercion (like `input.value == 0` or using `+input.value`) for parsing. If `input.value` is an empty string `""`, `+input.value` or `"" == 0` will evaluate to `0`, which can silently corrupt form validations where `0` is a valid entered number but an empty string represents a blank, unanswered input.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Form inputs must be normalized explicitly at the entry boundary. Because DOM input values are persistently string types, using implicit coercion to compare them introduces severe vulnerabilities—such as treating empty strings as numerical zeros. To prevent this, we must explicitly cast inputs using utilities like `parseInt`, `parseFloat`, or native DOM helpers like `input.valueAsNumber` immediately, establishing a robust, statically typed state boundary for the application."
+1. If both operands already have the same type, compare them using that type’s equality rule. Two objects are equal only if they are the same reference; two separate but identical objects are not equal.
+2. If one side is `null` and the other is `undefined`, return `true`. No other falsy value joins this special case.
+3. If a boolean is present, convert it to a number: `false` becomes `0`, and `true` becomes `1`.
+4. If one side is a string and the other is a number, convert the string with `ToNumber`.
+5. If an object is compared with a primitive, apply `ToPrimitive` to the object, then continue comparing the resulting primitive.
+6. If the resulting numbers are `NaN`, the comparison is false. Otherwise numeric equality follows numeric values, including `0 == -0` being true.
 
-## 8. Active recall test
+That chain explains `[] == false`: `false` becomes `0`, `[]` becomes `""`, and `""` becomes `0`, leaving `0 == 0`. It does not mean the array is falsy. A direct conditional uses `ToBoolean([])`, which returns true.
 
-#### 1. Which JavaScript equality operator permits implicit type coercion?
-The loose equality operator (`==`) permits implicit type coercion via the Abstract Equality Comparison Algorithm.
+**What `===`, `Object.is`, and `NaN` do**
 
-#### 2. Does the comparison `null == undefined` evaluate to true, and does null loosely equal other falsy values?
-Yes, `null == undefined` evaluates to `true` according to the specification's loose equality algorithm. However, neither `null` nor `undefined` loosely equals any other falsy values, such as `0`, `false`, `""`, or `[]`.
+Strict equality checks types first and performs no coercion. Numbers compare by numeric value, except that `NaN` is unequal to everything, including itself; positive and negative zero compare equal. Objects compare by identity, not by their properties.
 
-#### 3. How does strict equality (`===`) behave when comparing objects?
-Strict equality checks if the two object operands point to the exact same reference address in the heap memory. If they reference different objects, it returns `false`, even if the two objects are structurally identical (e.g., `{} === {}` evaluates to `false`).
+`Object.is` is almost the same as `===`, but it treats `NaN` as equal to itself and distinguishes `-0` from `+0`. Use `Number.isNaN(value)` to test specifically for a numeric `NaN`; the global `isNaN(value)` first coerces its argument and can report true for values such as `"not a number"`.
 
-#### 4. Why does `NaN === NaN` evaluate to false in JavaScript?
-Because the IEEE 754 standard dictates that a NaN (Not-a-Number) represents an unrepresentable or undefined value, and thus cannot be structurally equal to any value, including itself.
+**`null` and `undefined`**
 
-#### 5. When does Object.is behave differently from the strict equality (===) operator?
-`Object.is` differs from `===` in two scenarios: it treats `NaN` as equal to another `NaN`, and it treats negative zero (`-0`) and positive zero (`+0`) as unequal due to their differing binary representation signs.
+`null` usually means an intentional empty value, while `undefined` commonly means missing or not initialized. The language gives them one deliberate loose-equality relationship: `null == undefined` is true. They are not loosely equal to `0`, `false`, `""`, or `NaN`, and `null === undefined` is false. In application code, prefer an explicit policy: `value === null`, `value === undefined`, or `value == null` only when the intentional rule is “either nullish value.”
 
-## 9. Mistakes / traps
-- Using loose equality in validation.
-- Forgetting all DOM input values are strings unless converted.
-- Comparing objects by structure with `===`.
-- Ignoring `NaN` and `-0` edge cases.
+## 4. Real Code — See It Working
 
-## 10. Compare with related concepts
-- **`==` vs `===`:** coercive comparison vs strict comparison.
-- **`===` vs `Object.is`:** mostly same, different for `NaN` and signed zero.
-- **Primitive equality vs object identity:** value comparison vs reference comparison.
+```js
+function readPrice(input) {
+  const raw = input.trim();
 
-## 11. Summary from memory
-Explain why `===` is the default and when coercion appears in frontend code.
+  // WHY: presence is a separate business rule; Number("") would silently become 0.
+  if (raw === "") return { ok: false, reason: "Price is required" };
 
-## 12. Spaced revision prompts
-- After 1 day: Define coercion.
-- After 3 days: Compare `==` and `===`.
-- After 7 days: Explain object identity.
-- After 14 days: Predict tricky equality outputs.
+  const price = Number(raw);
+
+  // WHY: Number("12px") returns NaN, so reject malformed input before arithmetic.
+  if (!Number.isFinite(price) || price < 0) {
+    return { ok: false, reason: "Price must be a non-negative number" };
+  }
+
+  return { ok: true, value: price };
+}
+
+readPrice(" 12.50 "); // { ok: true, value: 12.5 }
+readPrice(""); // { ok: false, reason: "Price is required" }
+readPrice("12px"); // { ok: false, reason: "Price must be a non-negative number" }
+```
+
+```js
+const expectedUserId = "42";
+const routeUserId = new URL("https://example.test/users/42").pathname.split("/").pop();
+
+// WHY: both values are normalized to the same domain before the authorization check.
+const canView = Number(routeUserId) === Number(expectedUserId);
+
+const first = { role: "admin" };
+const second = { role: "admin" };
+const alias = first;
+
+first === second; // false: same properties do not make the same object
+first === alias; // true: both variables point to one object
+```
+
+```js
+const values = [NaN, 0, -0, "", [], null, undefined];
+
+values.map((value) => Boolean(value));
+// [false, false, false, false, true, false, false]
+
+Number.isNaN(NaN); // true: no coercion, and the value really is NaN
+Number.isNaN("NaN"); // false
+NaN === NaN; // false
+Object.is(NaN, NaN); // true
+0 === -0; // true
+Object.is(0, -0); // false
+```
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is type coercion, and how is implicit coercion different from explicit conversion?**
+
+Type coercion is changing a value from one type to another so an operation can continue. Implicit coercion is triggered by JavaScript, such as the conversion of `false` to `0` inside `false == 0`. Explicit conversion is code that states the decision, such as `Number(rawPrice)` or `String(userId)`. Explicit conversion is easier to review because the developer can validate the result and handle empty or invalid input rather than letting an operator choose the rule silently.
+
+**Q: Explain `ToPrimitive` with an example.**
+
+When an object is needed as a primitive, JavaScript asks it for one. It tries `valueOf()` and `toString()` according to the operation’s hint, and it stops at the first method that returns a primitive. For an empty array, `[].toString()` returns `""`; for an ordinary object, the default result is `"[object Object]"`. If both methods return objects, JavaScript throws a `TypeError`. This process is representation conversion, not deep inspection of all object fields.
+
+**Q: Why is `[] == false` true while `Boolean([])` is true?**
+
+The two expressions use different algorithms. `Boolean([])` applies `ToBoolean`, and every object is truthy. `[] == false` applies loose equality: `false` becomes `0`, the array becomes `""`, and the empty string becomes `0`; the final comparison is `0 == 0`. The result says nothing about the array’s truthiness in a conditional.
+
+**Q: What is the difference between `==` and `===`?**
+
+`===` requires matching types and then compares the values or object identities, so it does not perform coercion. `==` may convert booleans, strings, and objects before comparing them, with a special `null`/`undefined` case. `===` is the normal production default because it makes a type mismatch visible. `==` can be intentional for `value == null` when both nullish values should follow the same branch, but that exception should be clear to reviewers.
+
+**Q: How are objects compared?**
+
+Both equality operators compare objects by identity. `{ id: 1 } === { id: 1 }` is false because the two object literals allocate different objects. If two variables reference the same object, comparison is true. To compare structure, choose an explicit policy such as comparing selected stable fields, using a domain-specific comparator, or using a carefully chosen serialization; equality operators do not perform that work.
+
+**Q: What are the important `null` and `undefined` rules?**
+
+`null == undefined` is true, but `null === undefined` is false. Neither is loosely equal to `0`, `false`, or `""`. Use strict checks when the distinction matters. Use `value == null` only as a deliberate, narrow nullish check, never as a general “empty value” test.
+
+**Q: Why does `NaN === NaN` return false, and how should it be checked?**
+
+`NaN` represents an invalid numeric result and is defined to be unequal to every value, including another `NaN`. Use `Number.isNaN(value)` when the value must already be the number `NaN`. `Object.is(NaN, NaN)` is true, but it is usually less descriptive than `Number.isNaN` for validation.
+
+**Q: When would `Object.is` be preferable to `===`?**
+
+Use `Object.is` when the exact SameValue behavior matters: it recognizes `NaN` as equal to itself and treats `-0` and `+0` as different. It still compares objects by identity and does not deep-compare them. Most business comparisons do not need signed-zero semantics, so `===` remains clearer there.
+
+**Q: How should form input values be handled?**
+
+Treat DOM `input.value` as a string at the boundary, even for `type="number"`. First apply the product’s presence rule, then convert explicitly, then validate with `Number.isFinite` or a more specific rule. `valueAsNumber` can be useful for number inputs, but it yields `NaN` for an empty or invalid value, so the same validation decision is still required. Do not use `input.value == 0` as a shortcut because `"" == 0` is true.
+
+## 6. The Traps — What Goes Wrong
+
+- **“Falsy” means empty in every context.** `[]` and `{}` are truthy, while `""`, `0`, `NaN`, `null`, and `undefined` are falsy. Use a domain-specific presence check when an empty array, zero, or blank string has a meaningful business interpretation.
+
+- **Using `==` to validate raw form data.** `"" == 0` and `"0" == 0` are both true. Check for blank input first, convert explicitly, and validate the converted result.
+
+- **Assuming `===` deep-compares objects.** It does not. `{}` and `{}` are separate identities. Compare the fields that matter or use a tested comparator when structural equality is really the requirement.
+
+- **Using global `isNaN`.** `isNaN("hello")` is true because the function first converts the string to `NaN`; `Number.isNaN("hello")` is false because the string is not itself a numeric `NaN`. Prefer the `Number` form for input validation.
+
+- **Treating `null` and `undefined` as every kind of empty value.** Their loose-equality shortcut covers only each other. It does not cover `0`, `false`, or `""`; write the exact emptiness rule the product needs.
+
+- **Expecting `+` to always mean addition.** If either operand becomes a string primitive, `+` concatenates: `1 + "2"` is `"12"`. Convert numeric inputs before arithmetic so an accidental string does not change the operation.
+
+- **Believing object-to-primitive conversion is safe serialization.** Default strings such as `"[object Object]"` can collapse distinct objects into the same text. Use JSON or a domain serializer when the goal is transport or persistence, and define the format explicitly.
+
+## 7. Compare With Related Concepts
+
+- **`==` vs `===`:** `==` may translate operand types; `===` requires matching types first. Use `===` by default, and use `== null` only for an intentional “null or undefined” check.
+
+- **`===` vs `Object.is`:** both avoid coercion and use identity for objects; `Object.is` treats `NaN` as equal to itself and distinguishes signed zero. Use `Object.is` only when those exact edge cases matter.
+
+- **`ToBoolean` vs `ToNumber`:** truthiness decides control flow, while numeric conversion prepares arithmetic or numeric comparison. Use `Boolean(value)` or an explicit predicate for a boolean policy; use `Number(value)` only after deciding how blank and invalid input should behave.
+
+- **`Number()` vs `parseInt()`:** `Number("12px")` rejects the whole string with `NaN`, while `parseInt("12px", 10)` extracts `12`. Use `Number` for values that must be entirely numeric; use `parseInt` only when parsing an integer prefix is the intended format, always with a radix.
+
+- **Object identity vs structural equality:** identity asks whether two references point to one object; structural equality asks whether chosen contents match. Use identity for tracking the same in-memory entity, and a domain comparator for value objects or API payloads.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+When JavaScript compares unlike values, picture a customs desk: `==` lets each package be translated through a fixed chain, while `===` checks the labels before allowing a match. Remember the three separate questions—“what primitive can this object show?”, “how does this value convert?”, and “is it truthy?”—and the surprising equality examples stop being magic. In production, make the translation explicit at the boundary and keep the inside of the system strict.
