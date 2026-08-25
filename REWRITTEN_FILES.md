@@ -33,7 +33,9 @@ This file lists the topic pages rewritten during the sequential study-note rewri
 25. `src/javascript/concepts/shallow-copy-vs-deep-copy.md` — `f57c70b`
 26. `src/javascript/concepts/array-mutation.md` — `9ff19bb`
 27. `src/javascript/concepts/type-coercion-and-equality.md` — `c27eaa1`
+28. `src/javascript/concepts/flatmap.md` — `bacb460`
+29. `src/javascript/concepts/private-fields.md` — `f1acc84`
+30. `src/javascript/concepts/copying-array-methods.md` — `d8c62c9`
+31. `src/javascript/concepts/barrel-files.md` — `6997275`
 
-## Rewrite complete; final review pending
-
-Current count: 27 topic pages rewritten and committed.
+Current count: 31 topic pages rewritten and individually reviewed and committed.
