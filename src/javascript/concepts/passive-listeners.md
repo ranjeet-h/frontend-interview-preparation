@@ -1,110 +1,145 @@
 # Passive Listeners
 
-## Detailed explanation
-Passive listeners tell browser that event handler will not call `preventDefault()`. This lets browser scroll immediately without waiting for JavaScript, improving touch and wheel performance.
+## 1. Why This Exists — The Problem First
 
-They matter for frontend performance because scroll handlers can block smooth scrolling when browser must wait to see if code cancels default behavior.
+Imagine a user swiping a page to scroll while the main thread is busy doing unrelated JavaScript. If the browser has a non-passive `touchmove` or `wheel` listener, it may have to wait for that listener to finish before it knows whether the code will cancel scrolling with `preventDefault()`. The result is input that feels stuck even though the handler only wanted to observe the gesture.
 
-## 1. One-line mental model
-Passive listener says, "I will not cancel default scroll."
+This is especially painful for analytics, logging, and lightweight gesture tracking. Those listeners do not need to control scrolling, but without an explicit promise they can still sit on the decision path for the browser's default action. Passive listeners let the browser treat those observers as non-blocking, while keeping cancellation available for interactions that genuinely need it.
 
-## 2. Problem it solves
-Scroll and touch events can feel janky when browser waits for JavaScript before scrolling.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Use `{ passive: true }`.
-- Handler must not call `preventDefault()`.
-- Common for `touchstart`, `touchmove`, `wheel`.
-- Improves scroll responsiveness.
-- Wrong for handlers that must cancel default.
+Think of a railway crossing with an automatic gate. A train is the browser's default action—such as scrolling in response to a wheel or touch gesture. The signal operator is the event listener. If the operator is allowed to stop the train, the gate may need to wait for a response before opening safely.
 
-## 4. Visual / analogy
-Passive listener is green light for browser scroll.
+Registering the listener as passive is a signed instruction: “I only watch the train; I will never stop it.” The gate can open for the train immediately, and the observer can still record what happened. If the observer later tries to press the emergency stop, the request is ignored and the browser may warn in the console. If the application really must stop the train, the listener cannot be passive.
 
-```js
-window.addEventListener("scroll", onScroll, { passive: true });
+The analogy has an important limit: passive does not move the observer to another thread or make the observer's work cheap. The observer still runs as JavaScript on the main thread. The promise only removes the browser's need to wait for that observer before starting a cancelable default action.
+
+## 3. How It Actually Works — The Full Explanation
+
+`addEventListener` accepts an options object. When `passive: true` is present, the listener is registered with a contract that its callback will not cancel the event by calling `event.preventDefault()`.
+
+For a cancelable input event, the sequence is roughly:
+
+1. The browser receives the input and determines the event path and possible default action.
+2. A non-passive listener means the browser must preserve the possibility that JavaScript will call `preventDefault()`. A slow listener can therefore delay the default action.
+3. A passive listener removes that possibility for its callback. The browser may begin the default action without waiting for that callback to decide whether to cancel it.
+4. The callback still runs and can read the event, update application state, or send a small measurement. Its work still competes with other main-thread JavaScript.
+
+The useful events are usually `touchstart`, `touchmove`, and `wheel`, because their default behavior can involve scrolling or zooming. The basic `scroll` event is different: it is not cancelable, so `preventDefault()` cannot stop scrolling there. Marking a `scroll` listener passive is harmless but does not provide the important cancellation-related optimization; the valuable decision is usually whether the input event that drives the scroll can be canceled.
+
+Passive and cancelable are related but not identical. `event.cancelable` describes whether the event's default action can be canceled in the current dispatch. `passive` describes the promise made by one particular listener. A passive listener can receive an event that is normally cancelable, but its own `preventDefault()` call has no effect.
+
+Modern browsers also apply browser-specific passive defaults for some `wheel` and touch listeners on root-level targets such as `window`, `document`, and `document.body`. Do not rely on that implicit behavior when the code's intent matters. State the option explicitly. In particular, if a custom interaction must cancel the default action, explicitly use `{ passive: false }`; otherwise a browser's root-level default may make the cancellation fail.
+
+Passive does not replace performance work. A listener that performs a large calculation, forces layout repeatedly, or schedules too much rendering can still make the page sluggish after it runs. Passive only prevents that listener from being the reason the browser must wait before starting a cancelable default action. Keep the callback small, throttle high-frequency application work when appropriate, and use CSS `touch-action` where it expresses the gesture policy more directly for pointer interactions.
+
+## 4. Real Code — See It Working
+
+This browser example observes wheel input while leaving the container's native scrolling in charge. Save it as an `.html` file and open it in a browser; the counter updates while the element continues to scroll normally.
+
+```html
+<div id="feed" style="height: 180px; overflow: auto; border: 1px solid #999">
+  <p>Scroll this panel. The listener measures input; it does not own scrolling.</p>
+  <p>More content keeps the panel scrollable.</p>
+  <p>More content keeps the panel scrollable.</p>
+  <p>More content keeps the panel scrollable.</p>
+  <p>More content keeps the panel scrollable.</p>
+  <p>More content keeps the panel scrollable.</p>
+</div>
+<output id="count">Wheel events observed: 0</output>
+
+<script>
+  const feed = document.querySelector("#feed");
+  const count = document.querySelector("#count");
+  let wheelEvents = 0;
+
+  feed.addEventListener("wheel", () => {
+    // The browser can keep the native scroll decision independent of this observer.
+    wheelEvents += 1;
+    count.value = `Wheel events observed: ${wheelEvents}`;
+  }, { passive: true });
+</script>
 ```
 
-## 5. Minimal example
+Here is the opposite case. A custom horizontal gallery may need to consume a wheel gesture instead of allowing the panel to scroll vertically. That listener must opt out of passivity because cancellation is part of its job.
 
 ```js
-window.addEventListener("wheel", handleWheel, { passive: true });
+// This local fixture stands in for the browser DOM in this runnable example.
+const gallery = {
+  scrollLeft: 0,
+  addEventListener(type, callback, options) {
+    this.listener = { type, callback, options };
+  },
+  dispatch(type, event) {
+    if (this.listener?.type === type) this.listener.callback(event);
+  },
+};
+
+gallery.addEventListener("wheel", (event) => {
+  if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    event.preventDefault(); // Valid only because passive is explicitly false.
+    gallery.scrollLeft += event.deltaX;
+  }
+}, { passive: false });
+
+gallery.dispatch("wheel", {
+  deltaX: 40,
+  deltaY: 10,
+  preventDefault() {
+    this.defaultPrevented = true;
+  },
+});
 ```
 
-## 6. Real-world example
+If the first example called `event.preventDefault()`, the call would not cancel the default action and the browser could print a warning. The fix is not to make every listener active; it is to decide whether cancellation is truly required and choose the option that matches that decision.
 
-```js
-document.addEventListener("touchmove", trackTouch, { passive: true });
-```
+## 5. The Interview Questions — All of Them, Done Properly
 
-Analytics can observe touch movement without blocking scroll.
+**Q: What does a passive event listener promise?**
 
-## 7. Common interview questions
+It promises that this callback will not cancel the event's default action with `preventDefault()`. That promise lets the browser avoid waiting for this listener before beginning a cancelable action such as scrolling. The callback still runs normally on the main thread.
 
-#### What is a passive listener?
-- **The Engine Mechanism (Why it behaves this way):** When a DOM event fires (such as `touchstart` or `wheel`), the browser's compositor thread (responsible for painting frames to the screen) intercepts the input. Normally, the compositor thread must block and coordinate with the main thread (where JavaScript executes on the Call Stack) because the handler might call `preventDefault()` to cancel the default browser behavior (e.g., scrolling). By registering a passive listener via `{ passive: true }`, the developer guarantees that the callback will not call `preventDefault()`. This allows the compositor thread to execute the default action (scrolling/zooming) immediately on a separate thread, without waiting for the main thread's Call Stack to clear, allocate event objects, or evaluate lexical scopes.
-- **The Unforgettable Mental Model:** Think of the compositor thread as a highway toll booth. Normally, the toll operator (compositor) must make a telephone call to the central office (JavaScript main thread) to ask, "Is it okay if I let this car pass?" for every single car. A passive listener is a pre-approved fast-pass lane: the office has signed a binding agreement saying, "We will never block traffic. Just let them through immediately."
-- **The Trap:** Interviewers might ask if passive listeners speed up the execution of your JavaScript. They don't! The JavaScript code runs at the exact same speed. What changes is the decoupling of the browser's compositing/rendering pipeline from the JavaScript execution thread, preventing JS bottlenecks from dragging down the visual frame rate.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'A passive event listener is an option passed to `addEventListener` that explicitly promises the browser's rendering engine that the handler will not cancel the default behavior by calling `preventDefault()`. By registering a listener as passive, we allow the compositor thread to perform immediate page scrolling or zooming without blocking on the main thread, which avoids frame drops and scrolling jank.'"
+**Q: Does a passive listener make JavaScript execute faster?**
 
-#### Why useful for scroll?
-- **The Engine Mechanism (Why it behaves this way):** During scrolling (via `touchstart`, `touchmove`, or `wheel`), the browser must determine if the default scroll action is canceled. Under standard circumstances, the compositor thread halts frame dispatching until the main JavaScript thread's Event Loop picks up the scroll event, executes the listener, and returns. If the main thread is busy with complex computations, React reconciliation, or garbage collection, this synchronous handshake creates frame delay (jank). A passive scroll listener avoids this handshake completely, allowing the compositor thread to update the scroll offset immediately on its own high-priority thread.
-- **The Unforgettable Mental Model:** Imagine you're riding an elevator. When you hit a button, instead of checking with a central slow security guard who has to look up your clearance in a thick book, the elevator doors immediately start closing.
-- **The Trap:** Not all scroll events can be made passive. Indeed, the actual `scroll` event itself is already un-cancelable by specification (you cannot cancel it with `preventDefault()`), so making a `scroll` listener passive is structurally redundant. The real benefit comes when you listen to *touch* or *wheel* events (`touchstart`, `touchmove`, `wheel`) which *can* cancel scrolling if not passive.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Passive listeners are critical for scroll performance because the touch and wheel events that drive scrolling are cancelable by default. Without `{ passive: true }`, the compositor thread is forced to delay scrolling until the main thread evaluates the JavaScript handler, leading to scroll lag. By using passive listeners, we guarantee the rendering engine can scroll immediately, achieving a buttery-smooth 60 or 120 FPS visual experience.'"
+No. It does not reduce the callback's algorithmic cost, move it to a worker, or make a long task short. It changes the browser's dependency: the browser does not have to wait for this callback to learn whether it should start the default action. A 100 ms passive callback is still 100 ms of main-thread work and can still delay later input or rendering.
 
-#### Can passive listener call `preventDefault()`?
-- **The Engine Mechanism (Why it behaves this way):** Under the hood, if you register a listener with `{ passive: true }` and then invoke `event.preventDefault()`, the browser engine ignores the request. Specifically, the engine marks the internal event state flags as non-cancelable. In the browser console, the engine throws a non-blocking console warning (like `Unable to preventDefault inside passive event listener invocation`).
-- **The Unforgettable Mental Model:** Signing a binding contract stating, "I will not buy this house," and then trying to buy it. The bank (browser engine) simply points at the contract, rejects your payment request, and sounds a warning siren, but doesn't crash the entire city.
-- **The Trap:** Believing that calling `preventDefault()` in a passive listener will throw a runtime JavaScript error that crashes your application. It does not throw an exception; it merely prints a warning to the console and is ignored.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Technically, yes, you can physically write the code to call `preventDefault()`, but it will have no effect. The browser's event system will ignore the call and issue a console warning. The default behavior will proceed uninterrupted because the compositor thread has already initiated the action.'"
+**Q: What happens if `preventDefault()` is called inside a passive listener?**
 
-#### Which events commonly use it?
-- **The Engine Mechanism (Why it behaves this way):** The events that benefit are those that can block UI scrolling or zooming because they trigger on user gestures before the rendering engine updates the viewport. These are `touchstart`, `touchmove`, `wheel`, and `mousewheel`. In modern browsers (Chrome 56+, Safari 11.1+, Firefox 61+), these events are actually registered as passive by *default* on `window`, `document`, and `document.body` to protect performance.
-- **The Unforgettable Mental Model:** Guardrails on a winding mountain road. The browser automatically places guardrails (default passive status) on the highest-risk scroll/touch routes so users don't drive off the performance cliff.
-- **The Trap:** Assuming all events are passive by default. The browser only defaults `touchstart`/`touchmove`/`wheel` to passive on root-level nodes (`window`, `document`, `body`). If you bind a `touchmove` listener to a specific internal `div`, it might not default to passive, and you should declare it explicitly.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'The most common events are touch gestures and wheel scrolling, specifically `touchstart`, `touchmove`, and `wheel`. Because these are the primary drivers of viewport movement, modern browsers actually auto-default these events to passive at the window, document, and body levels, but we should still explicitly apply them on nested scrollable elements to ensure cross-browser consistency.'"
+The call has no effect, so the default action is not canceled. Browsers commonly emit a console warning. This is a deliberate consequence of the listener's contract, not an exception that application code should depend on catching.
 
-#### How does passive listener improve performance?
-- **The Engine Mechanism (Why it behaves this way):** The improvement is measured in Input Latency and Frame Rate (FPS). When a user scrolls, the input event is queued on the browser's I/O thread. Without a passive listener, the compositor thread must block until the main thread executes the event listener callback in the Microtask/Macrotask queues of the Event Loop. If the main thread's Call Stack is blocked (e.g. running heavy JS), this blocks the frame render, causing a stutter (layout shift or delay). A passive listener breaks this synchronous dependency, allowing the I/O and compositor threads to render scrolling at 60Hz/120Hz while the main thread processes JS asynchronously.
-- **The Unforgettable Mental Model:** A busy restaurant kitchen. Instead of the waiter (compositor thread) standing and waiting inside the kitchen for the chef (main thread) to confirm if a table ordered a simple glass of water (scrolling), the waiter immediately pours the water and checks in with the chef later when the chef is free.
-- **The Trap:** Confusing passive event listeners with optimizing the event handler callback's execution time. Passive listeners do not make your JavaScript execution faster; they prevent slow JavaScript from blocking the browser's hardware-accelerated rendering pipeline.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'It improves performance by decoupling the hardware-accelerated compositor thread from the main JavaScript thread. Instead of forcing the compositor to block on the Event Loop to check if `preventDefault()` will be called, the compositor immediately paints the scrolling viewport, completely eliminating touch-scrolling lag even when the main thread is fully saturated.'"
+**Q: Which events are the usual candidates?**
 
-## 8. Active recall test
+`touchstart`, `touchmove`, and `wheel` are the common cases because they can participate in scrolling or zooming decisions. `scroll` itself cannot be canceled, so passive is generally redundant there. Check the event's actual default action and whether the handler needs cancellation rather than applying the option mechanically.
 
-#### 1. What does passive promise?
-- **Explanation/Answer:** It promises the browser engine that the event listener will not call `event.preventDefault()`. This allows the browser to execute the default action (like scrolling) immediately on the compositor thread without waiting for the main thread to run the JavaScript handler.
+**Q: When should a listener be non-passive?**
 
-#### 2. What method becomes invalid?
-- **Explanation/Answer:** `event.preventDefault()` becomes invalid and ineffective. If called inside a passive listener, it is ignored by the engine, which prints a warning to the console, and the default browser action is still performed.
+Use `{ passive: false }` when the interaction intentionally prevents a browser default—for example, a custom gesture that consumes a wheel event or a legacy touch interaction that must suppress scrolling. Make that choice explicit and keep the cancellation logic narrow. For many modern pointer interactions, declaring the gesture with CSS `touch-action` is a clearer complement or alternative.
 
-#### 3. Why does scroll improve?
-- **Explanation/Answer:** Scrolling improves because the compositor thread can render the scroll movement instantly without blocking on a synchronous handshake with the main JavaScript thread, bypassing any main-thread CPU bottlenecks (like heavy script execution or layout reflows).
+**Q: Are listeners passive by default?**
 
-#### 4. Name two event types.
-- **Explanation/Answer:** `touchmove` and `wheel` (or `touchstart`). These are input-intensive gestures that default to triggering scroll behaviors.
+The DOM API's general default is not a universal “always passive” rule. Browsers have added special root-target defaults for some wheel and touch events, and those defaults vary by event, target, and browser. Code that depends on cancellation should explicitly say `{ passive: false }`; code that is observation-only should explicitly say `{ passive: true }` so its intent is clear on every target.
 
-#### 5. When not use passive?
-- **Explanation/Answer:** You should not use a passive listener when you explicitly *need* to prevent the browser's default action. For example, if you are building a custom swipe-to-dismiss gesture, a custom drag-and-drop container, or a pinch-to-zoom component where the default browser scrolling or bouncing behavior must be suppressed.
+**Q: Is passive the same as throttling a scroll handler?**
 
-## 9. Mistakes / traps
-- Calling `preventDefault()` in passive listener.
-- Marking listeners passive when cancel needed.
-- Thinking passive makes handler faster; it mainly unblocks browser.
-- Using scroll listener when IntersectionObserver better.
+No. Passive controls whether the browser may wait for the listener before a default action. Throttling controls how often the application performs work in response to a stream of events. A listener can be passive and still do too much work on every event; a listener can be throttled and still incorrectly block cancellation. They solve different problems and can be used together.
 
-## 10. Compare with related concepts
-- **Passive vs active listener:** cannot cancel vs may cancel.
-- **Passive listener vs throttle:** browser scroll optimization vs callback frequency control.
-- **Passive listener vs IntersectionObserver:** event handling vs browser observation.
+## 6. The Traps — What Goes Wrong
 
-## 11. Summary from memory
-Explain why passive touch listener improves scroll responsiveness.
+- **Calling `preventDefault()` after adding `{ passive: true }`.** The cancellation is ignored, often with a warning. Remove the call if the listener is only observing, or explicitly register it as non-passive if cancellation is required.
+- **Making every input listener passive.** This can silently break custom scrolling, drag, swipe, or zoom behavior. First decide who owns the default action: the browser or the application.
+- **Treating passive as a performance cure-all.** Passive removes one wait in the input path; it does not optimize the callback. Profile and reduce the callback's work, throttle expensive reactions, and avoid forced layout when the handler runs frequently.
+- **Using `passive: true` on `scroll` and claiming it fixes scroll jank.** A `scroll` event is not cancelable, so it was not blocking the default scroll decision in the first place. Look for cancelable `wheel` or touch listeners, long tasks, layout work, or excessive rendering instead.
+- **Relying on browser defaults.** A listener attached to `window` may have a different implicit passive behavior from one attached to a nested element, and browser behavior is not a portable application contract. Be explicit about both the observation-only and cancellation cases.
+- **Confusing `preventDefault()` with propagation control.** Passive affects cancellation of the browser's default action. It does not stop an event from bubbling. Use `stopPropagation()` or `stopImmediatePropagation()` only when the separate propagation problem is the one you intend to solve.
 
-## 12. Spaced revision prompts
-- 1 day: Define passive listener.
-- 3 days: Explain `preventDefault` limitation.
-- 7 days: Use passive with wheel.
-- 14 days: Compare passive and throttle.
+## 7. Compare With Related Concepts
 
+- **Passive listener vs non-passive listener:** Passive promises not to cancel and can remove the browser's need to wait; non-passive preserves the ability to cancel. Use passive for observation-only input and non-passive only when cancellation is required.
+- **Passive listener vs throttling:** Passive changes the browser's default-action dependency; throttling reduces how often your code performs work. Use passive for input-path responsiveness and throttling for expensive repeated application work.
+- **Passive listener vs `scroll` listener:** Passive matters most before a cancelable scroll decision, such as on `wheel` or touch input. A `scroll` listener observes scrolling after it happens and cannot cancel it.
+- **Passive listener vs CSS `touch-action`:** Passive is a JavaScript listener contract. `touch-action` declares which pointer gestures an element allows the browser to handle in CSS. Prefer `touch-action` for a stable pointer-gesture policy, and use passive listeners when JavaScript needs to observe input without canceling it.
+- **`preventDefault()` vs `stopPropagation()`:** `preventDefault()` cancels a browser action; `stopPropagation()` controls travel to other targets. A passive listener gives up the first ability, not the second.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Passive is the browser's “you may proceed” stamp: the listener can watch the gesture, but it has surrendered the emergency brake. It does not make the observer faster—it simply stops the browser from waiting for an observer that promised never to cancel.
