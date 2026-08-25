@@ -26,7 +26,7 @@ The important part of the analogy is this: the cleanup team does not ask, "Do yo
 
 The heap is the engine-managed memory area used for dynamic, reference-heavy data. In normal JavaScript code, that means objects, arrays, functions, maps, sets, dates, regexes, many closure-related structures, and host objects such as DOM nodes. The language spec does not force engines to use one literal memory layout, so the safe mental model is not "all objects are physically stored in exactly this shape." The safe mental model is "complex values live in engine-managed memory, and code usually works with references to them."
 
-That is why the old interview shortcut "primitives go on the stack, objects go on the heap" is only a rough teaching aid. It helps you understand shared references, but it is not a universal ECMAScript guarantee. Engines are free to optimize representation details. What does stay true for day-to-day reasoning is that object identity, garbage collection, and memory leaks all depend on heap-managed reachability.
+That is why the old stack-versus-heap shortcut is only a rough teaching aid. ECMAScript does not guarantee a simple physical placement rule that puts primitives in one region and objects in another; engines optimize value representations as they see fit. The useful runtime model is that object identity, garbage collection, and memory leaks depend on heap-managed reachability.
 
 Here is the flow that matters in practice:
 
@@ -58,7 +58,7 @@ In all of those cases, the unused data is still reachable, so the collector corr
 
 ## 4. Real Code — See It Working
 
-### Shared references are shared heap data
+**Shared references are shared heap data**
 
 ```js
 const user = {
@@ -79,7 +79,7 @@ console.log(user === sameUser); // true
 
 Both variables can reach the same heap object, so mutating through one variable is visible through the other.
 
-### Reassignment changes the path, not the original object
+**Reassignment changes the path, not the original object**
 
 ```js
 let currentSession = { userId: 42 };
@@ -94,7 +94,7 @@ console.log(originalSession.userId); // 42
 
 Reassignment did not mutate the old object. It only changed which heap object `currentSession` now points to.
 
-### A cache can keep memory alive long after the UI is done with it
+**A cache can keep memory alive long after the UI is done with it**
 
 ```js
 const userCache = new Map();
@@ -121,7 +121,7 @@ console.log(userCache.has("u1")); // false
 
 This is normal application code, but it teaches the real lesson: long-lived containers become memory roots for everything they still reference.
 
-### Closures can keep data reachable after a function returns
+**Closures can keep data reachable after a function returns**
 
 ```js
 function createSearchHandler(bigResults) {
@@ -156,7 +156,7 @@ So the stack is about control flow, while the heap is about stored data. They ar
 
 In practical JavaScript reasoning, objects are heap-managed values. When you create an object, the engine allocates memory for it and your variable gets a way to reach that value. That is why copying an object variable usually copies the reference, not a deep copy of the object.
 
-Be careful not to overstate representation details. It is fine to say "objects live on the heap" in an interview, but the precise claim should stay at the mental-model level, not "ECMAScript guarantees a raw pointer at this exact place."
+Be careful not to overstate representation details. Say that objects are heap-managed values and that their identity and lifetime are explained by reachability, while remembering that ECMAScript does not guarantee a fixed primitive-versus-object placement and engines optimize representations.
 
 **Q: What does it mean that variables hold references?**
 
