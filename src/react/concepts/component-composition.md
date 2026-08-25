@@ -1,129 +1,534 @@
-# Component Composition
+# Component Composition Patterns in React
 
-## Detailed explanation
-Component composition is the React pattern of building larger interfaces by nesting smaller components together. Instead of creating one component with many flags for every variation, composition lets the caller decide what content and subparts to place inside a reusable structure.
+## 1. Why This Exists — The Problem First
 
-This is one of React's most important design ideas. It powers `children`, compound components, layout wrappers, slots, and headless components. Good composition keeps components flexible without making their APIs vague.
-
-## 1. One-line mental model
-Component composition builds complex UI by combining smaller components instead of creating one component that knows every variation.
-
-## 2. Problem it solves
-Large configurable components become hard to use and maintain. Composition lets consumers assemble UI from focused parts while each part keeps a clear responsibility.
-
-## 3. Core idea
-- Compose components through `children`, props, and named subcomponents.
-- Prefer composition over inheritance.
-- Let layout wrappers receive content instead of hardcoding it.
-- Use compound components when related pieces share behavior.
-- Composition keeps APIs flexible without endless boolean props.
-
-## 4. Visual / analogy
-Composition is like assembling a meal from dishes. You do not need one giant "all possible meals" dish.
-
-```mermaid
-flowchart TD
-  Card["Card"] --> Header["Card.Header"]
-  Card --> Body["Card.Body"]
-  Card --> Footer["Card.Footer"]
-```
-
-## 5. Minimal example
+Every frontend team eventually creates a "God Component." It usually starts innocently with a reusable modal, card, or dropdown:
 
 ```tsx
-function Card({ children }: { children: React.ReactNode }) {
-  return <section className="card">{children}</section>;
+// Month 1: Simple and clean
+<Modal title="Delete User" isOpen={isOpen} onClose={handleClose} onSubmit={handleDelete} />
+```
+
+Three months later, the product team wants a modal with an icon in the header. Next sprint, marketing needs a modal with a promotional banner at the top and no footer buttons. Then billing needs a modal with a two-column layout and a sticky terms-and-conditions drawer.
+
+If you solve this by adding configuration props, your component quickly explodes into an unmaintainable monster:
+
+```tsx
+// Month 6: The Mega-Component Prop Explosion
+<Modal
+  title="Upgrade Plan"
+  isOpen={isOpen}
+  onClose={handleClose}
+  hasIcon
+  iconType="sparkles"
+  showBanner
+  bannerType="discount"
+  customHeaderRight={<HelpButton />}
+  hideDefaultFooter
+  customFooter={<ThreeTierCheckoutButtons />}
+  layoutVariant="two-column"
+  isScrollableBody
+  withDividers
+  bodyClassName="p-8"
+/>
+```
+
+Inside this `Modal`, you end up with twenty nested ternary operators, fragile boolean flags overriding one another, and brittle CSS selectors. Modifying the modal for billing breaks the checkout page. 
+
+The alternative classical OOP developers reached for was class inheritance (`class SpecialBillingModal extends BaseModal`). But in UI development, class inheritance creates rigid hierarchies: base class changes ripple destructively down all subclasses, and you cannot combine behaviors (like a modal that is both draggable and animated) without running into the diamond inheritance problem.
+
+React was built on a foundational philosophy: **Composition over Inheritance**. Instead of asking a single component to anticipate every possible visual layout through boolean flags or rigid class hierarchies, you build small, focused components that wrap around and slot inside one another.
+
+---
+
+## 2. The Analogy — Make It Obvious
+
+Think of component composition as the difference between a **Pre-Packaged TV Dinner** and a **Bespoke Bento Box**.
+
+A **Pre-Packaged TV Dinner** (the monolithic mega-component with boolean props) comes in a single molded aluminum tray from the factory. It has fixed compartments: one for mystery meat, one for mashed potatoes, one for corn, and one for a brownie. If you want double potatoes and no meat, or want to replace the corn with steamed broccoli, you cannot do it. You have to ask the factory to design a whole new SKU (`TVDinnerVariant_DoublePotato_NoMeat_Broccoli`). The container dictates and restricts the entire contents.
+
+A **Bespoke Bento Box** (component composition) is an elegant box with modular dividers:
+
+- **The Box itself** provides the outer structure, border, and backdrop (the layout wrapper like `<Modal>` or `<Card>`).
+- **The Compartments** are the slots (`children`, `headerSlot`, `footerSlot`) that define *where* things go without caring *what* goes into them.
+- **The Food Dishes** are the independent child components (`<Button>`, `<Avatar>`, `<Badge>`, `<Form>`) prepared separately.
+- **The Table Manners & Chopsticks** represent shared behavior via React Context (the Compound Component pattern), where dishes inside the same box coordinate state without the consumer having to wire wires between every individual piece.
+
+If you want sushi today and tempura tomorrow, you never rebuild the bento box. You just place different dishes into its compartments.
+
+---
+
+## 3. How It Actually Works — The Full Explanation
+
+In React, components are plain JavaScript functions that accept props and return React elements. A React element is not actual DOM; it is a lightweight JavaScript object descriptor (e.g., `{ type: 'div', props: { children: 'Hello' } }`). 
+
+Because React elements are plain JavaScript objects, they can be passed as arguments, assigned to variables, returned from functions, and nested inside other elements without any special framework magic.
+
+There are five core patterns of component composition in modern React:
+
+**1. Containment (`children` and Named Element Slots)**
+Some components do not know their children ahead of time (e.g., `Sidebar`, `Dialog`, `Card`). They use the special `children` prop to pass whatever is nested between their opening and closing JSX tags directly into their output.
+
+When you need multiple independent insertion zones, you use named slots. In React, a slot is simply a prop that accepts a `ReactNode` or `ReactElement`:
+
+```tsx
+function Layout({ sidebar, header, children }: LayoutProps) {
+  return (
+    <div className="layout">
+      <aside>{sidebar}</aside>
+      <main>
+        <header>{header}</header>
+        <section>{children}</section>
+      </main>
+    </div>
+  );
+}
+```
+
+*The Critical Performance Invariant of Containment:*
+When a parent renders JSX and passes it as `children` to a wrapper component, that child JSX is evaluated in the *parent's* render scope. If the wrapper component re-renders due to its own internal state (e.g., an expand/collapse toggle or a hover animation), the `children` element object reference remains identical across renders. React recognizes that the element reference hasn't changed and skips re-rendering that child subtree. Containment is one of React's most powerful built-in performance optimization techniques.
+
+**2. Specialization (Configuring Generics into Specific Variants)**
+Instead of using inheritance to make a "subclass" of a component, we use specialization: a specific component renders a generic one and configures it with distinct props or children.
+
+```tsx
+// Generic Base Component
+function Dialog({ title, children }: DialogProps) {
+  return (
+    <div className="dialog-box">
+      <h2>{title}</h2>
+      {children}
+    </div>
+  );
 }
 
-<Card><h2>Profile</h2><p>User details</p></Card>;
+// Specialized Variant
+function WelcomeDialog() {
+  return (
+    <Dialog title="Welcome to the Platform">
+      <p>Thank you for signing up. Let's get your profile set up.</p>
+    </Dialog>
+  );
+}
 ```
 
-## 6. Real-world example
+This establishes a "has-a" relationship instead of an "is-a" relationship, keeping the codebase flexible and easy to refactor.
+
+**3. Compound Components (Implicit State Sharing with Context)**
+Compound components are sets of components that work together to accomplish a single UI task while sharing state behind the scenes (like `<select>` and `<option>` in native HTML, or `<Tabs>` and `<Tab>` in UI libraries).
+
+Instead of passing explicit state props to every single child, the parent container exposes a React Context. The subcomponents consume that context directly to read active state and trigger state changes. 
+
+This inverts control back to the consumer. The consumer can rearrange tabs, insert custom icons, or wrap tab panels in arbitrary divs for layout without breaking the underlying tab switching logic.
+
+**4. Render Props (Delegating Render Logic via Functions)**
+A render prop is a prop whose value is a function that returns a React element. The component manages stateful behavior or calculations (such as mouse coordinates, virtualization windows, or list filtering) and calls the function with that internal data, delegating the visual rendering back to the caller.
+
+While custom hooks have largely replaced render props for sharing pure state logic, render props remain essential for *render delegation*—such as virtualized list renderers (`<VirtualList renderItem={(item) => <Row item={item} />} />`) where a parent component manages layout dimensions and DOM virtualization while letting the caller define the item's markup.
+
+**5. Higher-Order Components (HOC) vs. Custom Hooks**
+In older class-based React, logic composition was achieved through Higher-Order Components—functions that took a component and returned an enhanced component (`withAuth(UserProfile)`).
+
+HOCs suffered from three major architectural flaws:
+- Prop collisions (two HOCs injecting a prop with the same name).
+- Wrapper hell in the React DevTools tree (10 layers of nesting).
+- Type inference complexity in TypeScript.
+
+Modern React uses Custom Hooks (`const { user } = useAuth()`) inside function components to compose logic flatly, while using component composition (`children` and Compound Components) to compose markup and structure.
+
+---
+
+## 4. Real Code — See It Working
+
+Here are production-ready patterns illustrating containment, named slots, and compound components with TypeScript.
+
+**Example 1: Containment with Named Slots and Render Optimization**
 
 ```tsx
-<Dialog>
-  <Dialog.Trigger>Edit profile</Dialog.Trigger>
-  <Dialog.Content>
-    <Dialog.Title>Edit profile</Dialog.Title>
-    <ProfileForm />
-  </Dialog.Content>
-</Dialog>
+import React, { useState } from 'react';
+
+interface CollapsiblePanelProps {
+  title: string;
+  actionsSlot?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+// The wrapper manages its own toggle state without causing children to re-render
+export function CollapsiblePanel({ title, actionsSlot, children }: CollapsiblePanelProps) {
+  const [isExpanded, setIsExpanded] = useState(true);
+
+  return (
+    <div className="border border-neutral-200 rounded-lg shadow-sm">
+      <div className="flex items-center justify-between p-4 bg-neutral-50 border-b">
+        <h3 className="font-semibold text-lg text-neutral-800">{title}</h3>
+        <div className="flex items-center gap-2">
+          {/* Named Slot: Injected header actions */}
+          {actionsSlot}
+          <button
+            onClick={() => setIsExpanded((prev) => !prev)}
+            className="text-sm px-2 py-1 bg-white border rounded hover:bg-neutral-100"
+          >
+            {isExpanded ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
+      </div>
+
+      {/* Default Slot: Content passed through children */}
+      {isExpanded && <div className="p-4">{children}</div>}
+    </div>
+  );
+}
+
+// Usage: Heavy chart does not recalculate/re-render when panel expands or collapses
+export function DashboardView() {
+  return (
+    <CollapsiblePanel
+      title="Revenue Analytics"
+      actionsSlot={<button className="text-xs text-blue-600 font-medium">Export CSV</button>}
+    >
+      <p className="text-neutral-600">All data synced 5 minutes ago.</p>
+    </CollapsiblePanel>
+  );
+}
 ```
 
-The dialog owns behavior and accessibility; the caller composes the content.
+**Example 2: Complete Compound Component Pattern with React Context**
 
-## 7. Common interview questions
-#### What is component composition?
-- **The Engine Mechanism (Why it behaves this way):** Component composition is React's mechanism of building complex UIs by nesting components within each other. During the render phase, React calls the parent component function, which returns JSX containing child component calls. React then recursively calls each child's function, building a tree of React element objects. Each component receives its content through the `children` prop or named props, and each child renders independently with its own props and state. The Fiber reconciler then compares this new element tree with the previous one and commits only the changes. Composition works because React elements are just plain JavaScript objects — they can be passed, wrapped, and rearranged without any special framework machinery.
-- **The Unforgettable Mental Model:** The **Russian Nesting Dolls with a Twist**. Each doll (component) can contain any other doll inside it, and the inner dolls don't need to know what the outer doll looks like. A small doll fits inside a big doll, and the big doll doesn't care what's inside — it just provides the space.
-- **The Trap:** Confusing composition with inheritance. React doesn't use class extension for UI reuse. Composition is about nesting and props, not extending and overriding.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Component composition is how React builds complex UIs by nesting smaller, focused components together. Instead of creating one mega-component with flags for every variation, we build flexible structures that accept content through children and named props. This keeps components small, testable, and reusable. Composition is React's primary mechanism for code reuse — not inheritance."
+Below is a complete, accessible, type-safe `<Accordion>` widget implementing compound components with static namespace exports.
 
-#### Why prefer composition over inheritance?
-- **The Engine Mechanism (Why it behaves this way):** Inheritance in class-based UI frameworks creates rigid hierarchies where child classes inherit all parent behavior and must override what they don't want. This leads to fragile base classes, diamond inheritance problems, and components that carry unnecessary baggage. React's composition model avoids this entirely — components are plain functions that receive props and return elements. There's no prototype chain, no method resolution order, no super() calls. During reconciliation, React treats each component independently based on its element type and key, not its position in an inheritance hierarchy. This makes components independently testable, replaceable, and composable in any arrangement.
-- **The Unforgettable Mental Model:** **LEGO vs. Clay Sculpture**. LEGO (composition) — snap together any pieces in any arrangement, swap pieces freely, each piece is independent. Clay sculpture (inheritance) — once you mold a base shape, changing it affects everything built on top. You can't easily swap out just the arms.
-- **The Trap:** Trying to replicate class inheritance patterns in React with higher-order components or wrapper functions that pass through every prop. This creates the same rigidity inheritance had.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Composition over inheritance is a core React principle because inheritance creates rigid, coupled hierarchies where changes to a base class ripple through all descendants. Composition keeps components loosely coupled — each component has a clear contract through props, can be tested in isolation, and can be combined in any arrangement. React's function component model naturally supports composition through children props and element passing, making inheritance unnecessary for UI reuse."
+```tsx
+import React, { createContext, useContext, useState } from 'react';
 
-#### How does `children` support composition?
-- **The Engine Mechanism (Why it behaves this way):** The `children` prop is a special prop that React automatically populates with whatever JSX is placed between a component's opening and closing tags. During the render phase, when React encounters `<Card><h2>Title</h2></Card>`, it creates a React element for `Card` with `children` set to the `h2` element object. The `Card` component function receives this as `props.children` and can render it anywhere in its output. The `children` prop can be a single element, an array of elements, a string, a number, or even a function (render props). React doesn't process or transform children — it passes them through as-is, letting the receiving component decide how to render them.
-- **The Unforgettable Mental Model:** The **Picture Frame**. The frame (component) provides the border, styling, and structure. Whatever photo you place inside it (children) gets displayed within that structure. The frame doesn't care what the photo is — it just holds it.
-- **The Trap:** Assuming `children` is always a single React element. It can be undefined, an array, a string, or a function. Always use `React.Children` utilities or check types before manipulating children.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The children prop is React's built-in slot mechanism. Whatever content you place between a component's tags becomes its children prop. The component can render children directly, wrap them in additional markup, conditionally render them, or even transform them using React.Children utilities. This makes components like Card, Dialog, and Layout incredibly flexible — they provide structure and behavior while letting consumers supply the content."
+// 1. Context definition for internal state sharing
+interface AccordionContextType {
+  openItemId: string | null;
+  toggleItem: (id: string) => void;
+}
 
-#### What are compound components?
-- **The Engine Mechanism (Why it behaves this way):** Compound components are a group of related components that work together to form a complete widget, sharing implicit state through React Context. The parent component (e.g., `<Tabs>`) creates a context with shared state (active tab index, change handler). Child components (e.g., `<TabList>`, `<Tab>`, `<TabPanel>`) consume this context to coordinate behavior without explicit prop passing. During render, the parent renders first, creating the context provider with its state. Children then render and consume the context, accessing the shared state. This creates a clean API where consumers compose the widget's parts while the compound component manages internal coordination. The Fiber tree structure naturally supports this because context providers and consumers are just nodes in the same render tree.
-- **The Unforgettable Mental Model:** The **Orchestra**. The conductor (parent component) sets the tempo and key (shared state via context). Each musician (child component) plays their part independently but stays in sync because they're all listening to the same conductor. The audience (consumer) chooses which musicians to include.
-- **The Trap:** Over-compounding — creating compound components for simple patterns that could be handled with regular props. Compound components shine when there's shared state and flexible composition.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Compound components are a pattern where related components share implicit state through React Context. Think of Select with Select.Trigger, Select.Content, and Select.Item — they work together as a unit but can be composed flexibly by the consumer. The parent provides shared state via context, and children consume it. This gives consumers control over layout and content while the compound component manages the behavior and accessibility."
+const AccordionContext = createContext<AccordionContextType | undefined>(undefined);
 
-#### How does composition prevent prop explosion?
-- **The Engine Mechanism (Why it behaves this way):** Prop explosion happens when a component accumulates dozens of boolean and configuration props to handle every possible variation (`showHeader`, `headerPosition`, `customHeader`, `headerComponent`, etc.). Each new prop increases the component's complexity and the reconciliation workload — React must process each prop during every render. Composition solves this by replacing configuration props with content slots. Instead of `showHeader={true} headerText="Title"`, the consumer writes `<Card><Card.Header>Title</Card.Header></Card>`. The component signature stays small, the API is more expressive, and React's reconciliation is simpler because the content is passed as element objects rather than configuration flags.
-- **The Unforgettable Mental Model:** The **Restaurant Menu vs. Build-Your-Own Buffet**. A menu with 100 fixed dishes (prop explosion) is overwhelming. A buffet (composition) lets you pick exactly what you want and arrange it on your plate however you like. The kitchen (component) just provides the stations.
-- **The Trap:** Over-composing — breaking a simple component into too many subcomponents when a single prop would be clearer. Composition should reduce complexity, not add ceremony.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Prop explosion happens when a component tries to handle every variation through configuration props, creating a confusing API with dozens of options. Composition prevents this by letting consumers provide content directly through children and named slots. Instead of a Dialog component with title, body, footer, icon, and action props, we use Dialog.Title, Dialog.Content, and Dialog.Footer. The API stays clean, the component stays focused, and consumers have full control over content."
+function useAccordionContext() {
+  const context = useContext(AccordionContext);
+  if (!context) {
+    throw new Error('Accordion compound subcomponents must be rendered within an <Accordion>');
+  }
+  return context;
+}
 
-#### When should you use render props?
-- **The Engine Mechanism (Why it behaves this way):** A render prop is a prop whose value is a function that returns React elements. During the render phase, the component calls this function, passing data as arguments, and renders the returned elements. This pattern inverts control — instead of the component deciding how to render its data, it delegates rendering to the consumer. The function is called during the parent's render phase, so it has access to the parent's current state and props. React treats the returned elements like any other children, reconciling them normally. The pattern was largely replaced by custom hooks for state sharing, but remains useful for rendering delegation.
-- **The Unforgettable Mental Model:** The **Ghostwriter**. You provide the facts and data (state), and the ghostwriter (render prop function) decides how to tell the story (render the UI). You control the content; they control the presentation.
-- **The Trap:** Nesting render prop functions deeply, which creates "callback hell" in JSX and makes code hard to read. Extract render functions as separate components or use custom hooks instead.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Render props are useful when a component needs to share data or behavior but delegate the rendering decision to the consumer. The component provides a function prop that it calls during render, passing data as arguments. While custom hooks have largely replaced render props for state sharing, render props are still valuable for rendering delegation — like a VirtualizedList that knows how to scroll efficiently but lets consumers decide how each item looks."
+// 2. Parent Container Component
+interface AccordionProps {
+  defaultOpenId?: string;
+  children: React.ReactNode;
+}
 
-#### What are slots in React?
-- **The Engine Mechanism (Why it behaves this way):** Slots are named positions in a component where consumers can inject content. Unlike the single `children` prop, slots allow multiple injection points — `header`, `footer`, `sidebar`, `actions`, etc. During the render phase, the component receives these as named props (each containing React element objects) and renders them at the designated positions in its output. React reconciles each slot independently — if only the `footer` slot changes, only that part of the DOM updates. Slots are essentially named children props that create a structured composition API.
-- **The Unforgettable Mental Model:** The **Magazine Layout Template**. The magazine has designated areas — cover story, sidebar, footer, ad space. Writers (consumers) fill each area with their content. The template (component) provides the structure and styling; the content varies per issue.
-- **The Trap:** Creating too many slots, making the component as complex as the prop explosion it was meant to avoid. Slots should represent genuine structural positions, not every possible customization point.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Slots are named content positions in a component — like header, footer, or actions — that let consumers inject content at specific locations. They're implemented as named props that accept React elements. Slots give consumers precise control over content placement while the component maintains the overall layout structure. This is cleaner than a single children prop when a component has multiple distinct content areas."
+export function Accordion({ defaultOpenId = null, children }: AccordionProps) {
+  const [openItemId, setOpenItemId] = useState<string | null>(defaultOpenId);
 
-## 8. Active recall test
-1. **What is composition?**
-   - **Explanation:** Composition is building complex UIs by nesting smaller, focused components together. Components receive content through the `children` prop or named props, allowing consumers to assemble UI from reusable parts without the components knowing about each other's internals.
-2. **How does composition reduce boolean props?**
-   - **Explanation:** Instead of adding boolean flags like `showHeader`, `hasFooter`, `withIcon` to control what a component renders, composition lets consumers provide the actual content directly. `<Card><Card.Header>...</Card.Header></Card>` replaces `showHeader={true}` — the API is more expressive and the component doesn't need conditional rendering logic for every flag.
-3. **What does a layout wrapper own?**
-   - **Explanation:** A layout wrapper owns the structural arrangement — grid, flexbox, spacing, borders, positioning. It decides where content areas go and how they relate to each other visually. It does not own the content itself.
-4. **What does the caller own?**
-   - **Explanation:** The caller owns the content that goes inside the composition — the text, images, nested components, and business logic. The caller decides what appears in each slot or children position, giving them full control over the rendered output.
-5. **Give one compound component example.**
-   - **Explanation:** A Tabs compound component: `<Tabs><TabList><Tab>One</Tab><Tab>Two</Tab></TabList><TabPanels><TabPanel>Content 1</TabPanel><TabPanel>Content 2</TabPanel></TabPanels></Tabs>`. The Tabs parent manages active state via context, and Tab/TabPanel consume it to coordinate behavior.
+  const toggleItem = (id: string) => {
+    setOpenItemId((prev) => (prev === id ? null : id));
+  };
 
-## 9. Mistakes / traps
-- Creating a configurable mega-component with many unrelated props.
-- Hiding layout decisions that consumers need to control.
-- Using composition when a simple prop would be clearer.
-- Forgetting accessibility responsibilities in composed widgets.
-- Nesting too many wrappers without purpose.
+  return (
+    <AccordionContext.Provider value={{ openItemId, toggleItem }}>
+      <div className="divide-y divide-neutral-200 border rounded-lg overflow-hidden">
+        {children}
+      </div>
+    </AccordionContext.Provider>
+  );
+}
 
-## 10. Compare with related concepts
-- **Composition vs inheritance:** React reuses UI through nesting and props, not class inheritance.
-- **Composition vs configuration:** composition lets caller provide structure; configuration asks one component to handle all variants.
-- **Composition vs abstraction:** composition is one way to create flexible abstractions.
+// 3. Item Context & Subcomponent
+interface AccordionItemProps {
+  id: string;
+  children: React.ReactNode;
+}
 
-## 11. Summary from memory
-Explain how you would design a reusable `Dialog` API using composition.
+const ItemContext = createContext<{ id: string } | undefined>(undefined);
 
-## 12. Spaced revision prompts
-- After 1 day: Define composition.
-- After 3 days: Compare composition and configuration.
-- After 7 days: Design a card API with children.
-- After 14 days: Explain compound component composition.
+function AccordionItem({ id, children }: AccordionItemProps) {
+  return (
+    <ItemContext.Provider value={{ id }}>
+      <div className="group">{children}</div>
+    </ItemContext.Provider>
+  );
+}
+
+// 4. Trigger Subcomponent
+function AccordionTrigger({ children }: { children: React.ReactNode }) {
+  const { openItemId, toggleItem } = useAccordionContext();
+  const item = useContext(ItemContext);
+
+  if (!item) {
+    throw new Error('<Accordion.Trigger> must be used within an <Accordion.Item>');
+  }
+
+  const isOpen = openItemId === item.id;
+
+  return (
+    <button
+      type="button"
+      onClick={() => toggleItem(item.id)}
+      aria-expanded={isOpen}
+      className="w-full flex justify-between items-center p-4 text-left font-medium text-neutral-800 hover:bg-neutral-50 transition-colors"
+    >
+      <span>{children}</span>
+      <span className={`transform transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+        ▼
+      </span>
+    </button>
+  );
+}
+
+// 5. Content Subcomponent
+function AccordionContent({ children }: { children: React.ReactNode }) {
+  const { openItemId } = useAccordionContext();
+  const item = useContext(ItemContext);
+
+  if (!item) {
+    throw new Error('<Accordion.Content> must be used within an <Accordion.Item>');
+  }
+
+  if (openItemId !== item.id) {
+    return null;
+  }
+
+  return (
+    <div className="p-4 bg-neutral-50 text-neutral-600 text-sm border-t border-neutral-100">
+      {children}
+    </div>
+  );
+}
+
+// 6. Attach subcomponents for clean, namespaced dot-notation usage
+Accordion.Item = AccordionItem;
+Accordion.Trigger = AccordionTrigger;
+Accordion.Content = AccordionContent;
+
+// 7. Consumer Usage: Total layout flexibility without manual state wiring
+export function FAQSection() {
+  return (
+    <Accordion defaultOpenId="q1">
+      <Accordion.Item id="q1">
+        <Accordion.Trigger>How does billing work?</Accordion.Trigger>
+        <Accordion.Content>
+          Subscriptions are billed monthly on the date you signed up.
+        </Accordion.Content>
+      </Accordion.Item>
+
+      <Accordion.Item id="q2">
+        <Accordion.Trigger>Can I cancel anytime?</Accordion.Trigger>
+        <Accordion.Content>
+          Yes, you can cancel directly from your account settings without penalties.
+        </Accordion.Content>
+      </Accordion.Item>
+    </Accordion>
+  );
+}
+```
+
+---
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is component composition in React, and why is it preferred over class inheritance?**
+
+Component composition is the architectural practice of building complex user interfaces by combining small, discrete, single-responsibility components through props and nesting (`children`), rather than extending base classes.
+
+React prefers composition because UI elements naturally fit a "has-a" relationship (a `Dialog` *has a* header, a body, and buttons) rather than an "is-a" relationship (`SpecialConfirmDialog` *is a* `ConfirmDialog` *is a* `BaseDialog`). 
+
+Class inheritance in UI creates brittle hierarchies:
+1. Base class modifications unintentionally break unknown descendants.
+2. Code reuse across unrelated branches of the inheritance tree requires complex multi-inheritance or mixins.
+3. Components become tightly coupled to the exact implementation of their parent classes.
+
+With composition, components remain independent functions. You can swap subcomponents, pass custom markup via slots, and test each component in isolation with standard props.
+
+**Q: How does passing JSX via `children` or named slots prevent unnecessary re-renders?**
+
+In React, a component only re-renders if its own state changes, its parent re-renders, or its consumed Context updates. 
+
+When you pass JSX elements to a component as `children` (e.g., `<Wrapper><HeavyChild /></Wrapper>`), the `<HeavyChild />` element is created during the render of the *outer component* that hosts both of them. When `Wrapper` updates its own internal state, it re-executes its own function. However, `props.children` is an existing element object reference passed into `Wrapper` from the outer host.
+
+Because the reference `props.children` has not changed, React's Fiber reconciler recognizes that the child tree descriptor is identical and bails out of re-rendering `<HeavyChild />`. This allows you to encapsulate stateful animations, toggles, or scroll listeners inside layout wrappers without penalizing the rendering performance of the nested UI.
+
+**Q: What are compound components, and how do they coordinate state between children?**
+
+Compound components are a collection of related components that work together to implement a unified UI widget (such as `<Select>`, `<Select.Trigger>`, and `<Select.Option>`).
+
+They coordinate state implicitly using React Context. The top-level wrapper maintains the active state (such as the selected value, focus index, and open/closed state) and provides state plus dispatch functions through a Context Provider. Child components call a custom hook consuming that context to read current state and dispatch actions.
+
+This pattern eliminates prop drilling, gives the consumer full freedom to structure the layout (placing icons, headings, or custom dividers between items), and keeps the component API declarative and expressive.
+
+**Q: When should you use Render Props versus Custom Hooks in modern React?**
+
+Use **Custom Hooks** when you want to share stateful logic or side effects with zero UI attachment. For example, `useWindowSize()`, `useDebounce()`, or `useAuth()` extract behavior and return plain values or functions without dictating any JSX.
+
+Use **Render Props** when you need *render delegation*—meaning the parent component owns visual layout boundaries, virtualization, or DOM orchestration, but must let the consumer decide how individual items or slots are rendered. A classic example is a virtualized windowing library like `react-window`, where `<FixedSizeList>` calculates absolute row positioning and scroll offsets, but delegates the actual row JSX rendering to a function prop: `children={({ index, style }) => <div style={style}>Row {index}</div>}`.
+
+**Q: How does component composition solve the prop drilling problem without global state stores?**
+
+Prop drilling occurs when data must be passed down through multiple intermediate components that do not need the data themselves, merely to reach a deeply nested child.
+
+Instead of reaching for Redux or Zustand immediately, you can solve this by lifting the child component up to the parent and passing the instantiated element down via `children` or a named slot:
+
+```tsx
+// Before (Prop Drilling): Page -> Layout -> Sidebar -> Nav -> UserAvatar
+<Page user={user} />
+
+// After (Component Composition): Page directly instantiates UserAvatar
+<Layout
+  sidebar={
+    <Sidebar>
+      <Nav avatar={<UserAvatar user={user} />} />
+    </Sidebar>
+  }
+>
+  <MainContent />
+</Layout>
+```
+
+Here, `Layout`, `Sidebar`, and `Nav` no longer need to know that `user` exists. They simply accept and render the React element slots provided to them.
+
+**Q: Why did the React community move away from Higher-Order Components (HOCs)?**
+
+Higher-Order Components were the dominant pattern in React 15/16 for cross-cutting concerns (e.g., `withRouter(connect(withAuth(MyComponent)))`). They fell out of favor for four reasons:
+1. **Implicit Prop Collisions:** If two HOCs both injected a prop named `loading` or `data`, one would silently overwrite the other.
+2. **Indirection & Wrapper Hell:** Component trees in DevTools became 15 layers deep with anonymous wrapper divs and HOC containers.
+3. **TypeScript Typing Friction:** Typing HOCs with generic prop intersection and prop omission (`Omit<P, keyof InjectedProps>`) is notoriously difficult and prone to loose typing.
+4. **Static Method Loss:** Wrapping a component in an HOC prevents callers from accessing static properties on the inner component unless explicitly hoisted.
+
+Custom Hooks solved all of these problems by bringing logic composition directly into the component's execution scope with explicit variable assignments.
+
+---
+
+## 6. The Traps — What Goes Wrong
+
+**Trap 1: Defining a Component Inside Another Component's Render Function**
+
+*The Mistake:* Creating helper subcomponents inside the body of another component:
+
+```tsx
+function TableView({ data }: { data: string[] }) {
+  // ❌ FATAL ERROR: Re-created on every render!
+  function TableRow({ text }: { text: string }) {
+    return <tr><td>{text}</td></tr>;
+  }
+
+  return (
+    <table>
+      <tbody>
+        {data.map((item) => (
+          <TableRow key={item} text={item} />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+```
+
+*Why it fails:* On every render of `TableView`, a brand-new function reference for `TableRow` is created in memory. To React's reconciler, a changed component function identity means the component type has changed completely. React unmounts the old DOM subtree and remounts a fresh one. This destroys local state, drops form focus, resets text inputs, and kills rendering performance.
+
+*The Fix:* Always declare components at the top level of the module, or use standard inline JSX mapping:
+
+```tsx
+// ✅ Declare outside, pass props explicitly
+function TableRow({ text }: { text: string }) {
+  return <tr><td>{text}</td></tr>;
+}
+
+function TableView({ data }: { data: string[] }) {
+  return (
+    <table>
+      <tbody>
+        {data.map((item) => <TableRow key={item} text={item} />)}
+      </tbody>
+    </table>
+  );
+}
+```
+
+**Trap 2: Over-Compounding Simple Components (Premature Abstraction)**
+
+*The Mistake:* Splitting straightforward components into excessive compound subcomponents when a simple prop would be cleaner:
+
+```tsx
+// ❌ Over-engineered for a basic button
+<Button>
+  <Button.Icon><CheckIcon /></Button.Icon>
+  <Button.Label>Save Changes</Button.Label>
+</Button>
+```
+
+*Why it fails:* It introduces unnecessary boilerplate, cognitive overhead, and lines of code for components that have no internal state coordination or complex layout variations.
+
+*The Fix:* Use standard props for simple, static leaf components:
+```tsx
+// ✅ Simple, readable, direct
+<Button icon={<CheckIcon />}>Save Changes</Button>
+```
+
+**Trap 3: Misusing `React.cloneElement` for Implicit Prop Injection**
+
+*The Mistake:* Trying to build compound components by iterating over `children` with `React.Children.map` and injecting props using `React.cloneElement`:
+
+```tsx
+// ❌ Brittle cloneElement pattern
+function TabList({ children, activeIndex, onChange }: any) {
+  return (
+    <div>
+      {React.Children.map(children, (child, index) => {
+        return React.cloneElement(child, {
+          isActive: index === activeIndex,
+          onClick: () => onChange(index),
+        });
+      })}
+    </div>
+  );
+}
+```
+
+*Why it fails:* `cloneElement` only works for direct, immediate children. If a developer wraps a tab in a `<div>` or a tooltip (`<div><Tab /></div>`), the clone mechanism fails silently because the wrapper `div` receives `isActive` instead of the `Tab`. Furthermore, TypeScript cannot safely type props injected via `cloneElement`.
+
+*The Fix:* Always use React Context for compound component communication. Context works across any depth of nested elements.
+
+**Trap 4: Missing Context Boundary Guards**
+
+*The Mistake:* Failing to throw an informative error when a compound child component is rendered outside its parent provider:
+
+```tsx
+// ❌ Returns undefined silently or crashes with unhelpful TypeError
+function useAccordion() {
+  return useContext(AccordionContext);
+}
+```
+
+*The Fix:* Validate context in the custom hook:
+
+```tsx
+// ✅ Fails fast with clear actionable developer guidance
+function useAccordionContext() {
+  const context = useContext(AccordionContext);
+  if (!context) {
+    throw new Error('Accordion compound subcomponents must be rendered inside an <Accordion> parent.');
+  }
+  return context;
+}
+```
+
+---
+
+## 7. Compare With Related Concepts
+
+| Concept | Key Difference | Rule of Thumb |
+| :--- | :--- | :--- |
+| **Component Composition vs. Class Inheritance** | Composition combines components via nesting and props ("has-a"); inheritance creates hierarchical subclasses ("is-a"). | Never use class inheritance for React UI; always compose components via `children` and slots. |
+| **Compound Components vs. Prop Configuration** | Compound components split state across context-linked subcomponents; prop configuration piles boolean flags onto one component. | Use prop configuration for simple leaf widgets; use compound components when subparts need customizable layout and shared state. |
+| **Render Props vs. Custom Hooks** | Render props delegate the actual JSX rendering of a visual container; custom hooks share non-visual stateful logic. | Use Custom Hooks for pure business/data logic; use Render Props when a container component must control DOM measurements or virtualization while delegating element rendering. |
+| **Named Slots vs. Multiple Specific Children Props** | Named slots pass ready-to-render React elements (`header={<Header />}`); prop callbacks pass data to construct elements. | Pass React elements directly (`leftSlot={<Icon />}`) for static slots; pass functions (`renderItem={(data) => ...}`) only when data must flow back up. |
+| **Component Lifting vs. Global State Management** | Lifting components and passing elements via composition resolves prop drilling locally without external libraries; global state stores data in a centralized external store. | Try component composition with slots first to bypass intermediate layout drillers before adding global stores like Zustand or Redux. |
+
+---
+
+## 8. 🧠 The Memory Hook
+
+Don't build a Swiss Army knife component with forty toggle flags; build the pocket knife handle with empty slots and let the caller snap in the scissors, blade, or corkscrew. In React, components don't inherit capabilities—they contain other components.
