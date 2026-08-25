@@ -1,129 +1,167 @@
-# Design a file upload service
+# Design a File Upload Service
 
-## Detailed explanation
+## 1. Understand the Problem First — Clarify Before Designing
 
-Design a file upload service is a backend system design exercise that checks API design, data modeling, scaling, reliability, and operational thinking. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+When teams treat file uploads like standard JSON API requests, production outages follow quickly. A user attempts to upload a 2 GB 4K video or a batch of high-resolution design files over an unstable mobile connection. The API server accepts the incoming `multipart/form-data` stream, tries to buffer the file in memory or write it to a temporary local `/tmp` folder, and instantly exhausts server memory. The operating system's Out-Of-Memory (OOM) killer terminates the process, dropping hundreds of unrelated concurrent user requests with `502 Bad Gateway` errors. To make matters worse, if the upload fails at 98%, the user has to restart from byte zero.
 
-## 1. One-line mental model
+Before drawing any boxes or picking tools on a whiteboard, clarify the exact functional and non-functional requirements with the interviewer:
 
-Design data flow, APIs, storage, scaling, failure handling, and observability together.
+- **File sizes and types:** What is the range of file sizes? Are we handling 2 MB profile photos, 50 MB PDFs, or 10 GB raw videos? (Design for files ranging from 1 KB up to 10 GB).
+- **Scale and throughput:** What is the daily active volume? How many concurrent uploads at peak? (Assume 10 million uploads per day, ~2,000 concurrent uploads at peak, requiring around 500 TB of new storage per month).
+- **Resumability and network reliability:** Must uploads survive dropped cellular connections without restarting from the beginning? (Yes, chunked multipart uploads with state resumption).
+- **Processing pipeline:** Do files require synchronous processing before confirmation, or asynchronous workflows like virus scanning, thumbnail generation, and video transcoding? (Strictly asynchronous).
+- **Read patterns and access control:** How are uploaded files accessed? Are they public assets served through a CDN or private documents requiring time-limited signed access? (Private by default, served via pre-signed download URLs or CDN edge token validation).
+- **Security guarantees:** What prevents users from uploading ransomware, executable scripts disguised as images, or exploiting cross-site scripting (XSS) via SVG files? (Strict zero-trust quarantine pipeline, magic-byte inspection, and isolated storage domains).
 
-## 2. Problem it solves
+## 2. The Core Insight — The Decision Everything Else Flows From
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+The central insight of a high-scale file upload service is the complete separation of the **control plane** from the **data plane**.
 
-## 3. Core idea
+Never allow raw, multi-gigabyte file bytes to pass through your application API servers. Application servers exist to handle business logic, verify authentication, enforce storage quotas, and manage relational metadata. Cloud object storage systems (such as AWS S3, Google Cloud Storage, or Azure Blob Storage) are distributed, purpose-built storage engines engineered specifically to ingest, replicate, and serve massive binary streams reliably at scale.
 
-- Clarify requirements and scale.
-- Define APIs and data model.
-- Choose storage, cache, queues, and workers.
-- Plan consistency, failure handling, and security.
-- Add observability and rollout strategy.
+By having the client obtain short-lived pre-signed upload URLs from your lightweight API server and then stream the binary chunks directly to object storage, you remove application memory pressure, eliminate network bandwidth bottlenecks on your gateway, and scale storage independently from compute.
 
-## 4. Visual / analogy
+## 3. High-Level Architecture — Components and Why Each Exists
+
+To handle millions of uploads reliably, the system divides responsibilities among dedicated components:
+
+- **Client Application (Web / Mobile):** Splits large files into deterministic chunks (e.g., 5 MB to 10 MB each), calculates client-side checksums (MD5 or SHA-256), requests upload permits, and uploads chunks concurrently with retry logic.
+- **API Gateway & Metadata Service:** Authenticates the user, validates upload permissions, enforces user storage quotas, generates unique upload IDs and pre-signed S3 URLs, tracks chunk completion, and writes file metadata to the database.
+- **Metadata Database (PostgreSQL):** Stores structured records including file owners, file names, MIME types, overall sizes, upload states (`INITIATED`, `UPLOADING`, `PROCESSING`, `ACTIVE`, `QUARANTINED`, `FAILED`), and chunk part manifests.
+- **Session & Chunk Cache (Redis):** Tracks temporary in-flight chunk upload progress, caches active upload session states, and manages token-bucket rate limiters for upload initiations.
+- **Quarantine Object Storage (S3 Quarantine Bucket):** Serves as an isolated landing zone where direct client chunk uploads land. Files here are strictly non-public and cannot be read by other users until validated.
+- **Message Broker (Kafka / AWS SQS):** Ingests upload completion events and distributes processing jobs to worker pools asynchronously, insulating the upload API from heavy downstream processing tasks.
+- **Asynchronous Processing Workers:** Pull jobs from the queue, inspect binary magic bytes to detect spoofed file types, run antivirus scans (ClamAV), generate thumbnails or transcoded renditions, and promote clean files to the production storage bucket.
+- **Production Object Storage & CDN (CloudFront / Cloudflare):** Stores verified, safe files and caches them geographically close to end users for low-latency downloads.
+- **Real-Time Notification Service (WebSockets / SSE):** Pushes asynchronous processing completion events back to the client so the UI updates without aggressive polling.
 
 ```txt
-Clients -> API -> services -> database/cache/queue -> observability
+                         [Control Plane: Request Pre-signed URLs]
+  Client ──────────────────────────────────────────────────────────► API Gateway / Metadata Service
+    │                                                                           │
+    │ (Direct Data Plane: Raw Chunk Uploads)                                    │ (Validate Quota & Issue Tokens)
+    ▼                                                                           ▼
+Object Storage (S3 / GCS) ◄───────────────────────────────────────────── Metadata DB & Redis
+ (Quarantine Bucket)                                                           │
+    │                                                                           │
+    │ [Upload Completed Event]                                                  │
+    ▼                                                                           ▼
+Message Queue (Kafka / SQS) ──────────────────────────────────────► Async Processing Workers
+                                                                                │ (Scan, Transcode, Move)
+                                                                                ▼
+Client ◄──────────────── Notification Service (SSE/WS) ◄──────── Clean Production S3 & CDN
 ```
 
-## 5. Minimal example
+A standard upload flows end-to-end through these steps:
 
-```txt
-Input  -> validate
-Work   -> apply backend system design rule
-Output -> success or structured error
-```
+1. **Upload Initiation:** The client sends file metadata (name, total size, declared MIME type, file checksum) to `POST /api/v1/uploads/initiate`. The Metadata Service checks authorization and storage quotas, initiates an S3 Multipart Upload to get an S3 `UploadId`, creates a database record with `status: INITIATED`, and returns an `upload_id` along with pre-signed S3 upload URLs for the expected chunks.
+2. **Direct Chunk Ingestion:** The client uploads chunks directly to the S3 Quarantine Bucket using HTTP `PUT` requests against the pre-signed URLs. Each chunk includes its `Content-MD5` header. S3 validates data integrity on arrival and returns an `ETag` (hash) for each chunk.
+3. **Completion Assembly:** When all chunks finish, the client calls `POST /api/v1/uploads/{id}/complete`, passing the list of part numbers and corresponding `ETag` values. The Metadata Service calls S3's `CompleteMultipartUpload` API to assemble the chunks into a single object inside the quarantine bucket and updates the database status to `PROCESSING`.
+4. **Asynchronous Security & Processing:** The Metadata Service publishes a message to SQS/Kafka. Background workers consume the message, verify magic bytes against declared headers, stream the file through ClamAV, generate image thumbnails or video manifests, and copy the clean file to the production bucket.
+5. **Client Notification:** The worker updates the database status to `ACTIVE` and triggers the Notification Service, which sends an event over WebSocket or Server-Sent Events to inform the frontend that the asset is ready.
 
-## 6. Real-world example
+## 4. Key Technical Decisions — With Real Tradeoffs
 
-In a production full-stack app, design a file upload service affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+**Decision 1: Direct-to-S3 Pre-signed URLs vs. Streaming Through an API Gateway**
+- **Choice:** Direct-to-S3 uploads using time-limited pre-signed URLs.
+- **Rejected:** Streaming the file body through an Nginx proxy and Node.js/Go API gateway servers.
+- **Rationale:** Proxying gigabytes of file data consumes TCP connection slots, saturates network interfaces, and increases server memory footprints. Direct uploads leverage AWS/GCP's hyper-scaled edge infrastructure, keeping your API tier stateless, lightweight, and low-cost.
+- **Tradeoff Accepted:** The backend cannot synchronously inspect or reject malicious bytes while they are being transmitted. You must adopt an asynchronous quarantine-and-scan model.
 
-## 7. Common interview questions
+**Decision 2: Chunked Multipart Uploads vs. Single Monolithic Upload**
+- **Choice:** S3 Multipart Uploads with 5 MB to 10 MB chunks and client-side retry logic.
+- **Rejected:** Single HTTP `POST`/`PUT` requests for entire files.
+- **Rationale:** On cellular or unstable home connections, a 1% packet loss rate makes uploading a 1 GB file in a single connection nearly impossible. Slicing files into 5–10 MB chunks ensures that a dropped connection only requires re-transmitting the single failed 10 MB chunk, saving up to 99% of bandwidth on retries and allowing parallel chunk uploads.
+- **Tradeoff Accepted:** Increased architectural complexity on both client and server (managing part numbers, tracking ETags, handling timeouts, and cleaning up incomplete parts).
 
-#### How do you handle large file uploads without running out of memory?
-- **The Engine Mechanism (Why it behaves this way):** Large files should never be loaded entirely into server memory. Instead, use streaming uploads: the server receives the request body as a stream and pipes it directly to object storage (S3, GCS) or disk. For multipart uploads, the client splits the file into chunks (5-100MB each), uploads each chunk independently, and the server assembles them. Pre-signed URLs allow the client to upload directly to S3, bypassing your application server entirely and eliminating memory concerns.
-- **The Unforgettable Mental Model:** The **Bucket Brigade**. Instead of one person carrying the entire bucket of water (loading file into memory), people form a line and pass buckets hand-to-hand (streaming). Each person only holds water for a moment, so no one gets overwhelmed.
-- **The Trap:** Reading the entire file into memory with `req.body` or `file.buffer` before processing. A 2GB file will crash your server. Always use streams or pre-signed URLs for files larger than a few megabytes.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: For large files, I'd use streaming uploads where the request body is piped directly to object storage without buffering in memory. For files over 100MB, I'd implement multipart uploads — the client splits the file into chunks, uploads each independently, and the server assembles them. The best approach for scale is pre-signed URLs: the server generates a temporary S3 upload URL, the client uploads directly to S3, and then notifies the server via webhook. This completely removes the file from our application server's memory path."
+**Decision 3: PostgreSQL for Metadata vs. Pure NoSQL Document Store**
+- **Choice:** PostgreSQL with JSONB columns for media metadata.
+- **Rejected:** Pure NoSQL document database like MongoDB.
+- **Rationale:** File uploads require strict ACID transactional integrity when checking and updating user storage quotas, verifying file ownership, and transitioning lifecycle states (`INITIATED` -> `PROCESSING` -> `ACTIVE`). PostgreSQL handles these atomic updates cleanly with row-level locks, while `JSONB` fields store dynamic media metadata (EXIF tags, dimensions, codecs) without migration overhead.
+- **Tradeoff Accepted:** Requires connection pool management (e.g., PgBouncer) and vertical scaling or read replicas under heavy read traffic compared to distributed key-value stores.
 
-#### How do you implement resumable uploads?
-- **The Engine Mechanism (Why it behaves this way):** Resumable uploads track which chunks have been successfully received. The client sends a unique upload ID with each chunk. The server stores chunk metadata (upload_id, chunk_number, size, etag) in a database or Redis. When a upload is interrupted, the client queries the server for received chunks and resumes from the last successful chunk. S3's multipart upload API natively supports this — each part has an ETag, and the CompleteMultipartUpload call assembles all parts. The Tus protocol is an open standard that formalizes this with HEAD requests to check upload progress.
-- **The Unforgettable Mental Model:** The **Bookmark in a Novel**. If you stop reading at page 200, you don't start over — you open to page 200 and continue. The bookmark (chunk metadata) remembers exactly where you left off.
-- **The Trap:** Not handling partial chunk corruption. If a chunk is partially uploaded (network drops mid-chunk), the server might record it as complete but the data is corrupt. Always verify chunk integrity with checksums (MD5/SHA256) before marking a chunk as received.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement resumable uploads using S3's multipart upload API. Each file gets a unique upload ID. The client splits the file into 10MB chunks and uploads each with a part number. The server tracks received parts in Redis. If the upload fails, the client sends a HEAD request to check which parts were received, then resumes from the last successful part. I'd also implement the Tus protocol for a standardized approach, which handles chunk verification with checksums and provides a clean API for upload resumption."
+**Decision 4: Asynchronous Processing via Message Queues vs. Synchronous Worker Execution**
+- **Choice:** Event-driven worker pool powered by Kafka or SQS with Dead Letter Queues (DLQs).
+- **Rejected:** Executing virus scanning, thumbnail extraction, and transcoding inside the HTTP completion handler.
+- **Rationale:** Antivirus scanning and video transcoding take anywhere from 3 seconds to several minutes depending on file size. Running these synchronously blocks HTTP threads, leads to gateway timeout errors (HTTP 504), and makes the API vulnerable to resource exhaustion.
+- **Tradeoff Accepted:** The user experience is eventually consistent. The frontend must display a "Processing..." state and rely on WebSocket events or polling until the asset becomes active.
 
-#### How do you secure file uploads against malicious files?
-- **The Engine Mechanism (Why it behaves this way):** Security involves multiple layers: (1) File type validation — check MIME type from Content-Type header AND file magic bytes (first few bytes of the file), not just the extension; (2) File size limits — reject files exceeding a configured maximum; (3) Virus scanning — integrate ClamAV or a cloud scanning service (S3 Object Lambda, Google Cloud DLP) to scan files before they're served; (4) Content-Disposition headers — serve files with Content-Disposition: attachment to prevent browser execution; (5) Separate storage domains — store user uploads on a different domain than your app to prevent XSS via SVG/HTML files; (6) Image reprocessing — for images, re-encode them to strip embedded metadata and malicious payloads.
-- **The Unforgettable Mental Model:** The **Airport Security Checkpoint**. Files go through multiple checkpoints: ID check (MIME type validation), weight limit (size check), X-ray scan (virus scanning), and if it's suspicious, it gets opened manually (image reprocessing). Even after passing, it's escorted to a separate terminal (separate domain) so it can't cause trouble in the main building.
-- **The Trap:** Only checking file extensions. An attacker can rename malware.exe to malware.jpg and bypass extension-based validation. Always validate magic bytes and use content-type detection from the actual file content.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement defense in depth. First, validate file type using magic bytes, not just extensions or Content-Type headers which are easily spoofed. Enforce strict size limits. For virus scanning, I'd use ClamAV or a cloud scanning service in an async pipeline — files go to a quarantine bucket first, get scanned, and only move to the public bucket if clean. I'd serve all user uploads from a separate domain with Content-Disposition: attachment headers to prevent XSS. For images specifically, I'd re-encode them to strip any embedded malicious payloads in metadata."
+## 5. Deep Dives — The Parts That Actually Matter
 
-#### How do you design the API for file uploads?
-- **The Engine Mechanism (Why it behaves this way):** The API has several endpoints: POST /uploads/initiate returns an upload ID and pre-signed URL(s); PUT /uploads/{id}/chunks accepts chunk uploads; POST /uploads/{id}/complete finalizes the upload and triggers processing; GET /uploads/{id}/status returns upload progress; DELETE /uploads/{id} cancels an upload. The initiate endpoint validates file metadata (size, type), generates the upload ID, and creates pre-signed URLs. The complete endpoint verifies all chunks arrived, assembles the file, and triggers async processing (virus scan, thumbnail generation, metadata extraction).
-- **The Unforgettable Mental Model:** The **Shipping Warehouse**. You first register your package (initiate), get a tracking number (upload ID), drop it at the loading dock (upload chunks), confirm delivery (complete), and can check its status anytime (status endpoint). If you change your mind, you can cancel the shipment (delete).
-- **The Trap:** Making the upload endpoint synchronous. Large file uploads take time — the client will timeout if the server processes the file before responding. Always return immediately with an upload ID and process asynchronously.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The API follows an initiate-upload-complete pattern. POST /uploads/initiate validates the file metadata and returns an upload ID with pre-signed S3 URLs. The client uploads chunks directly to S3 using those URLs. POST /uploads/{id}/complete verifies all chunks, assembles the file, and kicks off async processing — virus scanning, thumbnail generation, metadata extraction. GET /uploads/{id}/status lets the client poll for progress. All operations are asynchronous to prevent timeouts on large files."
+**Algorithmic Chunk Management and Resumability Protocol**
 
-#### How do you handle concurrent uploads from the same user?
-- **The Engine Mechanism (Why it behaves this way):** Each upload gets a unique upload ID (UUID v4), so concurrent uploads don't conflict. Rate limiting is applied per-user (not per-upload) to prevent a single user from consuming all resources. A token bucket algorithm allows N concurrent uploads with a queue for excess requests. Storage quotas enforce per-user limits (total size, total file count). The database tracks active uploads per user, and the API rejects new uploads when the quota is exceeded.
-- **The Unforgettable Mental Model:** The **Highway Toll Booth**. Each car (upload) gets its own lane (upload ID). The toll booth has a limited number of lanes (concurrent upload limit). If all lanes are full, cars wait in a queue (rate limiter). The highway has a maximum capacity (storage quota) — once full, no more cars enter.
-- **The Trap:** Not enforcing per-user quotas. Without quotas, a single user can upload thousands of files, consuming all storage and processing resources, causing denial of service for other users.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Each upload gets a UUID, so concurrent uploads are naturally isolated. I'd enforce per-user limits using a token bucket rate limiter (e.g., 5 concurrent uploads per user) and storage quotas (e.g., 10GB total). When a user exceeds their quota, the API returns a 429 Too Many Requests with a Retry-After header. The database tracks active uploads and total storage per user, and a background job enforces quotas by cleaning up abandoned uploads after a TTL."
+Designing a robust resumable upload protocol requires tight bounds on chunk sizing and state coordination.
 
-#### How do you generate thumbnails and process files asynchronously?
-- **The Engine Mechanism (Why it behaves this way):** After upload completion, an event is published to a message queue (SQS, Kafka, RabbitMQ). Worker processes consume the event and perform processing: image resizing (Sharp, ImageMagick), video transcoding (FFmpeg), document conversion, virus scanning, and metadata extraction. Processed files are stored in a separate bucket/prefix. The database is updated with processing status and output file URLs. Webhooks or Server-Sent Events notify the client when processing completes. Failed processing jobs are retried with exponential backoff and moved to a dead-letter queue after max retries.
-- **The Unforgettable Mental Model:** The **Photo Lab**. You drop off your film (upload complete event) at the counter. Behind the scenes, technicians (workers) develop the photos, make prints in different sizes (thumbnails), check for defects (virus scan), and file the results. When ready, they call you (webhook/notification) to pick them up.
-- **The Trap:** Processing files synchronously in the upload request handler. This blocks the response, causes timeouts, and ties up server resources. Always decouple processing with a message queue.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd use an event-driven architecture. When an upload completes, an event is published to SQS or Kafka. Worker processes consume events and handle image resizing with Sharp, video transcoding with FFmpeg, and virus scanning. Each processing step updates the database status. On completion, a webhook notifies the client. Failed jobs retry with exponential backoff and land in a dead-letter queue after 3 attempts. This keeps the upload path fast and scales processing independently by adding more workers."
+S3 enforces strict multipart upload rules: maximum 10,000 parts per file, minimum part size of 5 MB (except the final part), and maximum object size of 5 TB. If you pick a fixed 5 MB chunk size for a 100 GB file, you would need 20,000 parts, violating S3's 10,000-part limit.
 
-#### How do you monitor and debug file upload issues in production?
-- **The Engine Mechanism (Why it behaves this way):** Key metrics include: upload success/failure rate, average upload duration (p50, p95, p99), bytes uploaded per second, active concurrent uploads, processing queue depth, processing success/failure rate, and storage utilization. Logs should capture upload ID, user ID, file size, file type, start/end timestamps, and error details. Distributed tracing (OpenTelemetry) tracks the full lifecycle from initiate → chunk upload → complete → processing → notification. Alerts fire on: high failure rates, queue backlog, storage approaching capacity, and processing latency spikes.
-- **The Unforgettable Mental Model:** The **Control Tower**. Air traffic controllers (monitoring dashboard) watch every plane's (upload's) position, speed, and status. They see bottlenecks (queue depth), emergencies (failures), and runway capacity (storage limits). Alarms sound when something deviates from the norm.
-- **The Trap:** Only monitoring success rate without tracking latency percentiles. A 99% success rate hides the fact that the 1% of failures might be your largest, most important uploads. Always track p95 and p99 latency.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd track upload success rate, latency percentiles (p50/p95/p99), bytes per second, and processing queue depth. Every upload gets a trace ID that flows through the entire lifecycle — from initiation through chunk uploads to processing completion. Logs capture upload ID, user ID, file metadata, and timestamps. I'd set alerts on failure rate spikes, queue backlog exceeding thresholds, and storage approaching capacity. Distributed tracing with OpenTelemetry lets me debug slow uploads by seeing exactly which stage is the bottleneck."
+To prevent this, the client and server calculate dynamic chunk sizes:
+`chunkSize = Math.max(10 * 1024 * 1024, Math.ceil(fileSize / 10000))`
 
-## 8. Active recall test
+For a 1 GB file, this yields 10 MB chunks (100 total chunks). The client reads the file using the browser `File.slice()` API, uploads 3 to 5 chunks in parallel over HTTP/2, and computes an MD5 checksum for each chunk to send in the `Content-MD5` header.
 
-1. **How do you prevent large file uploads from crashing the server?**
-   - **Explanation:** Use streaming uploads that pipe the request body directly to object storage without buffering in memory. For very large files, use pre-signed URLs so the client uploads directly to S3, bypassing the application server entirely.
+If the network disconnects at chunk 64:
+1. The client catches the network failure, pauses, and initiates exponential backoff with jitter.
+2. Upon reconnecting, the client calls `GET /api/v1/uploads/{id}/progress`.
+3. The server queries S3's `ListParts` API or checks Redis to retrieve the list of already completed part numbers and their verified ETags.
+4. The server returns the list of completed parts. The client compares this list with its local manifest and immediately resumes uploading starting from chunk 65, without re-transmitting chunks 1 through 64.
 
-2. **What makes an upload resumable?**
-   - **Explanation:** The file is split into chunks, each uploaded independently with a part number. The server tracks received chunks in a database or Redis. On reconnection, the client queries for received chunks and resumes from the last successful one.
+**The Zero-Trust Security and Malware Pipeline**
 
-3. **Why is checking file extensions insufficient for security?**
-   - **Explanation:** Attackers can rename malicious files with safe extensions (malware.exe → malware.jpg). Always validate magic bytes (the file's actual binary signature) and use content-type detection from the file content itself.
+Accepting user-supplied files is one of the highest-risk operations in backend engineering. Attackers exploit file upload endpoints using file extension spoofing (renaming `malware.exe` to `invoice.pdf`), polyglot files (valid JPEG headers combined with executable PHP payloads), and cross-site scripting (XSS) embedded within SVG XML tags.
 
-4. **What is the initiate-upload-complete pattern?**
-   - **Explanation:** POST /uploads/initiate validates metadata and returns an upload ID with pre-signed URLs. The client uploads chunks directly to storage. POST /uploads/{id}/complete verifies all chunks and triggers async processing.
+A production-grade pipeline defends against these vectors through multiple layers:
 
-5. **How do you prevent one user from consuming all upload resources?**
-   - **Explanation:** Enforce per-user rate limits (token bucket for concurrent uploads) and storage quotas (max total size and file count). Return 429 when limits are exceeded and clean up abandoned uploads with a TTL.
+1. **Quarantine Storage Isolation:** Raw client uploads land in a strictly private `quarantine-bucket`. IAM policies deny public read access and cross-service access to this bucket.
+2. **Magic Byte Verification:** The declared `Content-Type` header and file extension from the browser are treated as untrusted user input. Background workers read the initial 512 bytes of the raw file stream to inspect magic numbers (e.g., `%PDF-` for PDFs, `\xFF\xD8\xFF` for JPEGs, `\x89PNG\r\n\x1a\n` for PNGs, `PK\x03\x04` for ZIP/DOCX). If the magic bytes mismatch the declared type, the file is rejected immediately.
+3. **Asynchronous Virus & Malware Scanning:** Workers run ClamAV or cloud-native scanning daemons (e.g., AWS Object Lambda scanner) against the quarantine object. If a virus signature is detected, the worker deletes the object, records the incident, alerts the security team, and marks the database record as `QUARANTINED`.
+4. **Sanitization and Image Re-encoding:** For images, workers re-encode the bitmap using libraries like `Sharp` or `ImageMagick`. Re-encoding strips malicious EXIF metadata, neutralizes embedded polyglot scripts, and normalizes color profiles.
+5. **Domain Separation and Safe Serving Headers:** Clean files are copied to the `production-bucket` and served from a dedicated domain (e.g., `user-content-app.com` instead of `app.com`). This ensures that even if an attacker uploads a malicious HTML/SVG file, the browser executes it in an isolated sandbox with zero access to session cookies, JWTs, or local storage of the primary application. When serving non-image files, the response must include `Content-Disposition: attachment; filename="safe.pdf"` and `X-Content-Type-Options: nosniff`.
 
-6. **Why should file processing be asynchronous?**
-   - **Explanation:** Processing (virus scanning, resizing, transcoding) takes seconds to minutes. Doing it synchronously blocks the response and causes timeouts. Use a message queue to decouple upload from processing.
+**Managing Incomplete Uploads and Preventing Storage Cost Bleed**
 
-7. **What metrics are critical for monitoring a file upload service?**
-   - **Explanation:** Upload success/failure rate, latency percentiles (p50/p95/p99), bytes per second, processing queue depth, and storage utilization. Every upload should have a trace ID for end-to-end debugging.
+In production, between 5% and 15% of initiated uploads are abandoned by users closing browser tabs, experiencing dead batteries, or canceling uploads midway. In S3, uploaded multipart parts are retained and billed at standard storage rates until the upload is explicitly completed or aborted. Without automated cleanup, gigabytes of orphaned parts accumulate daily, quietly ballooning storage bills.
 
-## 9. Mistakes / traps
+To prevent this:
+- Configure an S3 Bucket Lifecycle Rule with `AbortIncompleteMultipartUpload` set to 1 or 2 days. S3 will automatically purge abandoned parts without requiring manual deletion calls.
+- Run a daily background reconciliation cron that queries the metadata database for upload records stuck in `INITIATED` or `UPLOADING` status past their expiration TTL (e.g., 24 hours) and marks them `EXPIRED`.
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+## 6. Failure Modes and Resilience
 
-## 10. Compare with related concepts
+**Failure 1: Network Drops During In-Flight Chunk Uploads**
+- **Impact:** Active TCP connections break; individual chunk uploads fail.
+- **Detection & Recovery:** The client library detects HTTP connection errors or timeout responses. It uses exponential backoff with randomized jitter before retrying that specific chunk up to 5 times. If retries fail completely, it retains the upload session ID in local storage and prompts the user to resume when connectivity returns.
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+**Failure 2: Worker Process Crashes Mid-Processing**
+- **Impact:** A worker running an intensive FFmpeg transcode or ClamAV scan crashes due to an unhandled exception or OOM event, leaving the file stuck in `PROCESSING` status forever.
+- **Detection & Recovery:** The message broker (SQS/Kafka) utilizes message visibility timeouts. If a worker crashes without explicitly acknowledging (ACKing) the message, the broker makes the message visible again after the visibility timeout (e.g., 5 minutes). A healthy worker picks up the job. If the job fails 3 consecutive times, it is routed to a Dead Letter Queue (DLQ), triggering an alert, and the database status updates to `FAILED`.
 
-## 11. Summary from memory
+**Failure 3: S3 Regional Degradation or Rate Limiting (HTTP 503 Slow Down)**
+- **Impact:** High burst traffic causes S3 partition throttling or regional latency spikes.
+- **Detection & Recovery:** S3 partitions prefixes automatically based on request volume. The metadata service distributes objects across partitioned S3 keys by prefixing the storage path with a hash (e.g., `/quarantine/{hash_prefix}/{upload_id}/part_1`). For cross-region resilience, the metadata service can fail over to a pre-configured secondary bucket in a different cloud region.
 
-Explain Design a file upload service in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+**Failure 4: Storage Quota and Resource Exhaustion Abuse (DDoS)**
+- **Impact:** Malicious actors script millions of `initiate` requests to flood the database and exhaust storage limits.
+- **Detection & Recovery:** Apply Redis-backed sliding-window rate limiters at the API Gateway (e.g., max 20 initiate requests per user per minute). Before generating pre-signed URLs, perform an atomic check against the user's total consumed storage quota in PostgreSQL. If the requested file size pushes the user over their plan limit, reject the initiation immediately with `403 Forbidden (Quota Exceeded)`.
 
-## 12. Spaced revision prompts
+## 7. What Makes a Great Answer vs an Average One
 
-- Day 1: Define Design a file upload service in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**An average answer sounds like this:**
+"I will build an Express server with Multer. When the user sends the file, the server receives the `multipart/form-data`, saves it to `/tmp`, uses the AWS SDK to upload it to S3, and saves the S3 URL in MongoDB. Then I'll return a 200 OK."
+
+*Why it fails:* This approach falls apart in production. It buffers multi-gigabyte files on the API server, creating massive memory leaks and OOM crashes. It lacks chunking, meaning any connection drop restarts the entire upload. It has no virus quarantine, no magic-byte validation, no protection against storage cost bleed from failed uploads, and forces synchronous processing.
+
+**A great answer sounds like this:**
+"I decouple the control plane from the data plane. The API server authenticates the request, verifies user storage quotas, and generates pre-signed multipart S3 URLs. The client slices the file into 10 MB chunks and streams them directly to an isolated S3 quarantine bucket in parallel with MD5 integrity verification, completely bypassing API server memory. Once parts land, the server calls S3's `CompleteMultipartUpload` and emits an event to SQS. Asynchronous workers inspect magic bytes, scan for malware with ClamAV, and transcode media before promoting clean files to the production bucket served via CDN. Orphaned parts are automatically purged using S3 lifecycle rules to prevent storage cost bleed."
+
+*Key signals the interviewer listens for:*
+- Clear separation of control plane (metadata/auth) from data plane (binary transfer).
+- Pre-signed direct S3 upload URLs to eliminate server memory and bandwidth bottlenecks.
+- Resumable multipart upload mathematics (dynamic chunk sizing respecting S3 part limits).
+- Zero-trust security: quarantine buckets, magic byte validation, antivirus pipelines, and isolated media domains.
+- Operational cost hygiene: S3 lifecycle rules to purge abandoned incomplete multipart uploads.
+
+## 8. 🧠 The Memory Hook
+
+**Keep the bytes off the backend.**
+
+Treat your API server like an airline check-in counter: it issues the boarding pass and verifies identification (pre-signed URLs and metadata), but object storage handles the luggage directly. Once luggage lands, background security officers inspect the bags in quarantine before releasing them to the terminal.
