@@ -1,121 +1,246 @@
 # Custom Events
 
-## Detailed explanation
-Custom events let code create and dispatch application-specific DOM events. They are useful for integrating plain JavaScript widgets, web components, analytics hooks, or legacy code where React/state libraries are not managing communication.
+## 1. Why This Exists — The Problem First
 
-Use `CustomEvent` with `detail` for payload. In modern React apps, prefer props/state/context for React-to-React communication, but know custom events for browser-level integration.
+A checkout widget written by one team needs to tell a host page that an item was added. The host is not its parent component, the widget cannot import the host's state store, and the two pieces may even be built with different frameworks. A direct function call creates a dependency; polling creates delay and wasted work. If both sides already share a document, a custom DOM event gives them a small browser-native contract: one side announces a named fact, and any interested `EventTarget` can listen for it.
 
-## 1. One-line mental model
-Custom events let code publish named DOM events with optional data.
+That solves integration communication, not application state management. Using custom events for every React-to-React update usually makes ownership and data flow harder to see.
 
-## 2. Problem it solves
-Independent browser components sometimes need event-based communication without direct imports.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Create with `new CustomEvent(name, { detail })`.
-- Dispatch from DOM node.
-- Listen with `addEventListener`.
-- Payload lives in `event.detail`.
-- Useful for web components and integration boundaries.
+Think of a building with rooms and a receptionist.
 
-## 4. Visual / analogy
-Custom event is announcement on DOM event bus.
+- A DOM node or `window` is a place where an announcement can be made.
+- `addEventListener("order:submitted", handler)` registers a room to hear announcements with that name.
+- `new CustomEvent("order:submitted", { detail: ... })` is the announcement card. Its `detail` is the information written on the card.
+- `dispatchEvent(event)` hands the card to the building's announcement system.
 
-```mermaid
-flowchart LR
-  Dispatch["dispatchEvent"] --> DOM["DOM event system"]
-  DOM --> Listener["listener receives detail"]
+If the announcement is made in one room and `bubbles: true`, it can travel through containing rooms toward the building entrance. If bubbling is false, only listeners on the dispatch target (and capture listeners on the event path where applicable) are part of the useful route. A listener does not need to know who made the announcement; it only needs to agree on the event name and payload shape.
+
+This analogy also explains the boundary. The building is one document. A custom event does not magically travel to another browser tab, another origin, or a server. For those routes, use a cross-context or network mechanism such as `BroadcastChannel`, `postMessage`, WebSocket, or `fetch`.
+
+## 3. How It Actually Works — The Full Explanation
+
+### The three objects involved
+
+`CustomEvent` is an event object with normal `Event` behavior plus a read-only `detail` property. `detail` can contain any JavaScript value; it is not automatically JSON-serialized or cloned. If it points at a mutable object, listeners receive that same object reference, so a listener can change data that another listener later observes.
+
+The target is any `EventTarget`, including an element, `document`, `window`, `AbortSignal`, or a custom object that implements the interface. The listener is registered against a case-sensitive event type string. Event names such as `cart:item-added` are ordinary application conventions, not special browser keywords.
+
+### Dispatch is synchronous
+
+The normal sequence is:
+
+1. Create and initialize the event.
+2. Register listeners before the event is dispatched.
+3. Call `target.dispatchEvent(event)`.
+4. The browser sets `event.target` to that target, builds the applicable event path, and invokes matching listeners in event order.
+5. `dispatchEvent` returns only after those listeners finish.
+
+This is different from a native user action, which the browser schedules as part of its event processing. A manually dispatched event runs synchronously inside the current call stack. A slow listener therefore makes the caller wait. Exceptions thrown in listeners are reported as uncaught exceptions by the browser; they do not become a normal throw from `dispatchEvent` that the caller can reliably catch.
+
+### Propagation: target, capture, and bubble
+
+For a DOM tree, an event can have a path from an ancestor down to the target and back up again. A listener registered with `{ capture: true }` observes the capture phase on the way down. The target's listeners run at the target. Bubbling listeners on ancestors run on the way back up only when the event was created with `bubbles: true`.
+
+`event.target` is where dispatch started. `event.currentTarget` is the object whose listener is running right now. That distinction matters when one parent listener handles events from many child controls.
+
+`composed` is a separate option. It controls whether an event can cross a Shadow DOM boundary; `bubbles` controls whether it travels upward through the event path. A web component that wants its host page to observe an internal event commonly uses both `{ bubbles: true, composed: true }`, while still exposing only an intentional public payload.
+
+### Default actions and cancellation
+
+Custom events do not acquire a browser default action just because they are cancelable. Setting `cancelable: true` allows a listener to call `preventDefault()`. The caller can inspect the boolean result of `dispatchEvent`: it is `false` when a cancelable event was prevented, and `true` otherwise.
+
+That makes a custom event useful as a synchronous permission check, but only when the producer is prepared to honor the result. `preventDefault()` does not stop propagation; `stopPropagation()` does not cancel a default action. They solve different problems.
+
+### Listener lifetime is part of the contract
+
+Keep a stable function reference if a listener must later be removed. `removeEventListener` matches the event type, callback identity, and capture setting. Creating a new arrow function during removal does not identify the original listener. For one-shot work, `{ once: true }` removes the listener after its first invocation. For a group of listeners, an `AbortController` can provide a shared teardown signal.
+
+### Where this pattern fits
+
+Custom events are a good seam between a web component and its host, between independent widgets in one document, or between framework code and a third-party DOM library. They are a poor replacement for props, context, or a state store inside one component tree because the event is imperative, easy to miss, and does not describe who owns the resulting state.
+
+For custom events crossing a Shadow DOM boundary, define the event's public name and payload as deliberately as you would define an API. Do not leak internal nodes or sensitive mutable state through `detail`.
+
+## 4. Real Code — See It Working
+
+### A small browser example: publish, receive, and clean up
+
+Save this as an HTML file and open it in a browser. The button dispatches an event on itself; the parent receives it because the event bubbles.
+
+```html
+<button id="add-to-cart">Add keyboard</button>
+<output id="status" aria-live="polite"></output>
+
+<script>
+  const button = document.querySelector("#add-to-cart");
+  const status = document.querySelector("#status");
+
+  function showCartUpdate(event) {
+    // The event name is the routing key; detail is the agreed payload.
+    const { sku, quantity } = event.detail;
+    status.textContent = `${quantity} × ${sku} added`;
+  }
+
+  // Listening on the parent lets this work for current and future buttons.
+  document.body.addEventListener("cart:item-added", showCartUpdate);
+
+  button.addEventListener("click", () => {
+    button.dispatchEvent(
+      new CustomEvent("cart:item-added", {
+        bubbles: true,
+        detail: { sku: "keyboard", quantity: 1 },
+      }),
+    );
+  });
+
+  // In a real component, call this when the component is disposed.
+  // document.body.removeEventListener("cart:item-added", showCartUpdate);
+</script>
 ```
 
-## 5. Minimal example
+The listener sees the same event object while it runs. `event.target` is the button, while `event.currentTarget` is `document.body`. If `bubbles` were omitted, the body listener would not run.
+
+### A cancelable event as a synchronous policy check
 
 ```js
-const event = new CustomEvent("cart:add", { detail: { id: 1 } });
-window.dispatchEvent(event);
-```
+const checkout = document.createElement("form");
+checkout.id = "checkout";
+document.body.append(checkout);
 
-## 6. Real-world example
-
-```js
-window.addEventListener("auth:logout", () => {
-  clearSession();
+checkout.addEventListener("checkout:before-submit", (event) => {
+  if (!event.detail.email.includes("@")) {
+    event.preventDefault();
+  }
 });
+
+function submitCheckout(email) {
+  const allowed = checkout.dispatchEvent(
+    new CustomEvent("checkout:before-submit", {
+      cancelable: true,
+      detail: { email },
+    }),
+  );
+
+  if (!allowed) {
+    return { submitted: false, reason: "invalid email" };
+  }
+
+  // The producer explicitly chooses to honor preventDefault().
+  return { submitted: true };
+}
 ```
 
-Legacy shell can notify independent widgets.
+This is not asynchronous validation. A listener cannot `await` a server response and expect the already-returned dispatch to pause. Use an explicit async function when the decision depends on I/O.
 
-## 7. Common interview questions
+### Teardown with `AbortController`
 
-#### What is `CustomEvent`?
-- **The Engine Mechanism (Why it behaves this way):** The `CustomEvent` interface represents an event initialized by an application for any purpose. It extends the browser's base `Event` class, which means it inherits standard event behavior (including phase propagation like capturing and bubbling, and methods like `stopPropagation()`). When `new CustomEvent(type, options)` is executed, the JavaScript engine allocates memory in the Heap for the event instance. In the creation phase of the event instance, the second argument options object is parsed; if a `detail` property is provided, it is stored internally and exposed as a read-only property on the event object.
-- **The Unforgettable Mental Model:** Imagine the DOM event system is a postal delivery network. A standard `Event` is an empty envelope that just says "Priority" or "Notice." A `CustomEvent` is a custom parcel package containing a designated bubble-wrap compartment (`detail`) where you can tuck in any item (data payload) you want to send across town.
-- **The Trap:** Attempting to assign custom properties directly to a base `Event` object (e.g., `new Event('my-event').someData = {}`). The browser engine seals or strictly regulates base `Event` objects, meaning custom properties might be silently ignored or cause errors in strict mode. You must use `CustomEvent` and the specified `detail` key for passing payloads.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: '`CustomEvent` is a web platform interface that extends the base DOM `Event` interface, specifically designed to carry arbitrary payloads via a read-only `detail` property. It allows developers to leverage the browser's built-in event-propagation system—including capturing, bubbling, and cancelability—for application-specific, decoupled communication.'"
+```js
+const controller = new AbortController();
+const eventTarget = new EventTarget();
 
-#### Where is payload stored?
-- **The Engine Mechanism (Why it behaves this way):** The payload is stored in the `detail` property of the `CustomEvent` instance. When the event is dispatched, the engine passes a reference to this `CustomEvent` object to all matching listeners on the event path. Inside the listener's lexical environment, the event is received as an argument (usually `e` or `event`), and `event.detail` is accessed. Because `event.detail` contains a reference to the heap-allocated payload, passing large objects doesn't copy the data—it merely copies the reference, which is highly efficient but means listeners can mutate the payload unless it is frozen.
-- **The Unforgettable Mental Model:** A specialized lockbox embedded in the side of a courier's truck labeled "DETAIL". Anyone who intercepts the truck can open this lockbox and read the documents inside, but they cannot replace the lockbox itself.
-- **The Trap:** Modifying properties inside `event.detail` inside a listener. If `detail` contains a non-frozen reference-type object (like a plain object or array), a downstream listener can mutate it, causing hard-to-debug side-effects across unrelated files.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'The payload is stored in the `detail` property of the event object. It is passed as the second argument inside the options object when initializing `new CustomEvent()`. To ensure state predictability, it is best practice to pass read-only or deeply frozen data in `detail` to prevent listeners from inadvertently mutating the payload.'"
+function onLogout(event) {
+  console.log(`Signed out user ${event.detail.userId}`);
+}
 
-#### How do you dispatch custom event?
-- **The Engine Mechanism (Why it behaves this way):** Dispatching is triggered via the `dispatchEvent()` method, which is defined on the `EventTarget` prototype (inherited by `Node`, `Element`, `Document`, and `Window`). When `element.dispatchEvent(event)` is called:
-  1. The Call Stack is paused for synchronous event execution.
-  2. The browser engine calculates the event path (based on the DOM tree from the target element up to `Window`).
-  3. It executes matching event listeners registered along that path (Capturing phase, then Target, then Bubbling phase if `{ bubbles: true }` was specified in the event options).
-  4. The method returns `false` if the event is cancelable and at least one listener called `preventDefault()`, and `true` otherwise.
-- **The Unforgettable Mental Model:** A megaphone broadcast from a specific floor of a building. The sound either stays in that room, or travels all the way up to the roof (Window) depending on whether you enabled the "echo booster" (bubbles: true).
-- **The Trap:** Forgetting that `dispatchEvent` is a *synchronous* operation. If you dispatch an event, the JavaScript engine suspends the execution of the dispatching function and immediately executes all synchronous event handlers bound to that event before returning. This can block the Call Stack if listeners are heavy.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'We dispatch custom events using `targetElement.dispatchEvent(customEventInstance)`. This is a synchronous operation on `EventTarget` that immediately resolves the event path and invokes all matched capturing and bubbling listeners on the Call Stack before the execution of the main dispatching block resumes.'"
+eventTarget.addEventListener("auth:logout", onLogout, {
+  signal: controller.signal,
+});
 
-#### When use custom events?
-- **The Engine Mechanism (Why it behaves this way):** Custom events are ideal at architectural boundaries where framework-specific reactivity (like React Context, Vue props, or Redux) is unavailable or undesirable. This includes micro-frontends, Web Components (Shadow DOM boundaries), third-party vanilla JS libraries, and legacy script integrations. By using the native DOM as the event bus, disparate modules communicate without shared runtime packages or build-time dependencies.
-- **The Unforgettable Mental Model:** A universal power adapter. It doesn't matter if your appliance is from Europe or America; if both conform to the physical socket shape (the DOM), they can share power (data).
-- **The Trap:** Using custom events inside a single unified SPA framework (like React or Vue) for general state management. This bypasses the framework's reactive data flow, making state tracing, debugging, and Time-Travel debugging near impossible.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Custom events should be reserved for decoupled boundaries, such as communicating between independent Micro-Frontends, Web Components crossing Shadow DOM boundaries, or integrating third-party vanilla JavaScript plugins. Within a dedicated SPA framework like React, we should rely on standard props, state, and context to preserve declarative reactivity and deterministic debugging.'"
+eventTarget.dispatchEvent(
+  new CustomEvent("auth:logout", { detail: { userId: "u-42" } }),
+);
 
-#### Custom events vs pub-sub?
-- **The Engine Mechanism (Why it behaves this way):**
-  - **Custom Events:** Leverage the browser's native DOM tree for propagation. Listeners must be bound to nodes that lie on the event path, and the events propagate using Capture/Bubble phases, which makes them aware of visual hierarchies.
-  - **Pub-Sub (Publish-Subscribe):** Is a pure JavaScript construct (usually an object mapping strings to arrays of callback functions). It has zero knowledge of the DOM, no propagation phases, operates strictly in memory via direct function calls, and is faster because it avoids DOM traversal overhead.
-- **The Unforgettable Mental Model:** Custom events are like smoke signals sent from a specific physical tower (DOM node)—only towers within sight line (ancestry) can see and react to them. Pub-sub is a central cell-tower network—any device anywhere in the country can receive a text message if subscribed to the number.
-- **The Trap:** Thinking custom events are slower than pub-sub. While DOM traversal does introduce overhead, custom events are highly optimized by the browser engine and offer unique context-awareness (e.g., stopping propagation midway up the DOM tree) that pure memory-based Pub-Sub cannot match.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Custom events are DOM-centric, propagating through capturing and bubbling phases based on the DOM hierarchy, which makes them context-aware and highly integrated with native elements. In contrast, Pub-Sub is a pure in-memory JavaScript pattern that is completely detached from the DOM, executing linear callback queues for subscribed observers, which makes it faster and lighter for pure data-centric tasks.'"
+// Removes onLogout without needing to remember the target and options later.
+controller.abort();
+```
 
-## 8. Active recall test
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### 1. Which constructor creates custom event?
-- **Explanation/Answer:** `new CustomEvent(eventType, options)` is the constructor, where `eventType` is a string and `options` can contain `detail` (the payload), `bubbles` (whether it bubbles), and `cancelable` (whether it can be canceled via `preventDefault()`).
+**Q: What is the difference between `Event` and `CustomEvent`?**
 
-#### 2. Where does payload go?
-- **Explanation/Answer:** The payload is assigned to the `detail` property inside the second argument object, and retrieved via `event.detail` in listeners.
+`Event` gives you the standard event type and propagation behavior. `CustomEvent` is the convenient built-in form for adding application data through `detail`. Both are dispatched with `dispatchEvent`, and both can use options such as `bubbles`, `cancelable`, and `composed` where supported. For a richer reusable event contract, subclassing `Event` is also possible, but `CustomEvent` is usually clearer for a simple payload.
 
-#### 3. What method dispatches it?
-- **Explanation/Answer:** The `dispatchEvent(event)` method, called on any `EventTarget` (such as an Element, Document, or Window).
+**Q: Is `event.detail` copied when the event is dispatched?**
 
-#### 4. What method listens?
-- **Explanation/Answer:** The `addEventListener(eventType, handler)` method, called on any ancestor node (if bubbling is enabled) or directly on the target node.
+No. The `detail` property holds the value supplied to the constructor. For an object, listeners normally observe the same object reference, not a JSON clone. That makes passing data cheap, but it also means mutable payloads create shared state. Prefer a small, stable payload and treat it as read-only; clone or freeze it when the boundary requires stronger isolation.
 
-#### 5. When is React state better?
-- **Explanation/Answer:** React state (or context/props) is better for communications within the React application tree because it maintains declarative UI synchronization, adheres to unidirectional data flow, supports hooks, and avoids direct imperative DOM operations.
+**Q: Why did my ancestor listener not receive the custom event?**
 
-## 9. Mistakes / traps
-- Using custom events for normal React parent-child flow.
-- Forgetting listener cleanup.
-- Putting large mutable objects in `detail`.
-- Naming events inconsistently.
+The event probably was dispatched on a descendant without `bubbles: true`, or the listener is not on the event's path. Bubbling is opt-in for a `CustomEvent`. Also check the event name's exact spelling and case, and remember that a Shadow DOM boundary may require `composed: true` in addition to `bubbles: true`.
 
-## 10. Compare with related concepts
-- **CustomEvent vs Event:** custom payload via `detail`.
-- **Custom event vs pub-sub:** DOM-based vs app-level emitter.
-- **Custom event vs React props:** browser integration vs component data flow.
+**Q: Is `dispatchEvent` asynchronous?**
 
-## 11. Summary from memory
-Explain how web component can notify host app with `CustomEvent`.
+No. It invokes applicable listeners synchronously and returns after they finish. A listener that performs expensive work blocks the code that called `dispatchEvent`. If work should happen later, the listener must explicitly schedule it, for example with `queueMicrotask` or `setTimeout`; that changes when the work runs and when errors are observed.
 
-## 12. Spaced revision prompts
-- 1 day: Define custom event.
-- 3 days: Dispatch event with `detail`.
-- 7 days: Add/remove listener.
-- 14 days: Compare with pub-sub.
+**Q: What does the boolean returned by `dispatchEvent` mean?**
 
+It returns `false` only when the event is cancelable and at least one listener called `preventDefault()`. Otherwise it returns `true`. The producer must deliberately check that result and define what cancellation means. Calling `stopPropagation()` affects routing, not this return value.
+
+**Q: How do you prevent a custom-event listener from leaking?**
+
+Remove it from the same target with the same event type, the same function object, and the same capture setting. A named function or stored callback is therefore safer than an anonymous function when the lifetime is longer than the current operation. `{ once: true }` handles one invocation, and an `AbortSignal` is convenient when a component owns several listeners.
+
+**Q: When should a React application use custom events instead of props or context?**
+
+Use props, context, or a state store for communication inside a React ownership tree because those mechanisms make state ownership and rendering dependencies explicit. Use a custom event when React is crossing a boundary it does not own, such as a web component, a legacy widget, or a third-party DOM integration. The event should represent a boundary-level fact, not act as a hidden replacement for application state.
+
+**Q: Can a custom event communicate with another tab?**
+
+No. A custom DOM event stays within the `EventTarget` graph of its document. For same-origin tabs, consider `BroadcastChannel` or the `storage` event; for windows or frames, consider `postMessage`; for a server, use a network protocol. Those mechanisms have different delivery, serialization, origin, and lifetime rules.
+
+## 6. The Traps — What Goes Wrong
+
+### Forgetting that bubbling is opt-in
+
+```js
+const child = document.createElement("button");
+
+child.dispatchEvent(new CustomEvent("panel:close"));
+```
+
+This dispatches on `child`, but an ancestor's normal listener will not receive it because `bubbles` defaults to `false`. Add `{ bubbles: true }` when the event is intentionally delegated. Do not turn bubbling on automatically for every event: it expands the public surface and can cause unrelated ancestors to react.
+
+### Treating `preventDefault` as propagation control
+
+`preventDefault()` marks a cancelable event as prevented; it does not stop other listeners from running. `stopPropagation()` stops travel to other targets but does not prevent listeners already scheduled at the current target. `stopImmediatePropagation()` is stronger and also prevents later listeners on that same target. Choose the smallest control that matches the requirement.
+
+### Removing a different function
+
+```js
+function clearSession() {
+  console.log("Session cleared");
+}
+
+window.addEventListener("auth:logout", () => clearSession());
+window.removeEventListener("auth:logout", () => clearSession()); // no effect
+```
+
+Those two arrow expressions create different function objects, so the second call cannot remove the first listener. Store the callback or use an `AbortController`.
+
+### Passing a giant mutable object
+
+The event is a notification boundary, not a convenient way to expose an entire store. A large mutable `detail` object lets one listener silently change what another listener sees. Send the smallest useful data, such as `{ orderId }`, and let the receiver read its own state if it needs more.
+
+### Expecting an async veto
+
+`dispatchEvent` cannot wait for a promise returned by a listener. A listener that starts an async check cannot reliably call `preventDefault()` after the producer has already continued. Model the operation as an explicit `async` function or command when the decision depends on network or storage I/O.
+
+### Using `window` as an invisible global store
+
+Global event names are easy to collide, hard to trace, and remain active if listeners are not cleaned up. Scope the target as narrowly as possible, use namespaced names and documented payloads, and pair registration with teardown. In a single framework tree, a visible state flow is usually easier to maintain.
+
+## 7. Compare With Related Concepts
+
+| Choice | Key difference | Use it when |
+| --- | --- | --- |
+| `CustomEvent` vs `Event` | `CustomEvent` carries application data in `detail`; `Event` is enough when the name and standard fields are all you need. | Use `CustomEvent` for a small payload on a DOM event path. |
+| Custom event vs pub-sub emitter | A custom event uses `EventTarget` routing, propagation phases, and DOM lifetime. A pub-sub emitter calls subscribers from an application-owned registry with no DOM path. | Use the emitter for non-DOM domain messages; use a custom event at a browser/widget boundary. |
+| Custom event vs `BroadcastChannel` | A custom event is same-document; `BroadcastChannel` sends structured-cloned messages between same-origin browsing contexts. | Use `BroadcastChannel` for active cross-tab or cross-window coordination. |
+| Custom event vs React props/context | Custom events are imperative and loosely connected to rendering; props/context are declarative inputs in a React tree. | Use props/context for React-owned state; use events to integrate something outside that tree. |
+| `preventDefault` vs `stopPropagation` | The first marks a cancelable action as rejected; the second changes where the event travels. | Use the former for a producer-controlled veto and the latter for routing control. |
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+A custom event is a signed notice passed through one building: `detail` is the note, `dispatchEvent` delivers it synchronously, and `bubbles` decides whether it can travel upstairs. It is an excellent handshake between independent things that share a document—not a hidden replacement for the state flow inside one application.
