@@ -1,124 +1,222 @@
-# Private Fields
+# JavaScript Private Fields and Methods
 
-## Detailed explanation
-Private fields are class fields prefixed with `#`. They are accessible only inside class body. They give real language-level privacy, unlike naming conventions such as `_value`.
+## 1. Why This Exists — The Problem First
 
-Frontend use: encapsulate class internals in SDK clients, data structures, widgets, and utilities.
+An SDK client often has state that its users must not be able to corrupt: an access token, a retry counter, a socket, or a cache. If that state is stored as `this._token`, the underscore only asks callers to behave. They can still overwrite it, serialize it, or build code that depends on an implementation detail you wanted to change.
 
-## 1. One-line mental model
-`#field` is class-private state enforced by JavaScript.
+JavaScript private fields and methods solve that specific problem with language-enforced access. They let a class expose a small public API while keeping its internal state out of normal property access and reflection. That is useful for correctness and encapsulation; it is not a promise that a browser-held secret is safe from the person who controls the browser.
 
-## 2. Problem it solves
-Classes need internal data that outside code cannot read or mutate.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Prefix with `#`.
-- Access only inside class.
-- Not available through bracket notation.
-- Different from TypeScript `private`.
-- Useful for encapsulation.
+Think of a class as a workshop with a public counter and a locked workroom. Customers can use the services offered at the counter, but they cannot open the workroom door, rename a tool inside it, or ask the building directory for the hidden room. The workshop staff can use the tools because their instructions were written inside the workshop.
 
-## 4. Visual / analogy
-Private field = locked drawer inside class.
+In JavaScript, public properties and methods are the counter. A `#token` field or `#refresh()` method is the locked workroom. The class body is the trusted set of instructions that has the key. A subclass is a new workshop that may inherit the parent’s public counter and may receive the parent’s locked room when it constructs a parent portion, but it does not receive the parent’s key name: the subclass cannot write `this.#token` unless it declared its own `#token`.
 
-```txt
-class owns #secret
-outside cannot read it
-```
+The analogy also explains a brand check. An object is allowed through a class’s private door only if that class initialized its private room on that object. A look-alike object with the same public shape is still refused.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
 
-```js
-class Counter {
-  #count = 0;
-  inc() {
-    return ++this.#count;
-  }
-}
-```
+The `#` is part of the identifier, not decoration. A class must declare `#count` before using that private name, and the name can be referenced only in the lexical body of the class that declared it. `account["#count"]` is a lookup for a public string property named `"#count"`; it does not mean the private field.
 
-## 6. Real-world example
+Private state is separate from ordinary object properties. It is not returned by `Object.keys`, `Object.getOwnPropertyNames`, `Reflect.ownKeys`, or `JSON.stringify`. There is no public property descriptor for a private field. A class can deliberately expose a value through a public method, but that exposure is an API decision rather than accidental property access.
+
+Every private access checks a brand. When a constructor initializes `#count`, that instance receives the brand for the declaring class. Later, `this.#count` succeeds only when `this` carries that brand. Calling a method with the wrong receiver therefore throws a `TypeError`, even if the receiver has a public property with the same spelling. The check is about class identity, not about matching object shape.
+
+Private methods and accessors use the same privacy rule. A private method is not placed on the public prototype as a callable string-keyed property. It can call other private names from the same class, while outside code can reach it only through a public method that chooses to delegate to it.
+
+Inheritance has two easy-to-miss rules. First, constructing a derived instance runs the base constructor, so the object receives the base class’s private brand before the derived class initializes its own private fields. Second, private names are not inherited names. `Parent` can use `#value`, and `Child` can separately declare its own `#value`, but `Child` cannot use `Parent`’s `#value`. The two fields are independent even though their spelling is identical.
+
+Static private members belong to the class constructor, not to instances. `#nextId` declared with `static` is available to static methods of the declaring class and is checked against the constructor object. Static private members are also not inherited as names. An inherited static method that uses `this.#secret` can fail when called with a subclass as `this`, because the subclass constructor does not carry the parent’s private brand; use the declaring class name when the operation must always target the parent’s static state.
+
+Initialization order matters when private fields depend on one another. Within one class, instance fields initialize in source order before the constructor body continues. In a base class, fields initialize before the base constructor body. In a derived class, `super()` must run first; base initialization completes, then derived fields initialize, and only then does the rest of the derived constructor body run. Static fields initialize while the class definition is evaluated, in source order, before later code can use the class.
+
+Native `#private` is runtime privacy, unlike TypeScript’s `private`, which primarily prevents type-checked source from accessing a member. Depending on compiler settings, TypeScript may emit an ordinary property or a helper-based representation; neither should be treated as a browser security boundary. Use `#` when the runtime object must reject accidental or direct access. Use a closure or `WeakMap` when the private state must live outside class syntax or be shared by functions that are not class methods.
+
+## 4. Real Code — See It Working
+
+This client keeps its token, retry state, and request construction private. The public `request` method is the only route that can use them, so callers cannot reset retries or replace the token by ordinary property access.
 
 ```js
 class ApiClient {
   #token;
+  #retries = 0;
+
   constructor(token) {
+    // WHY: the token belongs to the client instance, not to the public API.
     this.#token = token;
   }
+
+  #buildHeaders() {
+    // WHY: keeping header construction private prevents callers from
+    // depending on how authentication is represented internally.
+    return { Authorization: `Bearer ${this.#token}` };
+  }
+
+  request(path) {
+    this.#retries += 1;
+    return {
+      path,
+      headers: this.#buildHeaders(),
+      attempt: this.#retries,
+    };
+  }
 }
+
+const client = new ApiClient("demo-token");
+console.log(client.request("/orders"));
+console.log(client["#token"]); // undefined: this asks for a public key.
+console.log(Object.keys(client)); // []: private fields are not enumerable.
 ```
 
-## 7. Common interview questions
+The next example makes the brand check visible without trying to access a private name from outside the class. The `static has` method is allowed to ask whether an object carries this class’s private brand.
 
-#### What are private fields?
-- **The Engine Mechanism (Why it behaves this way):** Private fields (marked with a `#` prefix) are a native JavaScript feature (ECMAScript 2020) that enforces structural, runtime-level encapsulation on class instances. When the JavaScript engine compiles a class declaration, it adds the private identifiers to an internal private name map associated with the class constructor. During instantiation, the engine allocates slots in the memory structure of the instance specifically for these private fields. Unlike public fields which are stored as string keys in the object's standard property descriptor table, private fields are stored in a separate, inaccessible internal slot array. Access to these slots is governed strictly by the static lexical scope of the class body; the engine performs compile-time syntactical checks to ensure that any code containing `#identifier` is located physically inside the class braces.
-- **The Unforgettable Mental Model:** A secret safe built inside a hotel room's walls. Only the hotel room's built-in automation system (methods defined inside the class) has the mechanical keycard to open this safe. Guests (outside code) can scan, touch, or inspect the visible furniture (public properties), but they don't even have a keyhole to try and pick the safe.
-- **The Trap:** Thinking private fields can be declared dynamically or added to instances later. Because the engine checks for the `#` prefix statically at parsing time, attempting to use a private field that was not declared in the class header (e.g., `this.#unknownField = 1` inside a method) will throw a fatal compile-time `SyntaxError` before a single line of your script even runs.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Private fields, declared with the hash prefix, represent native runtime-enforced privacy in modern JavaScript. They are not stored as standard string keys on the object's property table, but in dedicated internal slots. The JS engine validates access statically at compile time, guaranteeing that no external code, including reflection, dynamically evaluated bracket notation, or child subclasses, can access or mutate these internal states.'"
+```js
+class Vault {
+  #value;
 
-#### How differ from `_field`?
-- **The Engine Mechanism (Why it behaves this way):** The underscore prefix (`_field`) is purely a stylistic naming convention popularized in the ES5 era. From the engine's perspective, `_field` is an ordinary public property. It is added to the object's key-value property map, is fully enumerable by default, shows up in `Object.keys()` and `JSON.stringify()`, and can be read or modified by any outside script. In contrast, a `#field` has absolute runtime protection: it does not appear in property enumerations, it is skipped by `JSON.stringify()`, and any attempt to read or write to it from outside the class throws a fatal error.
-- **The Unforgettable Mental Model:** A "Do Not Enter" sign hung on an unlocked screen door (`_field`) vs a 12-inch steel vault door with a biometric scanner (`#field`). Anyone can ignore the sign and walk through the screen door, but the vault door is physically impassable.
-- **The Trap:** Forgetting that `_field` is visible to analytics tools, logging libraries, and testing frameworks. If you store sensitive data like API tokens or credit card information in `_field`, they will be dumped into telemetry logs or serializations. Native `#fields` are naturally protected from accidental serialization.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'The underscore prefix is a legacy developer convention that signals intent but offers zero actual privacy; the field remains fully public and enumerable. Native `#` private fields, on the other hand, provide bulletproof runtime isolation. They cannot be discovered via property traversal, they are ignored during JSON serialization, and any external access immediately throws a runtime error.'"
+  constructor(value) {
+    this.#value = value;
+  }
 
-#### Can outside code access `#field`?
-- **The Engine Mechanism (Why it behaves this way):** No, outside code cannot access private fields under any standard circumstances. The JavaScript engine strictly enforces that private names can only be evaluated within the class body they were declared in. Even standard meta-programming and reflection mechanisms—such as `Object.getOwnPropertyNames()`, `Reflect.ownKeys()`, `for...in` loops, or dynamic bracket notation (`instance['#field']`)—return `undefined` or fail to locate the field. The only way to access it is through public methods exposed by the class that internally read or return the private value.
-- **The Unforgettable Mental Model:** A private island with no physical mapping or coordinates in standard navigation charts. Unless the island's governor decides to send a boat out with cargo (a public getter), there is no coordinate or path any explorer can use to find or land on it.
-- **The Trap:** Thinking child subclasses can access private fields of their parent class. They cannot! Private fields are strictly private to the *declaring* class. If `class Child extends Parent` tries to call `this.#parentPrivate`, it throws a compile-time `SyntaxError`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'No, outside code has absolutely zero access to private fields. Reflection APIs like `Reflect.ownKeys()` and property selectors cannot discover them, and child subclasses cannot inherit or read them. They are accessible exclusively within the lexical scope of the parent class, ensuring total encapsulation.'"
+  static hasBrand(candidate) {
+    // WHY: `#value in` checks class identity, not whether a public key exists.
+    return #value in candidate;
+  }
 
-#### TypeScript `private` vs JS `#private`?
-- **The Engine Mechanism (Why it behaves this way):**
-  - **TypeScript `private`:** Is a compile-time type-checking construct. Once the TypeScript compiler compiles the code to standard JavaScript, the `private` keyword is stripped away entirely, and the field is compiled into a standard, fully public property in the output bundle. At runtime, anyone can read and write to it.
-  - **JavaScript `#private`:** Is a native ECMAScript standard. The `#` symbol is preserved in the compiled JS output, and the browser's JavaScript engine enforces privacy at runtime.
-- **The Unforgettable Mental Model:** TypeScript `private` is like a cardboard security guard standing at a gate during a blueprint review; once the building is actually built (runtime), the guard is gone. JavaScript `#private` is a solid concrete wall that remains standing long after construction is complete.
-- **The Trap:** Relying on TypeScript's `private` keyword to hide sensitive credentials in front-end code from user inspection. Since it compiles to a public property, any user can open their browser's devtools console, inspect the object instance, and read the sensitive key. Using native `#private` fields ensures the key is completely hidden from inspection.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'TypeScript’s `private` keyword is a static analyzer mechanism that only protects access during compilation; it compiles down to standard public properties that are fully visible at runtime. In contrast, native JS `#` private fields are enforced at the engine runtime level, providing absolute security and separation even after compilation.'"
+  read() {
+    return this.#value;
+  }
+}
 
-#### Where useful?
-- **The Engine Mechanism (Why it behaves this way):** Private fields are exceptionally useful in complex object-oriented patterns where internal state must remain highly stable, secure, and decoupled. Key areas include:
-  1. **SDK and Library APIs:** Hiding internal state machines, connection tokens, and raw credentials from library consumers so they cannot create dependencies on internal implementation details.
-  2. **Data Structures:** Restricting access to internal tree/graph pointers to guarantee that public operations (like push/pop/balance) are the only mechanisms that alter the underlying data nodes, preserving structural integrity.
-  3. **Event Emitter / Web Sockets wrappers:** Keeping connection states and heartbeats private to prevent outside code from manually firing triggers or corrupting the timing frames.
-- **The Unforgettable Mental Model:** The engine of a modern automobile. The driver has access to a simple, public API: the steering wheel, gas pedal, and brake. The complex pistons, timing belts, and fuel injection systems (private fields) are locked under the hood so the driver doesn't accidentally tinker with them and blow up the engine.
-- **The Trap:** Over-engineering simple functional code or stateful objects by wrapping everything in large, heavy classes with private fields, which can increase memory overhead and complexity compared to simple closures or standard objects.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Private fields are invaluable when building third-party SDKs, complex utility libraries, and data structures. By strictly hiding configuration details—like API tokens, connection sockets, or internal pointer networks—we prevent external developers from creating brittle dependencies on internal implementations, allowing us to safely refactor our class internals without introducing breaking changes.'"
+const vault = new Vault(42);
+console.log(Vault.hasBrand(vault)); // true
+console.log(Vault.hasBrand({})); // false
+console.log(Vault.hasBrand({ "#value": 42 })); // false
+```
 
-## 8. Active recall test
+Parent and child private state can coexist, but the child cannot use the parent’s private name. The `super()` call creates the parent portion first, then the child’s own field is initialized.
 
-#### 1. What symbol marks private field?
-- **Explanation/Answer:** The hash symbol `#` prefixed to the variable name (e.g., `#privateField`).
+```js
+class Parent {
+  #label = "parent";
 
-#### 2. Can bracket access read it?
-- **Explanation/Answer:** No, bracket notation like `instance['#privateField']` will return `undefined`. Private fields are completely omitted from property tables.
+  parentLabel() {
+    return this.#label;
+  }
+}
 
-#### 3. Is `_name` private?
-- **Explanation/Answer:** No, `_name` is an ordinary public property. The underscore is just a developer naming convention; it is fully accessible and mutable from outside the class.
+class Child extends Parent {
+  #label = "child";
 
-#### 4. Where can `#field` be used?
-- **Explanation/Answer:** It can be used anywhere inside the lexical body of the class declaration where it was defined, including in its constructors, methods, and getters/setters.
+  labels() {
+    // WHY: these are two different private names owned by two classes.
+    return [super.parentLabel(), this.#label];
+  }
+}
 
-#### 5. Why useful in SDKs?
-- **Explanation/Answer:** It hides sensitive state (like tokens, socket instances, or raw request queues) from developers consuming the SDK, preventing them from corrupting the internal state or depending on non-public APIs that might change in future updates.
+console.log(new Child().labels()); // ["parent", "child"]
+```
 
-## 9. Mistakes / traps
-- Thinking `_field` is private.
-- Mixing TS `private` with JS runtime privacy.
-- Trying `obj["#field"]`.
-- Overusing classes when objects/functions simpler.
+Static private state is attached to the declaring constructor. The public static method uses `Counter.#next` instead of `this.#next`, so calling it through a subclass still updates the same private counter.
 
-## 10. Compare with related concepts
-- **`#private` vs closure private:** class syntax vs function closure.
-- **`#private` vs TypeScript `private`:** runtime enforced vs compile-time.
-- **Private field vs WeakMap:** native syntax vs external private storage.
+```js
+class Counter {
+  static #next = 0;
 
-## 11. Summary from memory
-Explain why `#token` cannot be read from outside an API client.
+  static allocate() {
+    // WHY: the declaring class is the guaranteed owner of this static brand.
+    Counter.#next += 1;
+    return Counter.#next;
+  }
+}
 
-## 12. Spaced revision prompts
-- 1 day: Define private field.
-- 3 days: Compare with `_field`.
-- 7 days: Compare with TS private.
-- 14 days: Build class with `#cache`.
+class SpecialCounter extends Counter {}
 
+console.log(Counter.allocate()); // 1
+console.log(SpecialCounter.allocate()); // 2
+```
+
+Finally, field order is observable when one field reads another. The initializer for `#snapshot` sees the earlier field, while a later field cannot be used until its own initializer runs.
+
+```js
+class Session {
+  #user = "ada";
+  #snapshot = `${this.#user}:ready`;
+
+  describe() {
+    return this.#snapshot;
+  }
+}
+
+console.log(new Session().describe()); // "ada:ready"
+```
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What makes a JavaScript `#field` genuinely private?**
+
+The hash-prefixed name is a language-level private name. It is not a string key in the object’s ordinary property space, and the engine rejects references from outside the declaring class body. An object can have a public property named `"#field"` without that property having any connection to the private field.
+
+**Q: What is a brand check?**
+
+A brand check asks whether the receiver was initialized by the class that declared the private name. `this.#value` performs that check before reading or writing. Inside the declaring class, `#value in candidate` exposes the check as a boolean. A plain object with the right public keys fails because private access depends on class identity, not duck typing.
+
+**Q: Can a subclass access a parent’s private field?**
+
+No. The parent’s private name is available only in the parent class body. A derived instance normally carries the parent brand because `super()` constructs the parent portion, so a parent method called on that instance can still read the parent field. The subclass itself must use a public method supplied by the parent or declare a separate private field.
+
+**Q: Are private fields inherited or overridden?**
+
+The private name is not inherited, and it cannot be overridden by a public property. A child may declare its own `#value`; that is a distinct name and distinct storage from the parent’s `#value`. Both can exist on the same instance without colliding.
+
+**Q: How do private methods differ from private fields?**
+
+Both use the same lexical access and brand rules. A private field stores per-instance data; a private method supplies an implementation detail that the class can call. Neither is available through bracket notation or ordinary reflection. Choose a private method when the hidden thing is behavior rather than state.
+
+**Q: How do static private members differ from instance private members?**
+
+An instance private member is branded onto each constructed object. A static private member is branded onto the class constructor during class evaluation. Instance methods use it through an instance receiver; static methods use it through the declaring constructor. Static private members are useful for class-wide counters, registries, or caches that should not become public constructor properties.
+
+**Q: What happens if a method using `#value` is detached?**
+
+The method can lose its receiver just like any other normal method. Calling a detached method may make `this` undefined or point to the wrong object, and the private access then throws. Bind the method, call it with the correct receiver, or expose an arrow-function wrapper when preserving the receiver is part of the API design.
+
+**Q: Is `#private` a way to hide a frontend secret?**
+
+It hides a field from direct object access, accidental mutation, and ordinary reflection. It does not make a token secret from the user who owns the browser, from code that can call the client’s public methods, or from a debugger controlling the runtime. Put real authorization secrets on a server; use `#` to protect object invariants and implementation details.
+
+**Q: When would you choose a closure or `WeakMap` instead?**
+
+Use `#` for a class-native API with clear per-instance hidden state. Use a closure when the state belongs to one factory-produced object and no class syntax is needed. Use `WeakMap` when several functions or classes need coordinated private storage, when supporting older targets through a deliberate compatibility strategy, or when you need private data without changing the class’s declared names. Each option changes ergonomics, tooling, and memory behavior, so choose from the API boundary rather than from the word “private” alone.
+
+## 6. The Traps — What Goes Wrong
+
+**Treating `_value` as protection.** An underscore is a convention. `object._value = 0` works, and `_value` can appear in keys and JSON. Use `_value` only when public-but-internal-by-convention is acceptable; use `#value` when direct runtime access must fail.
+
+**Trying bracket notation.** `object["#value"]` looks plausible but searches for a public string property. It returns `undefined` unless somebody explicitly created that public property. There is no computed private access such as `object[name]` where `name` is `"#value"`.
+
+**Calling a private method with the wrong receiver.** A method borrowed from one instance and called on another object can throw a `TypeError` because the receiver lacks the declaring class’s brand. The same applies to `Reflect.apply`; changing the call mechanism does not bypass privacy.
+
+**Assuming a child’s same-spelled field is the parent field.** In `Parent` and `Child`, `#value` in each class names two different private names. A parent method reads the parent slot; a child method reads the child slot. If the child needs controlled access to parent state, the parent must expose a public method.
+
+**Reading a later field during initialization.** Field initializers run in source order. A field cannot rely on a later private field being initialized, and a derived field cannot run before `super()`. Arrange dependencies in declaration order or make initialization explicit in the constructor.
+
+**Using `this.#staticValue` for inherited static calls.** A static private brand belongs to the declaring constructor, not every subclass constructor. In a static method inherited by a child, `this` may be the child constructor and fail the brand check. Use `Base.#staticValue` when the parent owns the state, or deliberately declare separate static state in each class.
+
+**Treating privacy as security.** Private fields prevent object-shape access; they do not encrypt data or protect a frontend from its operator. Do not put server-only credentials in a browser bundle merely because the value sits behind `#`.
+
+## 7. Compare With Related Concepts
+
+**`#private` vs `_private`:** `#private` is runtime-enforced and absent from ordinary reflection; `_private` is a normal public property with a naming convention. Use `#` when outside code must be rejected. Use `_` when a public convention is enough and serialization/debugging visibility is useful.
+
+**`#private` vs TypeScript `private`:** `#private` remains a JavaScript runtime feature; TypeScript `private` mainly constrains type-checked source and its emitted representation depends on the compiler target. Use `#` when the JavaScript runtime itself must enforce the boundary. Use TypeScript `private` when the main goal is editor/type feedback and the emitted object shape is acceptable.
+
+**`#private` vs closure privacy:** `#private` keeps state next to class methods and gives a natural per-instance object model. A closure hides variables in a factory’s lexical scope and can avoid class syntax. Use `#` for class inheritance and explicit private methods; use a closure for a small factory with no need for class identity.
+
+**`#private` vs `WeakMap`:** `#private` is concise native syntax and has direct brand checks. A `WeakMap` stores private data outside the instance and can be shared by code that has the map, but it requires more bookkeeping. Use `WeakMap` when multiple cooperating functions need the same hidden store or when the class cannot declare the private names; otherwise prefer `#` for clarity.
+
+**Instance private vs static private:** Instance private state is one copy per object; static private state is one hidden slot on the declaring constructor. Use instance state for object-specific invariants such as a client token. Use static state for class-wide coordination such as an ID allocator, while keeping inheritance behavior explicit.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+`#name` is not a secret spelling for a property; it is a private door with a class-specific key. An object must carry the declaring class’s brand to open that door, which is why reflection, bracket notation, look-alike objects, and subclasses cannot sneak through.
