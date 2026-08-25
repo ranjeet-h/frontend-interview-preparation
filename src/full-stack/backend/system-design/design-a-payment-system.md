@@ -1,129 +1,246 @@
-# Design a payment system
+# Design a Payment System
 
-## Detailed explanation
+## 1. Understand the Problem First — Clarify Before Designing
 
-Design a payment system is a backend system design exercise that checks API design, data modeling, scaling, reliability, and operational thinking. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Imagine Black Friday at 11:59 PM. A customer clicks "Pay $150" for an order. The mobile network stutters right as the backend contacts the payment gateway. The customer sees a spinning wheel, panics, and taps "Pay" three more times. Did the bank charge the card once, four times, or zero times? Did the merchant record the order? A week later, the finance team discovers $40,000 in ghost charges, uncredited accounts, and dropped webhooks where cards were debited but orders were never shipped.
 
-## 1. One-line mental model
+In most systems, a 99.9% success rate is acceptable. In payments, a 0.1% error rate on 1,000,000 daily transactions means 1,000 angry customers every single day with missing money or duplicate debits. You cannot build a payment system like a standard CRUD app.
 
-Design data flow, APIs, storage, scaling, failure handling, and observability together.
+Before drawing architecture boxes on the whiteboard, establish the operational boundaries and clarifying questions with the interviewer:
 
-## 2. Problem it solves
+- **Core Capabilities (Functional Scope):**
+  - **Pay-in flow:** Accept payments from buyers via credit cards, debit cards, and digital wallets.
+  - **Pay-out flow:** Disburse funds to sellers, merchants, or partners.
+  - **Ledger:** Record an auditable, immutable double-entry record of every cent moving through the platform.
+  - **Reconciliation:** Match internal transaction records against external payment gateway and bank settlement files.
+- **Scale and Traffic Profile:**
+  - Scale: 10,000,000 transactions per day (~115 transactions per second average, with peak flash sale spikes of 3,000 to 5,000 TPS).
+  - Data retention: Financial records must be retained for at least 7 years under legal and audit regulations.
+- **Hard Constraints & Invariants:**
+  - **Exactly-once processing:** A payment must never be executed twice, regardless of network retries, client double-clicks, or backend crashes.
+  - **Zero data loss & high auditability:** Financial records must balance to the cent (`Debits = Credits`).
+  - **PCI-DSS Compliance:** The system must never store or transmit raw credit card numbers (PANs) or CVVs directly on merchant application servers. Card capture must be isolated via hosted fields and tokenization.
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+## 2. The Core Insight — The Decision Everything Else Flows From
 
-## 3. Core idea
+A payment system is not an API that wraps an external gateway; it is a distributed state machine coupled with an immutable accounting ledger that orchestrates untrusted, asynchronous third parties.
 
-- Clarify requirements and scale.
-- Define APIs and data model.
-- Choose storage, cache, queues, and workers.
-- Plan consistency, failure handling, and security.
-- Add observability and rollout strategy.
+In distributed computing, networks are unreliable, servers crash mid-execution, and third-party Payment Service Providers (PSPs like Stripe or Adyen) take unpredictable amounts of time to respond. If your server dies after charging a customer's card but before saving the confirmation to your database, you cannot simply retry the charge on reboot without double-billing the user.
 
-## 4. Visual / analogy
+Therefore, the foundational decision that dictates the entire architecture is:
+
+**Never update account balances in place, and never treat third-party network calls as atomic database transactions.**
+
+Every single financial action must be driven by deterministic, client-originated idempotency keys, managed through distributed state machine transitions, and committed as balanced debit and credit entries in an immutable ledger. If a network timeout occurs, the system must never guess the outcome — it marks the state as pending, queries the provider deterministically, and relies on asynchronous reconciliation to guarantee ultimate consistency.
+
+## 3. High-Level Architecture — Components and Why Each Exists
+
+To handle payments reliably, the system separates card tokenization, payment orchestration, ledger recording, and background reconciliation into distinct components.
 
 ```txt
-Clients -> API -> services -> database/cache/queue -> observability
+[Client App (Web / Mobile)] -- (1. Tokenize Card Data) ---------> [PSP (Stripe / Adyen)]
+     |                                                                   ^
+     | (2. Submit Payment with Token + Idempotency-Key)                  |
+     v                                                                   |
+[API Gateway & Rate Limiter]                                             |
+     |                                                                   |
+     v                                                                   |
+[Payment Service (Orchestrator)] <--- (4. Authorize / Capture Charge) ---+
+     |   |
+     |   +---> [Payment DB (State Machine + Unique Idempotency Keys)]
+     |   |
+     |   +---> [Double-Entry Ledger DB (Immutable Debits & Credits)]
+     |
+     +-------> [Message Bus (Kafka / RabbitMQ)]
+                     |
+                     +---> [Fulfillment Service (Unlock Goods / Orders)]
+                     +---> [Notification Service (Customer Receipts)]
+
+[PSP Webhooks] ---> [Webhook Ingestion Service] ---> [Message Bus] ---> [Payment Service]
+
+[PSP Settlement Files (SFTP/S3)] ---> [Reconciliation Service] <---> [Ledger DB]
 ```
 
-## 5. Minimal example
+- **Client App & Tokenization (Cardholder Data Isolation):** The user enters card numbers into an iframe or mobile SDK hosted directly by the PSP. The PSP returns a temporary payment token to the client. This keeps raw card details completely off our servers, reducing our compliance footprint to the lowest PCI-DSS tier (SAQ A).
+- **API Gateway & Rate Limiter:** Authenticates requests, inspects client headers for mandatory `Idempotency-Key` UUIDs, and throttles abusive traffic before hitting payment workers.
+- **Payment Service (Orchestrator):** The core engine. It manages the lifecycle state machine of each payment (`CREATED`, `PENDING`, `AUTHORIZED`, `CAPTURED`, `FAILED`, `REFUNDED`), persists state transitions, and coordinates external calls.
+- **Payment DB:** Relational database storing payment records, state transitions, and idempotency key locks with strict ACID guarantees.
+- **Double-Entry Ledger Service & DB:** An append-only financial record tracking the movement of money across all customer, merchant, platform fee, and clearing accounts.
+- **Payment Service Provider (PSP) Gateway Layer:** An abstraction layer that translates internal payment commands into provider-specific API calls (Stripe, Adyen, PayPal), handling retries, circuit breakers, and response parsing.
+- **Webhook Ingestion Service:** An independently scalable endpoint that receives asynchronous event notifications from PSPs, verifies cryptographic HMAC signatures, deduplicates events, and enqueues them for worker processing.
+- **Message Bus (Kafka):** Provides durable event streaming to decouple downstream actions (sending receipt emails, updating warehouse inventory, triggering merchant balance updates) from the critical payment path.
+- **Reconciliation Engine:** A batch processing service that runs daily to download bank settlement files, matching external charges line-by-line with internal ledger entries to find and fix discrepancies.
+
+**End-to-End Request Flow:**
+
+1. The client tokenizes the credit card with the PSP and receives a token (e.g., `tok_123`).
+2. The client submits a checkout request to our API Gateway with the token, amount, currency, and a client-generated UUID `Idempotency-Key`.
+3. The Payment Service starts a database transaction: it inserts an idempotency record and creates a payment entry in `PENDING` state. If the key already exists, it returns the existing status without re-executing.
+4. The Payment Service calls the external PSP API to authorize and capture the charge, forwarding the idempotency key.
+5. Upon receiving a successful response from the PSP, the Payment Service updates the payment status to `CAPTURED`, writes matching debit and credit rows to the Ledger DB, and emits a `PaymentCompleted` event to the message bus.
+6. Downstream consumers read the event to trigger inventory reservation and email the receipt to the customer.
+
+## 4. Key Technical Decisions — With Real Tradeoffs
+
+**1. Storage Engine: Relational Database (PostgreSQL) vs NoSQL (DynamoDB / Cassandra)**
+
+- **Choice:** PostgreSQL with multi-AZ replication, strict ACID transactions, and row-level locking.
+- **Rejected:** NoSQL document or wide-column stores.
+- **Tradeoff:** NoSQL databases offer trivial horizontal partitioning and high write availability, but they provide eventual consistency and lack multi-table transactional guarantees. In payments, absolute consistency and serializability trump infinite write scale. At 10M transactions/day (~115 TPS), a properly configured, partitioned relational database handles the load easily without risking split-brain balances or phantom ledger rows.
+
+**2. Financial Accounting: Double-Entry Bookkeeping vs Single Mutable Balances**
+
+- **Choice:** Immutable double-entry bookkeeping ledger (every transaction records paired debit and credit lines; current balances are the sum of historical lines).
+- **Rejected:** Mutable column updates (`UPDATE accounts SET balance = balance - 100 WHERE id = 1`).
+- **Tradeoff:** Double-entry bookkeeping consumes significantly more disk storage and requires multi-row inserts for every transaction. However, mutating balances in place makes it impossible to audit where money came from or identify why a balance is incorrect after a race condition. Double-entry guarantees mathematically that money is neither created nor destroyed, providing a complete audit trail.
+
+**3. Distributed Transaction Coordination: Orchestrated Saga vs Two-Phase Commit (2PC)**
+
+- **Choice:** Orchestrated Saga pattern driven by the Payment Service state machine with explicit compensating transactions.
+- **Rejected:** Two-Phase Commit (2PC) across microservices and external gateways.
+- **Tradeoff:** 2PC locks database resources across all participating services until the transaction finishes. If an external PSP or network link is slow, 2PC holds locks, exhausts connection pools, and cascades failures across the entire system. The Saga pattern trades immediate atomic rollback for eventual consistency: each step executes locally, and if a downstream step fails (e.g., inventory out of stock), the orchestrator executes compensating actions (e.g., issuing an automated refund via the PSP).
+
+**4. Processing Model: Synchronous Auth-Capture vs Asynchronous Webhook-Driven Finality**
+
+- **Choice:** Hybrid approach — synchronous initial authorization with asynchronous webhook and reconciliation finality.
+- **Rejected:** Pure synchronous processing where client waits for full bank settlement.
+- **Tradeoff:** Bank clearing protocols (ACH, SEPA, credit card settlement batches) take hours to days to reach final settlement. Holding an HTTP connection open is impossible. Synchronously authorizing funds provides instant UI feedback to the buyer, while asynchronous webhooks and batch settlement files finalize the actual transfer of money.
+
+## 5. Deep Dives — The Parts That Actually Matter
+
+**Deep Dive 1 — The Three-Layer Idempotency Engine**
+
+Network failures are inevitable. If a client sends a request and the connection drops before receiving the response, the client will retry. The system must guarantee that 1 request and 10 identical retries produce the exact same outcome.
+
+Idempotency is implemented across three coordinated layers:
 
 ```txt
-Input  -> validate
-Work   -> apply backend system design rule
-Output -> success or structured error
+Layer 1: Client Gateway Key Check
+  [Client] -- (Idempotency-Key: UUID-v4 + Payload Hash) --> [API Gateway]
+                                                                  |
+                                              [Check Redis / Key Cache]
+                                              - Found & In-Flight -> 409 Conflict / Retry Later
+                                              - Found & Completed  -> Return Cached Response
+
+Layer 2: Database Unique Constraint & State Lock
+  [Payment DB]
+  INSERT INTO idempotency_keys (key, request_hash, status, response_body)
+  VALUES ('key_abc', 'hash_123', 'PROCESSING', NULL)
+  ON CONFLICT (key) DO NOTHING;
+  --> If 0 rows inserted: Another worker owns the request.
+
+Layer 3: Downstream PSP Forwarding
+  [Payment Service] -- (Stripe-Idempotency-Key: 'key_abc') --> [PSP API]
+  --> PSP guarantees external charge executes exactly once.
 ```
 
-## 6. Real-world example
+1. **Request Hashing:** When the API Gateway receives an `Idempotency-Key`, it computes a SHA-256 hash of the request payload (`user_id`, `amount`, `currency`, `order_id`). If the same idempotency key arrives with a *different* payload hash, the request is immediately rejected with a `400 Bad Request` to prevent key reuse fraud.
+2. **Database Atomic Lock:** The service attempts an insert into the `idempotency_keys` table inside a short database transaction.
+   - If the insert succeeds, the state is set to `PROCESSING` with a lease timeout (e.g., 60 seconds).
+   - If a duplicate insert occurs while state is `PROCESSING`, the second request receives a `409 Conflict` or waits on a polling latch.
+   - If the record already exists with status `SUCCEEDED`, the service skips processing entirely and returns the saved `response_body` directly from the database.
+3. **PSP Idempotency Propagation:** The internal idempotency key is passed directly in the HTTP header to the PSP (e.g., `Idempotency-Key: key_abc`). Even if our backend crashes mid-call and retries after a restart, the PSP recognizes the key and returns the existing charge object instead of debiting the card a second time.
 
-In a production full-stack app, design a payment system affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+**Deep Dive 2 — Double-Entry Bookkeeping Ledger**
 
-## 7. Common interview questions
+In real financial systems, money never sits in an isolated column. Money moves from one account to another. Every transaction consists of at least two ledger entries: a debit and a credit.
 
-#### How do you prevent double-charging in a payment system?
-- **The Engine Mechanism (Why it behaves this way):** Double-charging is prevented through idempotency. Each payment request includes a client-generated idempotency key (UUID). The server stores this key in a unique-constrained database column. When a duplicate request arrives (same idempotency key), the server returns the original response without re-processing the payment. The payment provider (Stripe, PayPal) also supports idempotency keys at their API level. Database transactions ensure that the idempotency key check and payment creation are atomic — either both succeed or both fail. Optimistic locking (version column) prevents concurrent updates to the same payment record.
-- **The Unforgettable Mental Model:** The **Stamped Receipt**. When you pay, the cashier stamps your receipt with a unique number (idempotency key). If you try to pay again with the same receipt, the cashier sees the stamp and says "this was already processed." The stamp is recorded in the register (database) so even a different cashier can see it.
-- **The Trap:** Relying only on the payment provider's idempotency. If your server crashes after charging the provider but before recording the result, a retry will charge again. Always implement idempotency at your own application layer first.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement idempotency at multiple layers. First, at the application level — each payment request includes an idempotency key stored in a unique-constrained column. Duplicate keys return the original response without re-processing. Second, at the database level — payment creation is wrapped in a transaction with the idempotency check, ensuring atomicity. Third, at the provider level — I'd pass the same idempotency key to Stripe's API. Optimistic locking on the payment record prevents concurrent modifications. This three-layer approach ensures no double-charging even under network retries and server crashes."
+The fundamental accounting invariant that must hold true at every millisecond is:
 
-#### How do you handle payment provider failures and retries?
-- **The Engine Mechanism (Why it behaves this way):** Payment provider failures are categorized: transient (network timeout, 5xx error) are retried with exponential backoff; permanent (declined card, invalid amount) are not retried and return an error to the user. The payment state machine tracks status: pending → processing → succeeded/failed. If the provider doesn't respond (timeout), the payment stays in "pending" and a reconciliation job checks the provider's API for the actual status. Webhooks from the provider asynchronously update payment status. Idempotent webhook handlers ensure that duplicate webhook deliveries don't cause issues. A reconciliation job runs periodically to detect and fix discrepancies between local state and provider state.
-- **The Unforgettable Mental Model:** The **Package Delivery with Confirmation**. You send a package (payment request) and wait for delivery confirmation. If the courier doesn't respond (timeout), you check with the depot (reconciliation) to see if it was delivered. If the address is wrong (declined card), you don't resend — you notify the sender. The delivery confirmation (webhook) arrives independently and updates your records.
-- **The Trap:** Retrying declined payments. A declined card won't suddenly become valid on retry. Only retry transient failures (timeouts, 5xx errors). Retrying declines can trigger fraud detection at the payment provider.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd implement a payment state machine with statuses: pending, processing, succeeded, failed. Transient provider failures (timeouts, 5xx) are retried with exponential backoff up to 3 times. Permanent failures (declines, invalid amounts) are not retried. If a provider times out, the payment stays 'pending' and a reconciliation job queries the provider's API to determine the actual status. Webhooks asynchronously update payment status, and webhook handlers are idempotent. A periodic reconciliation job detects and fixes any state discrepancies between our database and the provider."
+$$\sum \text{Debits} = \sum \text{Credits}$$
 
-#### How do you design the payment data model?
-- **The Engine Mechanism (Why it behaves this way):** Core tables: payments (id, idempotency_key, user_id, amount, currency, status, provider, provider_payment_id, created_at, updated_at), payment_methods (id, user_id, type, last_four, expiry, provider_token), invoices (id, user_id, total_amount, status, due_date), and line_items (id, invoice_id, description, amount, quantity). The payments table tracks the full lifecycle. Amounts are stored as integers (cents) to avoid floating-point precision issues. Currency is stored as ISO 4217 codes. The provider_payment_id links to the external provider's record for reconciliation. All monetary calculations use decimal arithmetic, never floats.
-- **The Unforgettable Mental Model:** The **Accounting Ledger**. Each transaction (payment) is recorded with who paid (user_id), how much (amount in cents), in what currency, and the current status. The payment method is like the payment instrument on file (card ending in 4242). The invoice is the bill, and line items are the individual charges on the bill. Everything is tracked in whole cents — no rounding errors.
-- **The Trap:** Storing amounts as floating-point numbers (e.g., 19.99). Floats have precision issues — 0.1 + 0.2 ≠ 0.3 in floating-point arithmetic. Always store amounts as integers (cents) or use a decimal type.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The core table is payments with id, idempotency_key, user_id, amount (stored as integer cents), currency (ISO 4217), status, provider, and provider_payment_id. Payment methods are stored separately with tokenized card details (never raw card numbers). Invoices and line items track billing. All monetary values are integers to avoid floating-point precision issues. The status field follows a state machine: pending → processing → succeeded/failed. The provider_payment_id enables reconciliation with the external provider. Sensitive data (card numbers) is never stored — only provider tokens and last-four digits."
+Consider a customer paying $100 for an item, where the platform takes a $3 fee and the merchant receives $97:
 
-#### How do you handle refunds and partial refunds?
-- **The Engine Mechanism (Why it behaves this way):** Refunds are tracked in a refunds table linked to the original payment: refunds (id, payment_id, amount, reason, status, provider_refund_id, created_at). A refund cannot exceed the original payment amount — the system tracks total_refunded on the payment record and validates refund_amount + total_refunded <= original_amount. Partial refunds are supported by allowing multiple refund records per payment. The refund status follows its own state machine: pending → processing → succeeded/failed. Refunds are processed via the payment provider's refund API with idempotency keys. Reconciliation ensures the provider's refund status matches the local record.
-- **The Unforgettable Mental Model:** The **Return Counter**. You can return the entire purchase (full refund) or just some items (partial refund). The counter tracks how much you've already returned — you can't return more than you bought. Each return gets its own receipt (refund record) linked to the original purchase.
-- **The Trap:** Not tracking total_refunded on the payment record. Without this, concurrent refund requests could each check the remaining amount simultaneously and both succeed, resulting in over-refunding. Use a database constraint or row-level locking.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Refunds are stored in a separate table linked to the original payment. Each refund has its own idempotency key and status machine. The payment record tracks total_refunded, and a database constraint ensures refund_amount + total_refunded <= original_amount. I'd use SELECT FOR UPDATE (row-level locking) when processing refunds to prevent concurrent over-refunding. Partial refunds are supported by allowing multiple refund records per payment. Refunds are processed through the provider's API with idempotency, and reconciliation ensures provider and local state match."
+| Entry ID | Transaction ID | Account | Type | Amount | Currency |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `ent_101` | `txn_5001` | `Asset:PSP_Clearing` | **Debit** | $100.00 | USD |
+| `ent_102` | `txn_5001` | `Liability:Merchant_Payable` | **Credit** | $97.00 | USD |
+| `ent_103` | `txn_5001` | `Revenue:Platform_Fee` | **Credit** | $3.00 | USD |
 
-#### How do you handle multi-currency payments?
-- **The Engine Mechanism (Why it behaves this way):** Multi-currency support requires: (1) Store amounts in the original currency with the currency code; (2) Use an exchange rate service (fixer.io, Open Exchange Rates) to convert between currencies for reporting; (3) Store the exchange rate used at the time of transaction for audit purposes; (4) Handle currency-specific rules — some currencies have no decimal places (JPY), some have 3 (BHD); (5) Payment providers handle currency conversion at their end — you specify the charge currency, and the provider handles cardholder currency conversion. For reporting, convert all amounts to a base currency (USD) using the stored exchange rate. Never store amounts in a single currency — always preserve the original.
-- **The Unforgettable Mental Model:** The **Currency Exchange Booth**. You pay in your local currency (original currency), the booth records both the amount and the exchange rate that day. For the company's books, everything is converted to USD (base currency) using the recorded rate. Different countries have different coin systems (currency precision) — Japan uses whole yen, Bahrain uses 3 decimal places.
-- **The Trap:** Converting amounts to a base currency at display time using current exchange rates. This changes the historical value of transactions. Always store the exchange rate used at transaction time for accurate historical reporting.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd store all amounts in their original currency with the ISO 4217 currency code. At transaction time, I'd record the exchange rate used for conversion to the base currency (USD). Currency-specific precision is handled — JPY has 0 decimals, BHD has 3. The payment provider handles cardholder currency conversion. For reporting, I convert to the base currency using the stored historical exchange rate, not current rates. Exchange rates are fetched from a reliable service and cached with a short TTL. This ensures accurate historical financial reporting."
+- **Asset Account (`PSP_Clearing`):** Represents money owed to the platform by the payment processor. A debit increases this asset by $100.
+- **Liability Account (`Merchant_Payable`):** Represents money the platform owes to the seller. A credit increases this liability by $97.
+- **Revenue Account (`Platform_Fee`):** Represents earned platform income. A credit increases revenue by $3.
+- **Sum Check:** Total Debits ($100) = Total Credits ($97 + $3 = $100). The ledger is balanced.
 
-#### How do you implement webhooks for payment status updates?
-- **The Engine Mechanism (Why it behaves this way):** Payment providers send webhooks for asynchronous events (payment succeeded, failed, refunded, disputed). The webhook endpoint: (1) Verifies the webhook signature (HMAC with provider's secret) to ensure authenticity; (2) Processes the event idempotently — checks if the event has already been processed using the provider's event ID; (3) Updates the local payment status based on the event type; (4) Triggers downstream actions (send receipt email, unlock content, update inventory); (5) Returns 200 OK quickly to acknowledge receipt. Webhook processing is decoupled — the endpoint validates and queues the event for async processing. A retry mechanism handles webhook delivery failures from the provider's side.
-- **The Unforgettable Mental Model:** The **Certified Mail Delivery**. The postman (provider) delivers a letter (webhook) with a signature stamp (HMAC verification). The recipient signs for it (200 OK), then opens and processes the letter later (async processing). If the same letter arrives twice (provider retry), the recipient recognizes the tracking number (event ID) and doesn't process it again.
-- **The Trap:** Processing webhooks synchronously in the endpoint handler. If downstream actions (email, inventory update) fail, the webhook times out and the provider retries, causing duplicate processing. Always validate, queue, and process asynchronously.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The webhook endpoint validates the HMAC signature, checks if the event ID has already been processed (idempotency), queues the event for async processing, and returns 200 OK immediately. The async worker updates the local payment status and triggers downstream actions (receipts, inventory, notifications). Webhook events are stored in a processed_events table keyed by provider event ID to prevent duplicate processing. I'd also implement a periodic reconciliation job that queries the provider's API to catch any missed webhooks. The endpoint responds within 500ms to avoid provider retry timeouts."
+Ledger tables are strictly **append-only**. If a customer is refunded $100, the system never deletes rows `ent_101` through `ent_103`. Instead, it appends three compensating entries: credit `PSP_Clearing` ($100), debit `Merchant_Payable` ($97), and debit `Platform_Fee` ($3).
 
-#### How do you handle payment disputes and chargebacks?
-- **The Engine Mechanism (Why it behaves this way):** When a customer disputes a charge, the payment provider sends a dispute webhook. The system records the dispute in a disputes table linked to the payment: disputes (id, payment_id, reason, amount, status, evidence_submitted, created_at, resolved_at). The dispute status flows through: created → evidence_submitted → won/lost. When a dispute is created, the disputed amount is immediately deducted from the merchant's balance (provider does this automatically). The system notifies the merchant, collects evidence (receipts, delivery confirmation, communication logs), and submits it to the provider within the deadline (typically 7-30 days). Dispute analytics track win rates by reason to identify fraud patterns.
-- **The Unforgettable Mental Model:** The **Court Case**. A customer files a complaint (dispute) about a charge. The court (provider) freezes the disputed amount. The merchant must present evidence (receipts, delivery proof) within a deadline. The judge rules in favor of the customer (lost) or merchant (won). The merchant tracks win rates to identify patterns and improve processes.
-- **The Trap:** Not responding to disputes within the deadline. If evidence isn't submitted in time, the dispute is automatically lost and the merchant forfeits the amount plus a dispute fee. Always set internal deadlines before the provider's deadline.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Disputes are tracked in a disputes table linked to the original payment. When a dispute webhook arrives, I record it, notify the merchant, and start a evidence collection workflow. Evidence includes receipts, delivery confirmation, IP logs, and communication history. I'd set internal deadlines 3 days before the provider's deadline to ensure timely submission. Dispute analytics track win rates by reason, amount, and product category to identify fraud patterns. Lost disputes are recorded as revenue loss, and repeat disputers can be flagged for additional verification."
+**Deep Dive 3 — The Daily Reconciliation Engine**
 
-## 8. Active recall test
+Webhooks can fail, network sockets can drop, and third-party systems can have internal bugs. You cannot rely on real-time API responses alone for 100% financial correctness. Reconciliation is the asynchronous verification layer that guarantees eventual consistency between your internal system and the banking world.
 
-1. **How do you prevent double-charging a customer?**
-   - **Explanation:** Use idempotency keys at three layers: application level (unique-constrained column), database level (atomic transaction with idempotency check), and provider level (pass key to Stripe's API). Optimistic locking prevents concurrent modifications.
+```txt
+                    [Daily Batch Window (02:00 UTC)]
+                                   |
+         +-------------------------+-------------------------+
+         |                                                   |
+         v                                                   v
+[Fetch Internal Ledger Entries]                   [Download PSP Settlement File]
+  - Query transactions for T-1                      - Parse CSV/JSON from SFTP/S3
+         |                                                   |
+         +-------------------------+-------------------------+
+                                   |
+                                   v
+                    [Three-Way Match Engine]
+                                   |
+         +-------------------------+-------------------------+
+         |                         |                         |
+         v                         v                         v
+   [Exact Match]          [Discrepancy: Ghost Charge]   [Discrepancy: Missing Settlement]
+   - Mark record          - PSP charged card, but       - Internal DB shows success,
+     as RECONCILED          internal DB failed            PSP settlement missing
+                                   |                         |
+                                   v                         v
+                          [Auto-Credit / Refund]      [Alert Finance & Operations]
+```
 
-2. **What happens when a payment provider times out?**
-   - **Explanation:** The payment stays in "pending" status. A reconciliation job queries the provider's API to determine the actual status. Webhooks also asynchronously update status. Never retry a payment that might have succeeded — always check first.
+1. **Settlement File Ingestion:** Every night at 02:00 UTC, the PSP drops an encrypted settlement file (CSV or JSON via SFTP / S3) containing every transaction that cleared the banking network in the previous 24 hours.
+2. **Three-Way Matching Algorithm:** The engine streams settlement lines and performs a join against:
+   - The Payment Service records (`payments` table).
+   - The Double-Entry Ledger entries (`ledger_entries` table).
+   - The PSP settlement report lines.
+3. **Discrepancy Classification & Resolution:**
+   - **Matched:** Transaction ID, amount, and currency match across all three sources. Status is updated to `RECONCILED`.
+   - **Ghost Charge (Charged at PSP, missing in internal DB):** The PSP successfully billed the user, but our server crashed before persisting. The reconciliation job detects the external charge, generates an internal payment record, creates corresponding ledger entries, and notifies the order service to fulfill the purchase or automatically issues a refund.
+   - **Missing Settlement (Internal DB marked paid, missing at PSP):** The internal system marked an order paid, but the PSP settlement report has no record of funds clearing. The engine marks the transaction as `DISPUTED` and pages the finance engineering team.
+   - **Fee Discrepancy:** The PSP charged a different processing fee than estimated. The engine posts an adjusting ledger entry to the `Expense:PSP_Fees` account.
 
-3. **Why store payment amounts as integers instead of floats?**
-   - **Explanation:** Floating-point arithmetic has precision issues (0.1 + 0.2 ≠ 0.3). Storing amounts as integer cents avoids rounding errors. Currency-specific precision (JPY=0 decimals, BHD=3) is handled by the currency code.
+## 6. Failure Modes and Resilience
 
-4. **How do you prevent over-refunding a payment?**
-   - **Explanation:** Track total_refunded on the payment record. Use SELECT FOR UPDATE (row-level locking) when processing refunds. A database constraint ensures refund_amount + total_refunded <= original_amount.
+**Failure Mode 1: PSP Call Socket Timeout (The Black Box State)**
 
-5. **How do you handle multi-currency reporting accurately?**
-   - **Explanation:** Store amounts in original currency with the exchange rate used at transaction time. Convert to base currency (USD) using the stored historical rate, not current rates. This preserves accurate historical financial records.
+- **The Problem:** The Payment Service issues an HTTP POST to the PSP. The PSP charges the card, but before the HTTP response reaches our server, the network link drops or our server crashes. Our server does not know if the charge succeeded or failed.
+- **The Mitigation:** The service must never assume failure and must never retry with a new key. The payment record remains in `PENDING` state. A background retry worker queries the PSP status using `GET /charges?idempotency_key=key_123` with exponential backoff and jitter. If the charge succeeded, the worker advances the state to `CAPTURED`. If the PSP confirms no charge was ever recorded for that key, the worker marks the payment `FAILED`.
 
-6. **How should webhook endpoints be designed?**
-   - **Explanation:** Validate HMAC signature, check event ID for idempotency, queue for async processing, return 200 OK within 500ms. Process events asynchronously to avoid timeout-induced retries. Store processed event IDs to prevent duplicates.
+**Failure Mode 2: Webhooks Delivered Out of Order or Duplicated**
 
-7. **How do you handle payment disputes?**
-   - **Explanation:** Record disputes in a linked table, notify the merchant, collect evidence (receipts, delivery proof, logs), and submit before the provider's deadline. Set internal deadlines 3 days early. Track win rates to identify fraud patterns.
+- **The Problem:** A customer authorizes a payment, and shortly after requests a cancellation. The PSP sends two webhooks: `payment.authorized` and `payment.canceled`. Due to network routing, `payment.canceled` arrives *before* `payment.authorized`.
+- **The Mitigation:** The Payment Service enforces a strict state machine with monotonic transition rules:
+  - Allowed transitions: `CREATED -> PENDING -> AUTHORIZED -> CAPTURED -> REFUNDED`.
+  - Illegal transitions (e.g., `REFUNDED -> AUTHORIZED` or `CAPTURED -> PENDING`) are rejected.
+  - Every webhook is saved in a `processed_webhooks` table keyed on the PSP's unique `event_id`. Duplicate webhook deliveries are acknowledged with `200 OK` immediately and ignored by workers.
 
-## 9. Mistakes / traps
+**Failure Mode 3: Downstream Service Failure During Saga Execution**
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+- **The Problem:** The customer is charged $100 successfully by the PSP, but when the Payment Service calls the Inventory Service to reserve the product, the inventory service crashes or reports that the item is out of stock.
+- **The Mitigation:** The Saga Orchestrator triggers an automated compensating transaction. It dispatches an immediate API call to the PSP's `/refunds` endpoint using a deterministic refund idempotency key (`refund_key_123`), records the compensating ledger entries, marks the payment `REFUNDED`, and alerts the customer that the order could not be fulfilled and their money was returned.
 
-## 10. Compare with related concepts
+**Failure Mode 4: Double Refund Race Conditions**
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+- **The Problem:** Two customer support agents open the same order simultaneously and both click "Issue Full Refund" of $100 at the exact same second.
+- **The Mitigation:** The database schema tracks `amount_captured` and `amount_refunded` on the payment record. When executing a refund, the service uses row-level locking (`SELECT ... FOR UPDATE`) inside a database transaction and enforces a check constraint: `amount_refunded + new_refund <= amount_captured`. The second transaction attempts to refund, sees the remaining refundable balance is $0, and fails cleanly.
 
-## 11. Summary from memory
+## 7. What Makes a Great Answer vs an Average One
 
-Explain Design a payment system in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+| Dimension | Average Answer | Great Answer |
+| :--- | :--- | :--- |
+| **PCI Compliance** | Assumes the server accepts credit card numbers, CVVs, and expiry dates directly in an API request payload. | Isolates card data using PSP Hosted Fields and SDK tokenization, keeping the backend out of PCI-DSS scope entirely. |
+| **Idempotency** | Mentions adding an `idempotency_key` column to a table without explaining race conditions or gateway propagation. | Explains the three-layer idempotency defense: request hashing, database unique constraint locks with state leases, and forwarding keys to the PSP. |
+| **Ledger Model** | Uses a single mutable column: `balance = balance - amount`. | Implements an immutable double-entry bookkeeping ledger where every transaction creates balanced debit and credit entries (`Debits = Credits`). |
+| **Distributed Failures** | Assumes API calls to payment gateways always return a clean HTTP 200 or 400. | Designs for socket timeouts, out-of-order webhooks, saga compensations, and in-flight pending state reconciliation. |
+| **Settlement & Auditing** | Considers the payment complete the moment the gateway returns HTTP 200. | Details daily asynchronous three-way reconciliation against bank settlement files to catch ghost charges and uncredited funds. |
 
-## 12. Spaced revision prompts
+## 8. 🧠 The Memory Hook
 
-- Day 1: Define Design a payment system in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+In payments, you never mutate a balance and you never guess the outcome of a network call.
+
+**Idempotency stops duplicates at the front door, double-entry ledgers track every cent through the house, and daily reconciliation catches the truth out back.**
