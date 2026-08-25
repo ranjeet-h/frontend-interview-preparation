@@ -1,116 +1,270 @@
 # Hoisting
 
-## Detailed explanation
-Hoisting is the interview shorthand for JavaScript setting up declarations before executing code. Function declarations are initialized during context creation, `var` is initialized to `undefined`, and `let`/`const` bindings exist but cannot be accessed before initialization because of the temporal dead zone.
+## 1. Why This Exists — The Problem First
 
-Good senior answers avoid saying "JavaScript moves code to the top." The engine prepares bindings; source code is not literally rearranged.
+An innocent-looking refactor can change a working program into one that crashes—or, worse, one that quietly uses `undefined`. A teammate moves an assignment below a log, calls a helper before its definition, or changes a `var` function expression to `const` and suddenly the failure is different. If you explain all of those cases as “JavaScript moves declarations to the top,” you will predict some results incorrectly and give unsafe advice in an interview.
 
-## 1. One-line mental model
-Hoisting means declarations are registered before code executes, but different declarations initialize differently.
+Hoisting is useful as shorthand for the setup that happens before statements execute. The important question is not whether a line moved. It is what binding the runtime created, whether that binding already has a value, and whether the current scope allows access to it.
 
-## 2. Problem it solves
-JavaScript must know declared identifiers before running statements in an execution context.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Function declarations can be called before their source line.
-- `var` exists before assignment with value `undefined`.
-- `let` and `const` exist but are inaccessible before initialization.
-- Function expressions follow variable rules.
-- Hoisting is tied to execution context creation.
+Think of a theater preparing for a performance. Before the audience sees the first scene, the stage manager reads the cast list and prepares named places backstage. That preparation is like creating bindings for declarations in an execution context.
 
-## 4. Visual / analogy
-Hoisting is like preparing name tags before a meeting, but not all people have arrived yet.
+The cast members do not all arrive in the same state. A function declaration arrives with its complete role and can perform when called. A `var` name has a prepared place containing an empty placeholder, which maps to `undefined`, until the assignment runs. A `let` or `const` name has a reserved place with a locked door: the runtime knows the name exists, but code cannot use it until execution reaches its declaration. That locked interval is the temporal dead zone (TDZ).
 
-```mermaid
-flowchart TD
-  Create["Creation phase"] --> Register["Register declarations"]
-  Register --> Execute["Execute statements"]
-```
+The script is still performed in source order. Preparing the backstage does not move a scene to the beginning, and it does not execute an assignment early. It only explains why some names are available, empty, or deliberately inaccessible when the first scene starts.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+When JavaScript starts a script, function, or block, it creates an execution context for that piece of code. Part of that setup is an environment: a record that maps identifiers such as `count` or `sayHi` to their bindings. The source text remains where it is; the runtime prepares the names before it executes statements in source order.
+
+The word “hoisting” groups several different setup rules:
+
+- A function declaration is initialized with a callable function value during context setup. The call can appear before the declaration in the same scope.
+- A `var` binding is created and initialized to `undefined`. Its later initializer is an assignment that runs only when execution reaches that statement.
+- A `let` or `const` binding is created but left uninitialized. From setup until its declaration is evaluated, reading it or assigning to it is blocked by the TDZ and throws a `ReferenceError`.
+- A class declaration creates its lexical binding during setup but leaves that binding uninitialized in the TDZ until class evaluation runs. The constructor value is not available before the `class` declaration is evaluated.
+- A function expression or arrow function is a value assigned to a variable. The variable follows the rule of its declaration keyword; the function value does not exist in that binding until the assignment executes.
+
+The distinction between declaration and initialization is the key. In `var count = 1`, setup creates `count` and gives it `undefined`; execution later evaluates `1` and stores it in `count`. In `const count = 1`, setup creates `count` without a readable value; execution evaluates the declaration, initializes it to `1`, and only then makes it usable. `const` also prevents rebinding after initialization, but it does not make the stored object immutable.
+
+Scope changes the result. A block can create its own lexical environment for `let`, `const`, and block-scoped function declarations. A name inside that block can shadow an outer name. A `var` declaration is function-scoped (or script-scoped when it is top-level), so it does not behave like a block-local `let`. In an ES module, top-level declarations are module-local. In a classic browser script, top-level `var` and function declarations have additional global-object behavior; top-level `let` and `const` are global lexical bindings instead. That environment distinction is one reason global declarations should be avoided in application code.
+
+Function declarations are not a license to ignore ordering. Their availability is scoped: a declaration inside a function is prepared for that function call, and a block-scoped declaration is not a reliable outer-scope helper. Even when hoisting makes an order legal, placing dependent declarations before their use usually makes reviews and refactors safer.
+
+Class declarations follow the lexical/TDZ side of this model, not the early-call behavior of function declarations. During module or script setup, the runtime records the class name, but it does not initialize that binding with a constructor. Evaluation of the class definition creates the constructor, methods, and prototype, then initializes the binding. A class expression is an expression that produces a class value; its outer variable follows `var`, `let`, or `const` as usual, while a named class expression also has an inner class name usable inside the class body. The outer assignment still happens only when execution reaches it.
+
+Modules add a separate linking step. Before module bodies execute, module instantiation connects each `export` binding to matching `import` bindings. Those imports are live, read-only views of the exporting module's bindings; they are not copied ordinary values and the `import` declaration does not execute the exported expression early. The dependency module is evaluated before the dependent module body, so an imported binding can be available when the dependent body runs, while a cycle can still expose an exported lexical binding before its initialization and produce a TDZ `ReferenceError`.
+
+## 4. Real Code — See It Working
+
+A function declaration is initialized before synchronous execution reaches the call:
 
 ```js
-sayHi(); // works
+console.log(formatUser({ name: "Ada" })); // "ADA"
 
-function sayHi() {
-  console.log("hi");
+// WHY: a function declaration is initialized during context setup,
+// so this call can resolve the complete function before this line.
+function formatUser(user) {
+  return user.name.toUpperCase();
 }
-
-console.log(count); // undefined
-var count = 1;
 ```
 
-## 6. Real-world example
-Codebases avoid relying on hoisting because reordering declarations can hide bugs and make refactors risky.
+`var` is readable early, but only with its setup value:
 
-## 7. Common interview questions
+```js
+console.log(requestCount); // undefined
 
-#### What is hoisting?
-- **The Engine Mechanism (Why it behaves this way):** Hoisting is a compilation-phase behavior where the JavaScript engine registers all variable, function, and class declarations in the active Environment Record before executing a single statement. When the engine compiles a block or function, it performs a scan of the Abstract Syntax Tree (AST). It registers these identifiers in the Lexical or Variable Environments. Crucially, the engine does not physically rearrange or move your source code text. It simply pre-allocates memory slots for these names in the execution context's memory record during the Creation Phase.
-- **The Unforgettable Mental Model:** A restaurant host taking reservations. Before the restaurant doors open (Execution Phase), the host writes down all the names of reserved guests in their logbook (Creation Phase). The guests aren't physically in their seats yet, but their seats are pre-allocated and the system knows they exist.
-- **The Trap:** Telling an interviewer that "JavaScript physically moves variable declarations to the top of the file." This is factually incorrect and exposes a surface-level understanding. The source code is never altered; it is strictly a memory pre-allocation process.
-- **Senior Interview Playbook (Verbal Script):** When asked this in an interview, say: "Hoisting is the conceptual shorthand for how the JS engine pre-allocates memory for declarations during the Execution Context's Creation Phase. Before line-by-line execution begins, the engine scans the code to register identifiers. Function declarations are initialized with their bodies, `var` is initialized to `undefined`, and `let` and `const` are registered as uninitialized, leaving them in the Temporal Dead Zone."
+// WHY: setup created requestCount and initialized it to undefined;
+// this assignment happens only when execution reaches the statement.
+var requestCount = 1;
 
-#### Are `let` and `const` hoisted?
-- **The Engine Mechanism (Why it behaves this way):** Yes, `let` and `const` are hoisted. During the GEC or FEC Creation Phase, the compiler locates all `let` and `const` declarations and registers them in the Lexical Environment record. However, unlike `var` (which is immediately initialized to `undefined`), `let` and `const` are registered in an **uninitialized** state. They remain in this uninitialized state in memory until the engine's runtime execution thread physically reaches and completes their declaration statement in the code. Any attempt to read or write to them before this moment results in a `ReferenceError` due to the Temporal Dead Zone.
-- **The Unforgettable Mental Model:** A reserved parking space with a barrier. The space is clearly marked (hoisted/registered in memory), but the barrier is locked (uninitialized). If you try to park your car there before the owner arrives with the key (declaration line), you will get a security violation (ReferenceError).
-- **The Trap:** Thinking `let` and `const` are not hoisted because they throw a ReferenceError. If they weren't hoisted, accessing an undeclared variable `x` would print `x is not defined`. Instead, accessing `let x` before its line prints `Cannot access 'x' before initialization`, proving the engine is fully aware of `x`'s existence in memory.
-- **Senior Interview Playbook (Verbal Script):** When asked this in an interview, say: "Yes, `let` and `const` are indeed hoisted. The JS engine registers them in the Lexical Environment during the creation phase. However, they are left uninitialized in memory, placing them in the Temporal Dead Zone. They remain completely inaccessible until the runtime execution thread physically evaluates their declaration statement."
+console.log(requestCount); // 1
+```
 
-#### Why does `var` log `undefined`?
-- **The Engine Mechanism (Why it behaves this way):** When the engine compiles an execution context and encounters a `var` declaration, it registers the identifier in the **Variable Environment** record. By engine specification design, `var` variables are immediately initialized to the primitive value `undefined` during this Creation Phase. Because they have a valid, allocated value (`undefined`) in memory before the first line of code runs, referencing them prior to their line of assignment does not trigger a ReferenceError; instead, the engine resolves the current value, which is `undefined`.
-- **The Unforgettable Mental Model:** A default cardboard box. When the movers (the compiler) set up your room, they put a default empty box labeled "clothes" in the corner. If you open it before you unpack (execute the assignment line), you don't crash; you just find it empty (`undefined`).
-- **The Trap:** Writing code that depends on `var` hoisting. It makes code highly fragile, extremely difficult to read, and prone to silent bugs where variables are read as `undefined` instead of throwing a helpful runtime crash.
-- **Senior Interview Playbook (Verbal Script):** When asked this in an interview, say: "Variables declared with `var` log `undefined` when accessed before declaration because the engine registers them in the Variable Environment and immediately initializes them to `undefined` during the Creation Phase. The variable is already in a valid, readable state in memory before the runtime thread executes its assignment statement."
+`let` and `const` are known to the runtime but protected by the TDZ:
 
-#### Why can function declarations run before definition?
-- **The Engine Mechanism (Why it behaves this way):** During the Creation Phase of the execution context, function declarations (e.g., `function foo() {}`) are treated with highest priority. The compiler registers the function identifier in the Environment Record and immediately initializes it, writing a direct pointer to the compiled function object in the heap. Because the identifier is fully bound to its executable function body in memory *before* the first line of code executes, you can invoke the function syntactically earlier in the source code file without issues.
-- **The Unforgettable Mental Model:** A pre-installed app on a new smartphone. The day you unbox the phone (start execution), you can open and run the calculator app immediately because it was fully compiled and installed in memory (hoisted with its body) before you even turned the screen on.
-- **The Trap:** Thinking this applies to function declarations inside block statements in strict mode. In ES6 strict mode, function declarations are block-scoped, meaning their hoisting is restricted to the enclosing block `{}` and they are not hoisted to the outer function scope.
-- **Senior Interview Playbook (Verbal Script):** When asked this in an interview, say: "Function declarations can be invoked before their definition because during the Execution Context's Creation Phase, the engine fully hoists them, mapping their identifier directly to the compiled function object in memory. This pre-allocation allows execution of the function body even if the call site precedes the definition in the source file."
+```js
+function readConfiguredPort() {
+  // console.log(port); // ReferenceError: Cannot access 'port' before initialization
 
-#### How are function expressions different?
-- **The Engine Mechanism (Why it behaves this way):** A function expression (e.g., `var myFunc = function() {}` or `const myFunc = () => {}`) behaves exactly like a standard variable declaration. 
-  - If declared with `var`, the variable `myFunc` is hoisted in the Variable Environment and initialized to `undefined`. Attempting to invoke it as `myFunc()` before the assignment line throws a `TypeError: myFunc is not a function` because `undefined` is not a callable object type.
-  - If declared with `let` or `const`, the variable is hoisted but left uninitialized, throwing a `ReferenceError` if called early.
-  The actual function body is only assigned to the variable during the Execution Phase when the assignment statement is evaluated.
-- **The Unforgettable Mental Model:** Ordering a pizza. Declaring the variable is like making the phone call. The pizza box (variable) is registered, but it doesn't contain any pizza (the function body) yet. If you try to take a bite from the box before the delivery driver arrives with the hot pizza (assignment line), you will chew on empty cardboard (Type/Reference Error).
-- **The Trap:** Confusing `TypeError` with `ReferenceError`. Calling a `var` function expression early throws a `TypeError` because the variable exists in memory (it's `undefined`), but it is of the wrong type to be invoked.
-- **Senior Interview Playbook (Verbal Script):** When asked this in an interview, say: "Function expressions differ because they follow variable hoisting semantics rather than function hoisting semantics. The variable holding the function is registered during the creation phase, but the function body is only assigned during the execution phase at the declaration line. Invoking a `var` function expression early throws a `TypeError`, while a `let` or `const` expression throws a `ReferenceError`."
+  const port = 3000;
+  return port;
+}
 
-## 8. Active recall test
+console.log(readConfiguredPort()); // 3000
+```
 
-1. **Is code physically moved?**
-   - **Answer:** No, the source code remains completely unchanged. Hoisting is entirely a compiler-phase memory allocation behavior in the environment records.
+The commented line is intentionally not executed so the complete example can run. Uncommenting it demonstrates the TDZ. An undeclared name is a different failure: `console.log(missingPort)` throws because no binding exists at all, while the `port` binding exists but is uninitialized.
 
-2. **What is `var` initialized to?**
-   - **Answer:** It is initialized directly to the primitive value `undefined` during the context's Creation Phase.
+Function expressions follow the variable binding, not the function-declaration rule:
 
-3. **Can `const` be accessed before declaration?**
-   - **Answer:** No, attempting to access it throws a `ReferenceError` because it resides in the Temporal Dead Zone (hoisted but left in an uninitialized state in memory).
+```js
+console.log(typeof loadData); // "undefined"
 
-4. **Are function declarations initialized?**
-   - **Answer:** Yes, they are fully initialized during the Creation Phase, mapping their identifier to the compiled function object, allowing them to be invoked early.
+// WHY: the var binding exists early, but the function value is assigned later.
+var loadData = function loadData() {
+  return "loaded";
+};
 
-5. **What happens with arrow function variables?**
-   - **Answer:** They follow variable scoping rules. If declared with `const` or `let`, invoking them before assignment throws a `ReferenceError`. If declared with `var`, invoking them early throws a `TypeError`.
+console.log(loadData()); // "loaded"
+```
 
-## 9. Mistakes / traps
-- Saying `let` and `const` are not hoisted.
-- Forgetting TDZ.
-- Calling a function expression before assignment.
-- Relying on hoisting for readability.
+Calling `loadData()` before the assignment would throw `TypeError: loadData is not a function`, because the existing value is `undefined`. With `const`, the early call would throw a `ReferenceError` instead because the binding is still in the TDZ:
 
-## 10. Compare with related concepts
-- **Hoisting vs TDZ:** setup exists, but access can still be illegal.
-- **Declaration vs initialization:** name registration vs value assignment.
-- **Function declaration vs expression:** initialized early vs follows variable binding.
+```js
+// console.log(saveData()); // ReferenceError: Cannot access 'saveData' before initialization
 
-## 11. Summary from memory
-Explain why `var`, `let`, `const`, and function declarations behave differently before their source line.
+// WHY: the arrow function is assigned only when this declaration executes.
+const saveData = () => "saved";
 
-## 12. Spaced revision prompts
-- After 1 day: Define hoisting accurately.
-- After 3 days: Compare `var` and `let`.
-- After 7 days: Explain function declaration hoisting.
-- After 14 days: Predict output with mixed declarations.
+console.log(saveData()); // "saved"
+```
+
+Block scope shows why “all declarations go to the top” is too vague:
+
+```js
+const label = "outside";
+
+{
+  // WHY: this block creates a new lexical binding for label; it shadows the outer one.
+  const label = "inside";
+  console.log(label); // "inside"
+}
+
+console.log(label); // "outside"
+```
+
+Class declarations stay in the TDZ until their definition is evaluated, while a class expression is assigned like any other expression:
+
+```js
+try {
+  console.log(Invoice); // ReferenceError before the class declaration is evaluated
+} catch (error) {
+  console.log(error.name); // "ReferenceError"
+}
+
+class Invoice {
+  total() {
+    return 42;
+  }
+}
+
+console.log(new Invoice().total()); // 42
+
+const createBadge = class Badge {
+  static label() {
+    return "ready";
+  }
+
+  name() {
+    return Badge.label(); // the class-expression name is available inside its body
+  }
+};
+
+console.log(createBadge.label()); // "ready"
+console.log(new createBadge().name()); // "ready"
+```
+
+Module linking prepares bindings before module evaluation, but it does not run imported values like ordinary statements. These two source files are the shape of that relationship:
+
+`config.mjs` exports a live binding:
+
+```js
+export let mode = "development";
+export function switchToProduction() {
+  mode = "production";
+}
+```
+
+`app.mjs` receives the binding through linking; it cannot assign to `mode`, but it observes later changes made by the exporter:
+
+```js
+import { mode, switchToProduction } from "./config.mjs";
+
+console.log(mode); // "development"
+switchToProduction();
+console.log(mode); // "production"
+```
+
+The examples are separate module files, so run them as `config.mjs` and `app.mjs` in the same directory with `node app.mjs`.
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is hoisting?**
+
+Hoisting is interview shorthand for declaration setup before execution begins in a scope. The runtime creates bindings before it runs the statements, but it does not physically move source code. Different declarations receive different setup states, so “hoisted” alone is incomplete: function declarations are callable, `var` is initialized to `undefined`, and `let`/`const` are uninitialized until their declaration executes.
+
+**Q: Are `let` and `const` hoisted?**
+
+Yes, in the useful sense that their bindings are created during scope setup. They are not initialized to a value that code may read immediately. The period before the declaration is evaluated is the TDZ, and an access during that period throws a `ReferenceError`. Their error does not prove that the name was absent; it shows that the name exists but is not initialized yet.
+
+**Q: Why does `var` produce `undefined` before its line?**
+
+Setup creates the `var` binding and initializes it to the primitive value `undefined`. The initializer in `var total = 10` is separate runtime work: when execution reaches that statement, it stores `10`. Reading before then succeeds because the binding is already initialized, but it reads the placeholder value.
+
+**Q: Why can a function declaration be called before its definition?**
+
+The function declaration is initialized with its function value while the execution context is being prepared. The later source line does not create the function for the first time; it is where the declaration appears in the script. The rule is still limited by scope, and duplicate declarations or block-specific behavior can make ordering confusing, so normal top-down ordering remains clearer.
+
+**Q: How does a function expression differ from a function declaration?**
+
+A function declaration gets its callable value during setup. A function expression is an expression whose result is assigned to a variable when execution reaches that assignment. Therefore `var run = function () {}` has an early `undefined` binding and an early call causes a `TypeError`, while `const run = function () {}` has an early uninitialized binding and an early call causes a `ReferenceError`.
+
+**Q: What happens with arrow functions?**
+
+An arrow function is also a function expression, so its variable keyword controls early access. `const add = () => 1` is blocked by the TDZ before the declaration, and `var add = () => 1` is readable as `undefined` before assignment but is not callable. Arrow functions have other differences, such as lexical `this`, but those are separate from hoisting.
+
+**Q: Are class declarations hoisted?**
+
+Their bindings are created during setup, but the bindings remain uninitialized in the TDZ until class declaration evaluation. That is why `new Invoice()` or even `console.log(Invoice)` before the declaration throws a `ReferenceError`, unlike a function declaration that already has a callable value. After evaluation, the binding refers to the constructor and its prototype is ready for instances.
+
+**Q: How do class expressions behave before their assignment?**
+
+A class expression produces a class value only when the expression runs. `const Invoice = class {}` therefore follows `const`: before the assignment, `Invoice` is in the TDZ; with `var Invoice = class {}`, the early value is `undefined`. If the expression is named, such as `const Invoice = class Invoice {}`, the inner `Invoice` name is available inside the class body, while the outer variable is still initialized only by the assignment.
+
+**Q: How are imports and exports hoisted?**
+
+Module instantiation creates the module's import/export links before module evaluation. An imported name is a live, read-only binding connected to the exporter, not a copied value and not an instruction to execute the export expression in the importer. Dependencies are evaluated before the dependent module body, but cyclic dependencies can read an exported lexical binding while it is still uninitialized and hit the TDZ. The safe explanation is “module bindings are linked before evaluation,” not “imports execute like ordinary values.”
+
+**Q: Does hoisting move assignments too?**
+
+No. In `var score = 7`, only the name setup occurs early. The value `7` is produced and stored when execution reaches the assignment. The same principle explains why a function expression’s body is not available through its variable before the assignment.
+
+**Q: Is hoisting the same in every scope?**
+
+No. Function scope, block scope, modules, and classic scripts have different environment rules. `let` and `const` are block-scoped; `var` is not block-scoped. Module top-level names do not become ordinary global-object properties, while classic script top-level `var` has special global behavior. Always identify the scope and declaration form before predicting a result.
+
+## 6. The Traps — What Goes Wrong
+
+**Trap: saying JavaScript moves declarations to the top.**
+
+That wording predicts the wrong thing because it suggests assignments move too. The source remains in place, and execution remains top-to-bottom. Say that the runtime creates bindings before execution, then describe each binding’s initialization state.
+
+**Trap: saying `let` and `const` are not hoisted.**
+
+They are created during setup, but they remain uninitialized. Calling the result “not hoisted” hides the reason for the specific TDZ error and makes it harder to distinguish a declared-but-uninitialized name from an entirely undeclared name.
+
+**Trap: treating `undefined` as proof that a variable is missing.**
+
+`undefined` can be an intentional value, a `var` setup value, or a property value that was not found. For `var`, the binding exists and is initialized. For an undeclared identifier, the identifier lookup throws a `ReferenceError`; it does not evaluate to `undefined`.
+
+**Trap: expecting all early function calls to work.**
+
+Only a function declaration gets the early callable value. A function expression and an arrow function are assigned later. Check the keyword and the expression form before predicting the error: early `var` calls commonly produce a `TypeError`, while early `let`/`const` calls produce a `ReferenceError`.
+
+**Trap: using hoisting as a style strategy.**
+
+Code that relies on early calls or early `var` reads can be legal but fragile. A reorder can change a harmless `undefined` into a crash, or can make a helper depend on a hidden declaration. Declare values close to their use, prefer `let`/`const`, and use function declarations early only when the module’s structure genuinely benefits from it.
+
+**Trap: confusing TDZ with temporal behavior across closures.**
+
+A closure can remember a lexical binding and read it later, after initialization. The TDZ applies to an access before initialization, not forever. For example, a function declared before `const value = 4` may safely read `value` if it is called after that declaration has executed.
+
+**Trap: saying classes are callable before their declaration like functions.**
+
+Class declarations are lexical bindings left uninitialized during setup. The runtime must evaluate the class definition before the constructor can be read, so early access throws a `ReferenceError`; do not explain this as “classes are not hoisted” without mentioning the binding and TDZ.
+
+**Trap: treating imports as copied constants or early execution.**
+
+Imports are live read-only links established during module instantiation. The imported module's code is evaluated according to module dependency order, not because an import line executes a value like an ordinary assignment. This distinction matters in cycles, where an imported binding can exist but still be uninitialized when read.
+
+## 7. Compare With Related Concepts
+
+**Hoisting vs declaration and initialization:** declaration setup creates a name; initialization gives that name its first usable state. Use this distinction whenever an example mixes `var`, `let`, `const`, or a function declaration.
+
+**`var` vs `let`/`const`:** `var` is initialized to `undefined` and is function-scoped; `let` and `const` are block-scoped and stay in the TDZ until initialized. Use `let` when a binding must be reassigned, `const` when it must not be rebound, and avoid `var` in modern application code unless legacy behavior is intentional.
+
+**Function declaration vs function expression:** a declaration receives its callable value during setup; an expression receives its function value through a later assignment. Use a declaration when a named module-level helper can be read naturally before or after its definition; use an expression when the function is a value being passed, conditionally selected, or kept behind a variable’s normal initialization point.
+
+**Class declaration vs class expression:** both create class constructors when evaluated, but a class declaration's lexical binding is established during setup and remains in the TDZ until its declaration is evaluated, while a class expression is a value produced by an expression and assigned to an outer variable. Use a class declaration for a directly named binding in a scope; use a class expression when the class is itself a value to assign, pass, or select, and remember that a named expression's inner name is only for the class body.
+
+**Module binding linking vs ordinary value assignment:** module instantiation connects live import/export bindings before module evaluation; an ordinary assignment evaluates its right-hand side at the assignment statement and stores that result. Use the module-binding model for `import`/`export`, especially in cycles; use the assignment model for `const value = makeValue()` and other local initializers.
+
+**TDZ vs undeclared identifier:** the TDZ is an access to an existing lexical binding before initialization; an undeclared identifier has no binding in the current lookup chain. Use the error distinction while debugging: `Cannot access 'x' before initialization` points to ordering/shadowing, while `x is not defined` points to a missing declaration or import.
+
+**Hoisting vs the call stack:** hoisting describes binding setup for an execution context; the call stack describes which execution contexts are currently running. Use hoisting to explain name availability before a statement, and the call stack to explain nested function execution and return order.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Before the play starts, JavaScript labels the backstage—but the labels do not all hold the same thing: functions arrive ready, `var` gets an `undefined` placeholder, and `let`/`const` stay behind a locked door until their scene begins. Hoisting is about prepared bindings, never about moving the script.
