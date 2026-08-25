@@ -1,116 +1,308 @@
 # Performance API
 
-## Detailed explanation
-Performance API gives high-resolution timing and measurement tools in browser. It helps measure page loads, user timing marks, resource timing, long tasks, and custom app performance.
+## 1. Why This Exists — The Problem First
 
-Frontend engineers use it to debug slow interactions, compare optimizations, and feed real-user monitoring.
+“The page feels slow” is not a diagnosis. A search screen can spend 40 ms fetching data, 8 ms running JavaScript, and another 180 ms waiting for rendering work. A local laptop may hide that; a phone on a busy network may make it obvious. Without timestamps tied to meaningful events, an optimization is just a guess and a regression is easy to miss.
 
-## 1. One-line mental model
-Performance API measures browser and app timing.
+The Performance API gives browser code a common timeline for answering questions such as: How long did this render take? Which resource was slow? When did the first paint happen? How many long tasks blocked the main thread? It can record measurements made by the browser and measurements that the application adds itself, then let code inspect or report them.
 
-## 2. Problem it solves
-Performance work needs numbers, not guesses.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- `performance.now()` gives high-resolution time.
-- `performance.mark()` records named point.
-- `performance.measure()` records duration.
-- Performance entries expose navigation/resource data.
-- Observers can stream metrics.
+Imagine a parcel depot with one shared wall clock and a tracking ledger.
 
-## 4. Visual / analogy
-Performance API = stopwatch plus timeline labels.
+- The monotonic clock is the depot’s stopwatch. It only measures elapsed time for this depot session; somebody changing the town clock cannot make a delivery appear to finish before it started.
+- A `PerformanceMark` is a named stamp in the ledger: “package scanned” or “truck departed.”
+- A `PerformanceMeasure` is the calculated interval between two stamps: “sorting took 42 ms.”
+- Browser-created entries are automatic tracking events: a script request, a paint, a navigation, or a long task.
+- `PerformanceObserver` is the supervisor’s notification subscription. Instead of repeatedly asking for the entire ledger, the supervisor receives new entries of the types they requested.
+- The performance timeline is the ledger. DevTools can display it, and a real-user-monitoring system can send selected measurements to a server.
 
-```mermaid
-flowchart LR
-  Mark1["mark start"] --> Work["do work"]
-  Work --> Mark2["mark end"]
-  Mark2 --> Measure["measure duration"]
+The analogy has an important limit: the ledger records timing; it does not make the work faster. A measure can tell us that rendering took 180 ms, but it cannot explain every cause by itself. We still need the browser trace, application logs, and the entry’s additional fields to find the bottleneck.
+
+## 3. How It Actually Works — The Full Explanation
+
+The browser exposes `performance` in window and worker contexts. It uses a `timeOrigin` and high-resolution timestamps measured in milliseconds. In a window, the origin is associated with the start of the navigation; in a worker, it belongs to that worker’s start. `performance.now()` returns elapsed time from that origin, while `Date.now()` returns wall-clock milliseconds since the Unix epoch.
+
+That difference is the first rule:
+
+```text
+duration = performance.now() after - performance.now() before
 ```
 
-## 5. Minimal example
+Use `performance.now()` for durations because it is based on a monotonic clock and does not move backward when the system clock is corrected. Its precision can be reduced by the browser for security, so “high resolution” does not mean that every environment exposes unlimited microsecond accuracy. `performance.timeOrigin + performance.now()` is useful when an application needs to relate a high-resolution reading to an epoch-like timestamp, but do not treat that derived value as a server-synchronized clock.
+
+The Performance Timeline stores `PerformanceEntry` objects. Every entry has a `name`, `entryType`, `startTime`, and `duration`; specialized entry types add their own fields. Some entries are created by the browser, including:
+
+- `navigation`: document navigation phases.
+- `resource`: network timing for scripts, images, stylesheets, and fetches, including fields such as `fetchStart`, `responseStart`, and `responseEnd`.
+- `paint`: milestones such as `first-paint` and `first-contentful-paint` where supported.
+- `longtask`: main-thread tasks that occupy at least 50 ms.
+- `event`: event timing data used to understand interaction latency where supported.
+- `layout-shift` and `largest-contentful-paint`: signals used in page-experience measurements where supported.
+
+The exact set varies by browser and context. Check `PerformanceObserver.supportedEntryTypes` before relying on an optional entry type.
+
+Application code contributes User Timing entries:
+
+1. `performance.mark("search-start")` creates a point-in-time `PerformanceMark`.
+2. The application does work, such as applying data to the DOM.
+3. `performance.mark("search-end")` creates another point.
+4. `performance.measure("search-render", "search-start", "search-end")` creates a `PerformanceMeasure` whose `duration` is the difference.
+5. Code can read the result with `performance.getEntriesByName()` or receive it through an observer.
+
+Marks are points, not durations. Measures are the named intervals derived from points. Calling `performance.clearMarks()` and `performance.clearMeasures()` removes entries that the application no longer needs; otherwise a frequently repeated interaction can leave unnecessary timeline data around. Resource entries have their own buffer-management rules, so a resource-heavy application should also understand the resource timing buffer rather than assuming that every old resource remains available forever.
+
+`performance.getEntries()` is a snapshot query. It is fine for a small diagnostic or a one-time report, but repeatedly scanning the complete timeline is noisy and can create unnecessary work. `PerformanceObserver` lets the browser notify code when matching entries are recorded:
+
+```text
+browser records entry -> observer callback is queued -> callback receives a batch -> app filters and reports it
+```
+
+The callback is not a promise that the page is free of performance cost. Processing every entry, serializing large objects, or sending a network request for every callback can itself hurt the page. A production collector filters early, batches reports, and disconnects observers when their lifecycle ends.
+
+Resource entries are also subject to a resource-timing buffer. `performance.setResourceTimingBufferSize(maxSize)` requests a larger maximum number of resource entries when a page expects many resources. `performance.clearResourceTimings()` removes the currently stored resource entries, which is useful after a report or before starting a new measurement window. The `resourcetimingbufferfull` event tells the page that the buffer reached its limit; a handler can report the condition, clear entries, or request more capacity. A `PerformanceObserver` does not make this storage unlimited: under buffering pressure, entries can be dropped before they are delivered or retained. Treat resource telemetry as best-effort, listen for the full-buffer signal, and aggregate reports instead of assuming that every resource will be present.
+
+Where supported, configure the resource observer with `buffered: true` and inspect the callback's optional `droppedEntriesCount` option. It reports how many entries were lost because the performance buffer was full, so telemetry can count the loss instead of silently treating the delivered batch as complete:
 
 ```js
-const start = performance.now();
-doWork();
-console.log(performance.now() - start);
+const performance = globalThis.performance;
+const PerformanceObserver = globalThis.PerformanceObserver;
+
+if (!performance || !PerformanceObserver) {
+  throw new Error("Run this example in a browser with PerformanceObserver");
+}
+
+let droppedResourceEntries = 0;
+const resourceObserver = new PerformanceObserver((list, observer, options) => {
+  const droppedEntriesCount = options?.droppedEntriesCount ?? 0;
+  droppedResourceEntries += droppedEntriesCount;
+
+  if (droppedEntriesCount > 0) {
+    console.warn(`Dropped ${droppedEntriesCount} resource timing entries`);
+  }
+
+  console.log(`Received ${list.getEntries().length} resource entries`);
+  console.log(`Dropped total: ${droppedResourceEntries}`);
+});
+
+if (PerformanceObserver.supportedEntryTypes.includes("resource")) {
+  resourceObserver.observe({ type: "resource", buffered: true });
+}
 ```
 
-## 6. Real-world example
+Finally, measuring JavaScript is not the same as measuring user-perceived responsiveness. An event handler may finish quickly but trigger expensive style calculation, layout, paint, or a later task. Event timing and long-task entries can reveal those problems when supported; a custom mark around a handler only answers the narrower question “how long did this marked code run?”
+
+## 4. Real Code — See It Working
+
+**Measure an operation with `now()`.**
 
 ```js
-performance.mark("search-start");
-renderResults();
-performance.mark("search-end");
-performance.measure("search-render", "search-start", "search-end");
+const performance = globalThis.performance;
+const products = [
+  { name: "Keyboard" },
+  { name: "Monitor" },
+  { name: "Mouse" },
+];
+const searchInput = { value: "mo" };
+
+if (!performance) {
+  throw new Error("Run this example in a browser with the Performance API");
+}
+
+function filterProducts(products, query) {
+  const normalizedQuery = query.trim().toLowerCase();
+  return products.filter((product) =>
+    product.name.toLowerCase().includes(normalizedQuery),
+  );
+}
+
+const startedAt = performance.now();
+const visibleProducts = filterProducts(products, searchInput.value);
+const elapsedMs = performance.now() - startedAt;
+
+console.log(`Filtering took ${elapsedMs.toFixed(2)} ms`);
 ```
 
-## 7. Common interview questions
+The subtraction is meaningful even if the system clock is adjusted while the function runs. The result is a duration, not a timestamp that should be shown as a date.
 
-#### What is Performance API?
-- **The Engine Mechanism (Why it behaves this way):** The W3C Performance API is a suite of standards exposed under the global `performance` object in both browser and Node.js host environments. It interacts directly with the host operating system's monotonic clock (a clock that only counts forward, independent of system adjustments) to record sub-millisecond timestamps. Crucially, the browser's rendering engine automatically populates a localized memory buffer—the Performance Timeline—with various performance entries (`PerformanceEntry` objects) detailing resource downloads, navigations, paint timings (FCP, LCP), and frame metrics, which can be queried programmatically to audit performance.
-- **The Unforgettable Mental Model:** A professional telemetrics logger installed inside a racecar. It doesn't just look at the speedometer; it records the exact millisecond you hit the apex, how fast fuel was consumed, and when the tires lost grip, storing everything in a centralized black-box data recorder (the Performance Timeline) for review after the race.
-- **The Trap:** Believing that query methods like `performance.getEntries()` are perfectly scalable. Calling query methods frequently can cause layout reflows or garbage collection cycles due to the instantiation of hundreds of `PerformanceEntry` objects on the V8 heap. Real-User Monitoring (RUM) libraries use `PerformanceObserver` instead to stream metrics asynchronously without polling.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The Performance API is a high-resolution, programmatic monitoring suite that exposes sub-millisecond, monotonic timestamps and structured telemetry about the browser's loading and rendering lifecycle. It records detailed system markers like navigation timings, paint events, and resource metrics directly into a performance buffer, enabling frontend architects to capture actual Real-User Monitoring data directly from production environments."
+**Add named marks and observe the measure.**
 
-#### `Date.now` vs `performance.now`?
-- **The Engine Mechanism (Why it behaves this way):** `Date.now()` returns the number of milliseconds elapsed since the Unix epoch (January 1, 1970 00:00:00 UTC). It is a "wall-clock" timestamp derived from the operating system's system clock, which is subject to clock drift, NTP synchronization adjustments, or manual user overrides. This means `Date.now()` is not monotonic; it can jump backward or forward unexpectedly. In contrast, `performance.now()` returns a double-precision floating-point number representing the time elapsed in milliseconds (with microsecond precision) since the *navigation start* of the current document (the time origin). It is backed by a monotonic clock, ensuring that subsequent readings are guaranteed to be strictly increasing.
-- **The Unforgettable Mental Model:** `Date.now()` is looking at the clock hanging on the wall—someone can walk up, spin the hands backward, and completely ruin your timing. `performance.now()` is a professional stopwatch that you clicked the moment the runner left the starting block—it only counts forward, and it measures down to the microsecond.
-- **The Trap:** Using `Date.now()` to measure code execution duration. If the user's computer syncs its time with an NTP server mid-measurement, your execution time could calculate as a negative number or a massive, incorrect positive value. Always use `performance.now()` for telemetry.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The fundamental difference is that `Date.now` is non-monotonic and measures system wall-clock time, which can drift, warp, or jump backwards during NTP updates or user modifications. `performance.now` is monotonic and measures the elapsed time since the document's origin with microsecond-level precision. This guarantees that `performance.now` will always increase, making it the only reliable choice for accurate code and network execution profiling."
+```js
+const performance = globalThis.performance;
+const PerformanceObserver = globalThis.PerformanceObserver;
+const document = globalThis.document;
 
-#### What are marks/measures?
-- **The Engine Mechanism (Why it behaves this way):** Marks and Measures are custom entries added to the Performance Timeline via the User Timing API. Calling `performance.mark(name)` records a static `PerformanceMark` entry containing a name and the exact monotonic timestamp of execution. Calling `performance.measure(name, startMark, endMark)` calculates the difference between two timestamps, creating a `PerformanceMeasure` entry. These calls populate the browser's Performance buffer. Crucially, the browser's developer tools capture these entries and plot them visually onto the performance profile track, allowing developers to see custom JavaScript actions relative to rendering pipeline events (like style recalculations and layout).
-- **The Unforgettable Mental Model:** Placing colored flags along a race track. `performance.mark` is planting a flag where a car starts a turn (Mark A) and another where it exits the turn (Mark B). `performance.measure` is stretching a string between the flags to calculate the exact distance (duration) the car traveled.
-- **The Trap:** Forgetting to clear marks and measures using `performance.clearMarks()` and `performance.clearMeasures()`. If your application frequently generates marks during user interactions (e.g., typing in an autocomplete field), the timeline buffer will slowly bloat V8 heap memory and eventually throw an overflow exception unless purged.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Marks and Measures are the building blocks of the User Timing API. Calling `performance.mark` records a point-in-time snapshot of the engine clock, while `performance.measure` calculates the duration between two points. Beyond programmatic audits, a huge advantage of using these APIs is that Chrome DevTools automatically visualizes our marks and measures within the Performance Panel timeline, bridging the gap between JS application telemetry and native browser rendering cycles."
+if (!performance || !PerformanceObserver || !document) {
+  throw new Error("Run this example in a browser with User Timing support");
+}
 
-#### How measure slow interaction?
-- **The Engine Mechanism (Why it behaves this way):** Slow interactions are measured by tracking Core Web Vitals, specifically Interaction to Next Paint (INP) or First Input Delay (FID). The engine measures the duration between a user input event (such as a `click` or `pointerdown`) and the exact moment the next animation frame is painted to the screen. To do this programmatically, we monitor long tasks (tasks exceeding 50ms) using the Long Tasks API and track layout thrashing or long-running event handlers. When an interaction occurs, we mark the start, register a `requestAnimationFrame` callback to detect when the frame starts, and use a nested `requestAnimationFrame` or `setTimeout(..., 0)` to calculate the end time, representing when the browser finishes updating the screen.
-- **The Unforgettable Mental Model:** Measuring customer checkout times at a supermarket. You don't just measure how long the cashier took to scan the items (the JS event handler runtime); you measure the total time the customer stood in line from their initial reach (click input) until they walked out of the store with their receipt in hand (the screen repaint).
-- **The Trap:** Measuring only the execution duration of the JavaScript event handler. An interaction can feel slow because the event handler triggered a massive DOM update that caused intensive style recalculations, layouts, and paints. The JavaScript event handler might run in 5ms, but the page repaints 150ms later; only measuring the JS runtime misses the real bottleneck.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Measuring slow interactions requires capturing the full latency from the user event down to the actual browser repaint. While we can use simple telemetry with `requestAnimationFrame` wrappers to detect when the next paint frame fires, the industry standard is to use a `PerformanceObserver` listening for `event` entries. This captures the input delay, the synchronous processing time of our event handlers, and the critical presentation delay before V8 yields back to the browser's composite and paint threads, which directly represents Interaction to Next Paint, or INP."
+const observer = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    if (entry.entryType === "measure" && entry.name === "search-render") {
+      console.log(`Search render: ${entry.duration.toFixed(2)} ms`);
+    }
+  }
+});
 
-#### What is PerformanceObserver?
-- **The Engine Mechanism (Why it behaves this way):** `PerformanceObserver` is an asynchronous browser interface that allows developers to subscribe to specific types of performance events (like `'resource'`, `'paint'`, `'layout-shift'`, or `'longtask'`) as they occur. Unlike polling-based methods like `performance.getEntries()`, which require synchronously reading and filtering the performance memory buffer, `PerformanceObserver` registers a callback with the browser's internal telemetry observer pattern. The browser dispatches batches of matching performance entries to the callback asynchronously, bypassing main-thread blocking and preventing V8 heap fragmentation.
-- **The Unforgettable Mental Model:** A modern push-notification subscription. Instead of having a courier constantly run back and forth to the front desk asking "Any packages? Any packages?" (polling `getEntries`), you sign up for text alerts (PerformanceObserver). The front desk simply texts you a batch of packages the minute they arrive at the loading dock.
-- **The Trap:** Setting the `buffered: true` option in your observer configuration without filtering entries. While `buffered: true` is excellent for capturing events that occurred before the observer was instantiated, it can flood the callback with historical data, which you must process defensively.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: `PerformanceObserver` is an asynchronous, event-driven interface designed to stream performance telemetry directly from the browser's engine. Unlike polling via `getEntries`, which incurs thread blocking and memory allocations, a `PerformanceObserver` uses a passive callback pattern to receive entries like Cumulative Layout Shift or First Contentful Paint. This makes it the foundation of modern Real-User Monitoring libraries, allowing us to capture production performance data with negligible overhead."
+observer.observe({ type: "measure" });
 
-## 8. Active recall test
+function renderSearchResults(results, container) {
+  performance.mark("search-render-start");
 
-#### 1. Which method returns the sub-millisecond, monotonic elapsed time?
-`performance.now()` returns a high-resolution double-precision float representing time elapsed since the navigation start.
+  // This is the boundary we chose to measure: creating and attaching rows.
+  container.replaceChildren(
+    ...results.map((result) => {
+      const item = document.createElement("li");
+      item.textContent = result.name;
+      return item;
+    }),
+  );
 
-#### 2. How do you register a named, static time marker in the browser's performance buffer?
-By calling `performance.mark("marker-name")`.
+  performance.mark("search-render-end");
+  performance.measure(
+    "search-render",
+    "search-render-start",
+    "search-render-end",
+  );
 
-#### 3. How do you calculate and record the duration between two named marks?
-By calling `performance.measure("measure-name", "start-marker", "end-marker")`.
+  // The names are reusable for the next render; clear old entries after the
+  // measure has been created and delivered to the observer's queue.
+  performance.clearMarks("search-render-start");
+  performance.clearMarks("search-render-end");
+  performance.clearMeasures("search-render");
+}
 
-#### 4. Why is relying on developer intuition or local desktop speed tests insufficient for performance work?
-Because local environments lack the network constraints, CPU throttling, and operating system variance experienced by real users. Telemetry is required to quantify issues accurately across diverse real-world hardware.
+const results = [{ name: "Monitor" }, { name: "Mouse" }];
+const container = document.createElement("ul");
+renderSearchResults(results, container);
 
-#### 5. Outline a standard Real-User Monitoring (RUM) use case for the Performance API.
-Instantiating a global `PerformanceObserver` to capture Core Web Vitals (such as FCP, LCP, and CLS) and custom user interaction marks, which are asynchronously batched and transmitted to an analytics server to monitor the application's real-world end-user performance.
+// For a one-off read, retain the entry before clearing it instead.
+const request = () => Promise.resolve({ ok: true });
 
-## 9. Mistakes / traps
-- Using one local measurement as final proof.
-- Mixing wall-clock and high-res timing.
-- Measuring dev build only.
-- Ignoring user-device variance.
+void (async () => {
+  performance.mark("request-start");
+  await request();
+  performance.mark("request-end");
+  performance.measure("products-request", "request-start", "request-end");
 
-## 10. Compare with related concepts
-- **Performance API vs DevTools:** programmatic measurement vs inspection UI.
-- **`Date.now` vs `performance.now`:** wall time vs monotonic high-res.
-- **Lab vs RUM:** controlled local test vs real user data.
+  const [requestMeasure] = performance.getEntriesByName("products-request");
+  console.log(requestMeasure.duration);
 
-## 11. Summary from memory
-Explain how to measure search result render duration.
+  performance.clearMarks();
+  performance.clearMeasures();
+})();
+```
 
-## 12. Spaced revision prompts
-- 1 day: Define Performance API.
-- 3 days: Use `performance.now`.
-- 7 days: Use marks/measures.
-- 14 days: Explain RUM.
+**Inspect built-in resource timing.**
 
+```js
+const performance = globalThis.performance;
+
+if (!performance) {
+  throw new Error("Run this example in a browser with Resource Timing support");
+}
+
+const slowResources = performance
+  .getEntriesByType("resource")
+  .filter((entry) => entry.duration > 300)
+  .map((entry) => ({
+    url: entry.name,
+    durationMs: Math.round(entry.duration),
+    transferBytes: entry.transferSize,
+  }));
+
+console.table(slowResources);
+```
+
+`duration` here covers the resource timing interval, not necessarily the time until the resource has affected the screen. A slow script download and a slow script execution are different measurements.
+
+**Observe long tasks when the browser supports them.**
+
+```js
+const PerformanceObserver = globalThis.PerformanceObserver;
+
+if (!PerformanceObserver) {
+  throw new Error("Run this example in a browser with PerformanceObserver");
+}
+
+if (PerformanceObserver.supportedEntryTypes.includes("longtask")) {
+  const longTaskObserver = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      console.log(`Main-thread task blocked for ${entry.duration.toFixed(1)} ms`);
+    }
+  });
+
+  longTaskObserver.observe({ type: "longtask", buffered: true });
+}
+```
+
+`buffered: true` asks for matching entries that were recorded before the observer was created, where that option is supported for the entry type. It is useful when the observer starts after page startup, but the callback should still filter and bound what it reports.
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is the Performance API?**
+
+It is a group of browser standards for collecting timing data. The browser creates entries for events such as navigation, resource loading, paint, long tasks, and interaction timing; application code can add User Timing marks and measures. Those entries are exposed through the `performance` object, can be inspected by code and DevTools, and can be sampled for real-user monitoring.
+
+**Q: Why use `performance.now()` instead of `Date.now()` to measure duration?**
+
+`Date.now()` is wall-clock time tied to the Unix epoch, so operating-system corrections or a user changing the clock can make two readings jump. `performance.now()` is elapsed time from a monotonic `timeOrigin`, so it is appropriate for subtracting start and end readings. `Date.now()` is still useful when the requirement is a calendar or epoch timestamp rather than an accurate short duration.
+
+**Q: What is the difference between a mark and a measure?**
+
+A mark is a named point on the performance timeline. A measure is a named duration calculated between marks, or between a mark and a supplied time boundary. Use marks to identify boundaries such as “request started” and “request finished,” then use a measure to answer “how long was that interval?”
+
+**Q: What does a `PerformanceEntry` contain?**
+
+The common fields are `name`, `entryType`, `startTime`, and `duration`. The concrete entry type determines the meaning of those fields and may add details. For example, a `PerformanceResourceTiming` entry includes network-phase timestamps, while a `PerformanceMeasure` represents an interval created by application code.
+
+**Q: Why use `PerformanceObserver`?**
+
+It is an event-driven way to receive new performance entries of selected types. It avoids repeatedly polling and scanning the whole performance timeline. It does not make collection free: the callback still runs in the page, so production code should select only needed entry types, process small batches, sample or aggregate data, and call `disconnect()` when observation is no longer needed.
+
+**Q: How would you investigate a slow interaction?**
+
+First separate the stages: input delay before the handler starts, handler and other JavaScript work, rendering work, and the time until the next visible update. Use browser traces and, where supported, `PerformanceObserver` for `event` and `longtask` entries to capture real interaction and main-thread evidence. Use custom marks around a known application boundary to explain one part of the interaction. Do not claim that a mark around the event handler alone is an INP measurement; INP is about the interaction’s latency to the next paint and is collected through the Event Timing model and browser tooling.
+
+**Q: Are performance timestamps universally comparable?**
+
+Not automatically. `performance.now()` readings in the same global context are suitable for subtraction. Window and worker contexts can have different time origins, and timestamps from different documents are not interchangeable without an explicit conversion strategy. Also, browser precision can be coarsened for security. Send a clearly defined duration or a timestamp plus its origin rather than silently mixing unrelated clocks.
+
+## 6. The Traps — What Goes Wrong
+
+- **Using `Date.now()` for a short duration.** A wall clock can be adjusted while the operation runs. Subtract `performance.now()` readings when elapsed time is the question.
+
+- **Calling a handler measurement “the user’s wait.”** A handler’s JavaScript duration ends before all style, layout, paint, and compositor work necessarily finishes. Measure the boundary you actually care about, and use event timing or a browser trace for interaction-to-paint questions.
+
+- **Assuming `performance.now()` is an epoch timestamp.** Its number is relative to `timeOrigin`. Do not render it as a date or compare it directly with a server’s Unix timestamp without conversion and clock-skew awareness.
+
+- **Assuming “high resolution” means exact microseconds everywhere.** Browsers deliberately reduce timestamp precision in some contexts. Treat measurements as observations with a resolution, not as laboratory instruments.
+
+- **Polling the complete timeline forever.** `getEntries()` returns a snapshot and can cause repeated scanning and allocations in a hot path. Observe the entry types you need, or query at a deliberate reporting boundary.
+
+- **Expecting an observer to replay everything by default.** An observer receives entries recorded after it starts unless the entry type and options support buffered delivery and `buffered: true` is requested. If startup metrics matter, install the observer early or use the appropriate buffered option.
+
+- **Clearing entries before using them.** `clearMarks()` and `clearMeasures()` remove your custom entries. Read, report, or retain the relevant values first. Clear by name when several independent features share the page.
+
+- **Treating a missing entry type as a failure in your application.** Support varies by browser and context. Check `PerformanceObserver.supportedEntryTypes`, feature-detect the API, and make telemetry optional rather than blocking the feature being measured.
+
+- **Reporting every event immediately.** A telemetry callback that serializes a large object and performs a network request for each entry can become the performance problem. Aggregate, sample, and send asynchronously in bounded batches.
+
+## 7. Compare With Related Concepts
+
+| Concept | Key difference | Use it when |
+|---|---|---|
+| `performance.now()` | Monotonic elapsed time relative to a context’s `timeOrigin` | Measuring a duration inside one window or worker |
+| `Date.now()` | Wall-clock milliseconds since the Unix epoch | Recording a calendar/epoch timestamp or correlating loosely with external systems |
+| `performance.mark()` | Adds a named point to the timeline | Marking an application boundary |
+| `performance.measure()` | Adds a named interval between points or timestamps | Measuring one operation with a reusable timeline entry |
+| `performance.getEntries()` | Takes a synchronous snapshot of stored entries | One-time diagnostics or a deliberate report |
+| `PerformanceObserver` | Receives selected entries as they are recorded | Streaming metrics and avoiding repeated full-timeline polling |
+| DevTools Performance panel | Interactive lab inspection of a trace | Finding rendering, scripting, and browser-pipeline causes during investigation |
+| Real-user monitoring | Production telemetry collected from actual users | Learning how devices, networks, and real interactions behave at scale |
+
+The practical rule is: use `now()` for a local stopwatch, marks and measures for application-owned boundaries, built-in entries for browser-owned milestones, and an observer plus careful aggregation for production telemetry. A lab profile explains a reproduction; RUM tells you whether the same problem exists for real users.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Think of the Performance API as a parcel depot’s stopwatch and tracking ledger: `now()` times the trip, marks stamp the important moments, measures draw the interval, and observers deliver selected new records. The ledger gives you evidence, not a diagnosis—always name the exact boundary you measured and distinguish JavaScript time from the user’s time until the screen updates.
