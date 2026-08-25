@@ -1,131 +1,223 @@
 # Closure Memory Retention
 
-## Detailed explanation
-Closure memory retention happens when a function keeps access to variables from an outer scope after that outer function has finished running. Those captured values remain reachable through the closure, so the garbage collector cannot free them while the closure is still reachable.
+## 1. Why This Exists — The Problem First
 
-This is useful for private state, memoization, debounce, and callbacks, but it can also cause memory leaks if closures accidentally retain large objects, DOM nodes, or caches longer than needed.
+A screen is removed, but its timer keeps firing. A global event listener still points at a callback from an old render. A cache grows because every callback quietly keeps one more result alive. These bugs are confusing because the code that created the data has already returned, yet the browser still cannot reclaim it.
 
-## 1. One-line mental model
-A closure keeps captured outer variables alive as long as the closure is reachable.
+The missing question is not “did this function finish?” It is “can the garbage collector still reach the values through a live closure?” Closure memory retention explains both sides of the story: why callbacks and private state work after their outer function returns, and why an uncleaned callback can keep large objects alive longer than the feature needs them.
 
-## 2. Problem it solves
-JavaScript functions need to remember outer variables for callbacks and returned functions.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Closures retain references to captured variables.
-- Retained values stay in memory while the closure is reachable.
-- This enables private state.
-- It can retain large data accidentally.
-- Clearing references or removing listeners allows cleanup.
+Imagine leaving a workshop with a locked toolbox. The workshop is the outer function. The tools inside are its local variables. A closure is a small set of instructions that leaves with the toolbox key, so it can return later and read or change those tools even though the workshop session is over.
 
-## 4. Visual / analogy
-A closure is like taking a backpack from a room. Even after leaving the room, everything in the backpack stays with you.
+The key is the important part. If nobody has the key, the workshop and its tools can be cleared. If a long-lived timer, DOM listener, or global registry still stores the instructions, that reference is still a path to the key and therefore to the tools. The tools are retained because they are reachable, not because the outer function is somehow still running.
 
-```mermaid
-flowchart LR
-  Outer["Outer scope value"] --> Closure["Returned function"]
-  Closure --> Reachable["Still reachable"]
-  Reachable --> Retained["Value retained in memory"]
-```
+This also explains the difference between useful retention and a leak. Keeping a counter alive while its returned `increment` function is needed is intentional. Keeping a 200 MB response alive through a listener that should have been removed is accidental retention. The mechanism is the same; the ownership decision is different.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+When JavaScript creates a function inside another scope, the inner function carries access to the lexical environment where it was created. In everyday terms, it remembers the variables it may need. The specification describes this connection with the function's internal `[[Environment]]` reference; the engine can implement the details differently, but the observable rule is stable.
+
+Consider this sequence:
+
+1. `createCounter` creates a lexical environment containing `count`.
+2. The returned arrow function is created while that environment is current, so it can access `count`.
+3. `createCounter` returns. Its call-stack execution record is gone; the function is not still executing.
+4. The global variable `counter` now points to the returned function.
+5. The function points to the environment containing `count`, so `count` is reachable through `counter` and remains available.
+
+Garbage collection follows reachability from roots such as global objects, active stack work, scheduled callbacks, and browser-managed objects. If a root can follow references to a closure, then to its captured environment, then to an object stored in that environment, the object is live for collection purposes. If every path is broken, the object becomes eligible for collection. Eligibility does not mean that memory is freed at that exact line; collection happens later according to the engine's strategy.
+
+A closure does not necessarily retain every local variable in a source file forever. Engines can optimize environments, and only values that remain observable through live references need to be preserved. As a developer, the safe rule is to reason about the references your callback can use, then remove the callback or clear the captured holder when the work ends.
+
+The most common retention paths are:
+
+- A one-shot `setTimeout` retains its callback until it runs or `clearTimeout` cancels it; after it runs, that timeout does not keep scheduling the callback.
+- A `setInterval` retains its callback and keeps scheduling it until `clearInterval` stops future ticks and breaks that timer's callback path.
+- An event target retains a registered listener until the same listener is removed or an abort signal removes it.
+- A long-lived array, map, singleton, or cache retains a callback that was pushed into it.
+- A returned function intentionally retains private state for as long as callers retain that function.
+
+Event listeners deserve a precise explanation. Removing an element from the document does not automatically mean that every application reference is gone. A listener attached to `window`, `document`, or another long-lived target can keep its closure alive until cleanup. A detached element can remain alive only when a live target reference or closure path reaches the node—for example, application code retains the target, or a retained closure captures the node. Holding only the listener function is not enough to retain the target or node. The practical fix is lifecycle cleanup: use the same function identity with `removeEventListener`, or use an `AbortController` signal and abort it when the owner is destroyed.
+
+In React, each render creates functions that close over that render's props and state. An effect that starts a timer or listener must return cleanup for that exact resource. Missing cleanup can cause duplicate work, stale reads, and retained render data. A dependency array controls when React replaces an effect; it does not cancel a timer or listener by itself.
+
+## 4. Real Code — See It Working
 
 ```js
 function createCounter() {
   let count = 0;
-  return () => ++count;
+
+  return function increment() {
+    // The returned function is the live reference that keeps `count` usable.
+    return ++count;
+  };
 }
 
 const counter = createCounter();
+console.log(counter()); // 1
+console.log(counter()); // 2
 ```
 
-`count` stays alive because `counter` closes over it.
-
-## 6. Real-world example
+The outer call has finished, but `counter` still reaches the environment containing `count`. This is useful retention: the state belongs to the counter and is bounded by the lifetime of `counter`.
 
 ```js
-function attachHandler(largeData) {
-  button.addEventListener("click", () => {
-    console.log(largeData.id);
-  });
+const target = new EventTarget();
+
+function subscribeToUpdates(payload) {
+  const onUpdate = () => console.log(payload.id);
+
+  target.addEventListener("update", onUpdate);
+
+  return function unsubscribe() {
+    // Removing the exact listener breaks the target -> closure -> payload path.
+    target.removeEventListener("update", onUpdate);
+  };
 }
+
+const stopListening = subscribeToUpdates({ id: "order-42" });
+target.dispatchEvent(new Event("update")); // order-42
+stopListening();
+target.dispatchEvent(new Event("update")); // no output
 ```
 
-The event handler retains `largeData` as long as the listener is attached.
+The important detail is the function identity. Creating a new arrow function inside `removeEventListener` would not remove the registered listener because it would be a different function object.
 
-## 7. Common interview questions
-#### How do closures preserve variables?
-- **The Engine Mechanism (Why it behaves this way):** When a function is declared inside an outer function, the outer function's execution context sets up its Variable Environment and Lexical Environment on the Heap. The inner function's `[[Environment]]` hidden property is initialized to point directly to the outer function's Lexical Environment. Under normal circumstances, when a function finishes executing, its activation record (execution context) is popped off the Call Stack and discarded. However, because the inner function's `[[Environment]]` keeps a persistent reference to the outer Lexical Environment, the entire outer environment remains reachable from the root. As a result, the Garbage Collector cannot clean up the variables allocated within that lexical scope.
-- **The Unforgettable Mental Model:** The **Lexical Balloon Anchor**. Instead of letting the outer scope environment float away and pop (get GC'd) when the stack is cleared, the inner function acts as a heavy anchor, pinning the entire lexical environment bubble directly to the Heap.
-- **The Trap:** Thinking that the outer function's *entire execution context* remains on the Call Stack. The stack frame is destroyed completely; only the lexical environment object in the heap is retained.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Closures preserve variables because functions in JS retain a reference to their parent lexical scope via an internal `[[Environment]]` property created at declaration. Although the parent function's execution context is removed from the Call Stack upon completion, its Lexical Environment object remains reachable in the Memory Heap through the child function. This prevents the garbage collector from reclaiming the parent scope's memory."
+```js
+function startPolling(readValue, onValue) {
+  const timer = setInterval(() => {
+    // The callback closes over the caller's functions until the timer is cleared.
+    onValue(readValue());
+  }, 10);
 
-#### Can closures cause memory leaks?
-- **The Engine Mechanism (Why it behaves this way):** Yes. A memory leak occurs when variables are retained in the Memory Heap despite no longer being actively required by the application. If an inner function (closure) is stored in a long-lived structure (such as a global array, a static class property, a DOM event listener, or a `setInterval` handle), it remains reachable. Because the closure is reachable, its `[[Environment]]` reference keeps the parent Lexical Environment reachable too. If that parent environment contains references to high-memory payloads (like raw image data, large DOM subtrees, or extensive arrays), they are kept in memory indefinitely.
-- **The Unforgettable Mental Model:** The **Forgotten Storage Locker**. You keep paying rent on a storage locker (the heap allocation) because you kept the key (the closure reference) in your drawer, completely forgetting that the locker contains heavy, useless old furniture (large objects).
-- **The Trap:** The "V8 Shared Context Optimization Trap". If two closures are defined in the same outer function (e.g., one tiny helper and one huge memory consumer), V8 compiles them to share the exact same Lexical Environment object. If only the tiny helper is returned or exported, it still implicitly keeps the massive memory consumer alive in the shared environment!
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Yes, closures can easily cause memory leaks when a reference to the closure itself is kept alive indefinitely—such as inside a global array, a detached DOM node, or an uncleaned event listener. Since the closure maintains a direct path of reachability to its outer Lexical Environment, any large objects or resources captured in that outer scope cannot be swept by the garbage collector, resulting in a progressive memory leak."
+  return function stopPolling() {
+    // Cleanup ends future callbacks and releases this timer's callback path.
+    clearInterval(timer);
+  };
+}
 
-#### What does it mean for a value to be reachable?
-- **The Engine Mechanism (Why it behaves this way):** The JavaScript engine's garbage collection is built on the **Mark-and-Sweep** algorithm. The engine defines a set of "roots" (including the Global Object, active local variables and parameters on the Call Stack, and active event triggers). The GC periodically performs a traversal starting from these roots, following all references (memory pointers) recursively. Any object in the Memory Heap that can be reached via a chain of references starting from a root is marked as "reachable" and spared. Any object that cannot be reached through any reference chain is deemed unreachable and its memory frame is reclaimed.
-- **The Unforgettable Mental Model:** The **Electricity Grid**. The roots are the power plants. If a wire (reference) connects a house (object) to the power plant, the lights stay on (it is reachable). If you cut the wire, the house loses power (it becomes unreachable and gets swept).
-- **The Trap:** Thinking that circular references (Object A referencing Object B, and Object B referencing Object A) prevent GC. In modern Mark-and-Sweep, if the circular group is disconnected from the roots, they are both garbage collected.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A value is considered reachable if it can be accessed either directly or indirectly starting from a Garbage Collection root, such as the global window object, active call stack frames, or current event queues. Under the Mark-and-Sweep algorithm, if the engine can trace a path of memory pointers from any root to an object, that object is preserved; otherwise, it is flagged as dead memory and swept."
+let reads = 0;
+const stopPolling = startPolling(
+  () => ++reads,
+  (value) => {
+    if (value === 2) stopPolling();
+  },
+);
 
-#### How do event listeners retain memory?
-- **The Engine Mechanism (Why it behaves this way):** When you call `element.addEventListener('click', handler)`, the browser's C++ DOM engine creates a binding between the DOM node and the JS event handler function. This handler is registered in the event dispatch table. Since the DOM node is reachable in the DOM tree, it acts as a GC root. The DOM node points to the event listener, and if that listener is a closure, it points to its outer Lexical Environment. If you remove the DOM node from the page but forget to call `removeEventListener`, or if the DOM node itself remains in memory because a JS reference points to it, the entire scope chain of the event listener remains pinned in the Heap.
-- **The Unforgettable Mental Model:** The **Lasso**. The DOM node on the webpage is holding a lasso (the event listener) wrapped tightly around a package of variables (the lexical environment). Even if you hide the package, as long as that DOM node is standing, the lasso keeps the package pulled close.
-- **The Trap:** Thinking that removing an element from the DOM automatically cleans up its listeners. If a JavaScript variable still references the element (creating a "detached DOM node"), the element, its listeners, and all closed-over variables remain in memory.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Event listeners retain memory because the DOM element holds a strong reference to the listener function within the browser's event system. If the listener is a closure, it in turn keeps its entire outer lexical scope alive. To prevent memory leaks, we must explicitly call `removeEventListener` or utilize an `AbortController` signal to sever this reference chain when the element or behavior is no longer needed."
+setTimeout(() => {
+  console.log(reads >= 2); // true
+}, 50);
+```
 
-#### How do closures support private variables?
-- **The Engine Mechanism (Why it behaves this way):** In JavaScript, there is no native runtime access to a function's Lexical Environment or Variable Environment outside of the function itself (except for inner functions declared inside it). By declaring a variable inside an outer function and returning only specific inner functions that read or modify it, we isolate that variable. The outer environment's memory cannot be inspected, intercepted, or directly mutated by external scopes because no reference to the Lexical Environment object is exposed to the global scope; only the returned functions hold the reference in their `[[Environment]]` properties.
-- **The Unforgettable Mental Model:** The **Security Vault with Intercom**. The vault is the Lexical Environment, containing the private variable. The returned function is the intercom. The outside world can only speak into the intercom to ask for information or trigger an action, but they can never physically reach inside the vault.
-- **The Trap:** Assuming "private" means secure against memory inspection. A developer can still inspect these closed-over values using browser DevTools heap snapshots or debuggers, so closures do not act as cryptographic security boundaries.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Closures enable private variables by exploiting lexical scoping boundaries. When we declare variables within a function and return inner functions that reference them, we restrict direct access to those variables. Because JS provides no syntax or API to traverse the outer Lexical Environment from the outside, the state is effectively encapsulated, exposed only through the controlled interfaces we return."
+The exact number of timer ticks can vary, but cleanup is deterministic: once `clearInterval` runs, that interval cannot schedule another tick. In application code, the owner of the polling feature should always own and call the returned cleanup function.
 
-#### How do you release closure-retained data?
-- **The Engine Mechanism (Why it behaves this way):** To release closure-retained data, you must sever the reachability chain between the GC roots and the closure function itself. Once the closure function's reference is set to `null` (or goes out of scope), the closure becomes unreachable. Consequently, the Lexical Environment object it was pointing to via `[[Environment]]` also becomes unreachable (assuming no other closures reference it). During the next garbage collection cycle, the Mark-and-Sweep algorithm will fail to mark these objects, and they will be reclaimed.
-- **The Unforgettable Mental Model:** **Cutting the Balloon String**. Once you cut the string (setting the reference to `null`), the balloon (the closure and its captured environment) is disconnected from the ground and floats away into the sky (cleared by GC).
-- **The Trap:** Clearing only the variables inside the closure instead of the closure reference itself. While setting the variables to `null` works (e.g., `largeData = null`), the best practice is to clean up the holder of the closure, such as removing the event listener or clearing the interval.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: We release closure-retained data by breaking the reachability path to the closure itself. This is achieved by removing event listeners using `removeEventListener`, clearing active timers using `clearInterval` or `clearTimeout`, or explicitly reassigning the closure reference to `null`. Once the closure is unreachable, its internal environment reference is severed, allowing the Garbage Collector to reclaim all captured memory."
+```js
+const productResponseCache = new Map();
 
-#### How does this appear in React hooks?
-- **The Engine Mechanism (Why it behaves this way):** In React, every component execution creates a new Lexical Environment containing current state and props. When hooks like `useEffect`, `useCallback`, or `useMemo` execute, they create closures that capture these current variables. If `useEffect` registers a global listener (e.g., `window.addEventListener('resize', handler)`) or starts a timer (`setInterval`) and does not return a cleanup function to remove it, that handler closure remains reachable globally. It keeps the entire lexical scope of that specific render (including its state, props, and child components) alive in the heap indefinitely, even as React performs new renders and mounts new instances.
-- **The Unforgettable Mental Model:** The **Ghost of Renders Past**. Uncleaned effects leave active listeners in the background, which are ghosts still holding onto the exact state and DOM structures of the renders in which they were born.
-- **The Trap:** Relying on React's automatic cleanup without returning a clean-up function in `useEffect`. If you don't return a function that clears the listener or interval, React has no way of knowing how to destroy the closure.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: In React, this manifests as memory leaks or stale state bugs when side effects inside `useEffect` are not properly cleaned up. If a callback inside a hook sets up a listener or interval without returning a cleanup function that clears it, that closure persists across re-renders. It holds a permanent reference to the specific render's lexical environment in which it was created, keeping obsolete props, state, and sometimes detached DOM elements from being garbage collected."
+function cacheProductResponse(productId, response) {
+  const readResponse = () => response;
 
-## 8. Active recall test
-1. **Why does `count` stay alive after `createCounter` returns?**
-   - **Explanation:** `count` is stored in the Lexical Environment of `createCounter`. When `createCounter` returns the arrow function, that arrow function is assigned to the variable `counter`. The arrow function contains an internal `[[Environment]]` reference back to `createCounter`'s Lexical Environment. Since `counter` is reachable from the global context, the Lexical Environment and the variable `count` inside it are marked as reachable and cannot be garbage collected.
-2. **What makes retained memory eligible for cleanup?**
-   - **Explanation:** Retained memory becomes eligible for cleanup when it is no longer reachable from any garbage collection roots. This occurs when the closure function itself is reassigned, its reference is set to `null`, the timer referencing it is cleared, or the event listener holding it is removed.
-3. **How can event handlers leak memory?**
-   - **Explanation:** Event handlers leak memory when they are bound to long-lived nodes (or the global window object) and close over high-memory outer variables, but are never unbound. Even if the component or section of the UI is destroyed, the browser's event queue retains a reference to the handler, which retains the closed-over scope.
-4. **Why are closures useful despite retention risk?**
-   - **Explanation:** Closures are useful because they allow us to implement powerful architecture patterns like state encapsulation (private variables), function memoization (keeping a private cache), and event management utilities (such as debounce and throttle) without resorting to globally mutable state.
-5. **What is one React stale closure example?**
-   - **Explanation:** An example is a `useEffect` that triggers a `setInterval` to read a state variable `count`, but has an empty dependency array `[]`. The interval's callback closure is created once on mount and captures `count` when it was `0`. On subsequent intervals, it will always print `0` (stale closure) because it references the lexical scope of the initial render.
+  // The long-lived Map -> readResponse -> response path keeps the response reachable.
+  productResponseCache.set(productId, readResponse);
+}
 
-## 9. Mistakes / traps
-- Thinking local variables always disappear immediately after return.
-- Retaining large DOM nodes in long-lived closures.
-- Forgetting to remove event listeners.
-- Keeping unbounded memoization caches.
-- Confusing closure retention with global variables.
+function evictProductResponse(productId) {
+  // Explicit eviction removes the cache's path to the closure and its response.
+  productResponseCache.delete(productId);
+}
 
-## 10. Compare with related concepts
-- **Closure retention vs memory leak:** retention is normal; leak is unwanted retention.
-- **Closure vs object property:** both can hold references; closures hide values in function scope.
-- **Garbage collection vs cleanup:** GC frees unreachable values; cleanup removes references.
+cacheProductResponse("sku-42", {
+  productId: "sku-42",
+  title: "Noise-cancelling headphones",
+  recommendations: new Array(10_000).fill("related-product"),
+});
 
-## 11. Summary from memory
-Explain how a click handler can keep a large object in memory.
+console.log(productResponseCache.get("sku-42")().title); // Noise-cancelling headphones
+console.log(productResponseCache.has("sku-42")); // true
 
-## 12. Spaced revision prompts
-- After 1 day: Define closure memory retention.
-- After 3 days: Explain private counter memory.
-- After 7 days: Describe event listener leak.
-- After 14 days: Explain how to release closure-retained data.
+evictProductResponse("sku-42");
+console.log(productResponseCache.has("sku-42")); // false
+```
 
+This is runnable in Node and models a common server-side response cache: the `Map` stores a closure, and that closure keeps the response object reachable. After eviction, no cache reference remains; garbage collection may reclaim the response later if no other reference exists. A detached DOM node needs browser APIs and is therefore explained as a browser lifecycle case above, not simulated with a fake Node API.
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: Why does a local variable survive after its outer function returns?**
+
+The call-stack record for the outer invocation is finished, but the returned inner function still has access to the outer lexical environment. If a live reference points to that inner function, the environment and the values needed through it remain reachable. The outer function is not running again; the closure is carrying the access path forward.
+
+**Q: Is closure memory retention automatically a memory leak?**
+
+No. Retention is the normal behavior that makes closures useful. It becomes a leak when a closure remains reachable after the feature no longer needs it, especially when it captures a large object or is registered repeatedly. A private counter retained by its active API is intentional; an old listener retained by `window` after a component is gone is not.
+
+**Q: What makes a captured object eligible for garbage collection?**
+
+Every path from a garbage-collection root to the closure and its captured object must be broken. That might mean assigning the last closure reference away, clearing a timer, removing an event listener, deleting a cache entry, or releasing a subscription. The object then becomes eligible; the engine may reclaim it during a later collection cycle, not necessarily immediately.
+
+**Q: How do event listeners retain closure data?**
+
+The event target stores the listener so it can call it later. If the listener closes over `payload`, the target-to-listener reference is also a path to `payload`. A long-lived target such as `window` can therefore retain data from an old feature until the listener is removed. Use a stable listener reference, an unsubscribe function, or an `AbortController` for lifecycle cleanup.
+
+**Q: Can a circular reference prevent garbage collection?**
+
+Not by itself. Modern tracing collectors keep objects that are reachable from roots and can collect a cycle that is disconnected from all roots. The real leak is an unwanted root-to-cycle path, such as a global registry retaining one member of the cycle.
+
+**Q: How do closures provide private state?**
+
+The outer scope does not expose its local binding directly. It returns functions that form the allowed interface, and those functions retain access to the binding. This is encapsulation, not a security boundary: debugging tools can still inspect runtime memory, and code with access to the returned API can call whatever operations that API provides.
+
+**Q: What is a stale closure in a React effect?**
+
+A callback from an earlier render can keep reading the props or state values from that render. For example, an interval created once may keep the initial `count` unless the effect is recreated with the right dependencies or the callback uses a functional state update. Cleanup prevents old intervals from continuing, while dependency design determines which render's values a current callback sees.
+
+## 6. The Traps — What Goes Wrong
+
+**Trap: “The outer function returned, so all its locals are gone.”**
+
+Returning only removes the active call-stack work. It does not remove a lexical environment that a live closure can still reach. A counter, memoized result, or callback proves that the values are still needed by the program.
+
+**Trap: “Every closure captures the whole outer scope forever.”**
+
+The observable guarantee is access to bindings the function may use, not a promise that every unrelated local is retained forever. Engines can optimize representation. Do not depend on a particular optimization; keep captured values small and avoid putting large payloads in a long-lived closure when only an identifier is needed.
+
+**Trap: “Removing a DOM node always removes the leak.”**
+
+The target may still be referenced by application code, or a retained closure may still capture the node; listeners on `window` or `document` are independent of that node's position in the document. Holding only a listener function does not by itself retain its target or a detached node. Pair registration with explicit cleanup and make the owner responsible for calling it.
+
+**Trap: “A new function with the same body removes the listener.”**
+
+Listener removal compares the function object, not its source text. This fails:
+
+```js
+const target = new EventTarget();
+
+target.addEventListener("update", () => console.log("update"));
+target.removeEventListener("update", () => console.log("update")); // different function
+```
+
+Store the callback or use an abort signal so cleanup refers to the registration that actually exists.
+
+**Trap: “Setting a dependency array makes React clean up every resource.”**
+
+Dependencies tell React when an effect should be replaced. The effect itself must return a function that clears its timer, removes its listener, or unsubscribes from its source. Without that cleanup, each replacement can leave another live closure behind.
+
+**Trap: “Garbage collection is the same as feature cleanup.”**
+
+Garbage collection eventually reclaims unreachable memory. It does not unsubscribe from a server, cancel a timer that is still scheduled, remove a DOM listener, or clear an application cache. Cleanup changes the ownership graph so collection can become possible.
+
+## 7. Compare With Related Concepts
+
+**Closure retention vs. a memory leak:** Closure retention is the mechanism of keeping a captured environment reachable. A memory leak is unwanted retention after the owner considers the data dead. Use a closure for private state or a callback that genuinely needs its inputs; add cleanup when the owner can outlive the operation.
+
+**Closure vs. object property:** Both can preserve a reference, but a closure hides the binding behind function behavior while an object property exposes it through the object interface. Use a closure when the invariant should be changed only through controlled operations; use an object when callers should inspect or replace the data directly.
+
+**Closure vs. global variable:** Both can make data long-lived, but a global is reachable through a broad application-wide path and is easy for unrelated code to mutate. Use a closure to narrow ownership and access; use a global only for intentionally shared process-wide state with a clear lifecycle.
+
+**Garbage collection vs. explicit cleanup:** GC reclaims values only after they are unreachable. Explicit cleanup removes timers, listeners, subscriptions, and cache entries while the feature still has a chance to do so. Use cleanup for external resources and treat GC as the final memory reclamation step, not as the lifecycle API.
+
+**Closure retention vs. stale closure:** Retention asks whether the old callback and its captured values are still reachable. Staleness asks whether that callback is reading an older render's values. A callback can be stale without holding a large object, and it can retain current data without being stale. Use cleanup to stop obsolete work and correct dependencies or functional updates to choose the right values.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+When a function leaves with the toolbox key, the workshop is gone from the stack but its tools stay reachable as long as someone still holds that key. A closure is useful when that key belongs to a live feature; it becomes a leak when a timer, listener, or registry forgets to give the key back.
