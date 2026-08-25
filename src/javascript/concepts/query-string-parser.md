@@ -1,117 +1,198 @@
 # Query String Parser
 
-## Detailed explanation
-Query string parser converts URL query text into usable key/value data. Built-in `URLSearchParams` handles most production needs. Implementing parser tests string parsing, decoding, repeated keys, empty values, and edge cases.
+## 1. Why This Exists — The Problem First
 
-Frontend use: filters, pagination, search params, shareable state.
+A product-list page often stores its state in a URL: `/products?query=wireless+keyboard&tag=office&tag=quiet&page=2`. That makes a filtered view bookmarkable, shareable, and restorable after a refresh. The bug starts when code treats this text like a simple object: a repeated filter disappears, `+` stays visible in the search box, or `page=abc` reaches a database query as if it were a valid number.
 
-## 1. One-line mental model
-Query parser turns `?page=2&q=react` into structured data.
+Query parsing is the boundary between untrusted URL text and application state. The parser must preserve the wire format's meaning first; application code can then validate and convert those strings into the types its feature needs.
 
-## 2. Problem it solves
-Apps need read URL state for routing and filters.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Remove leading `?`.
-- Split pairs by `&`.
-- Split key/value by `=`.
-- Decode components.
-- Decide repeated key behavior.
+Think of a parcel manifest attached to a shipment. The `?` marks where the manifest begins. Each `&` separates one line item. On each line, the first `=` separates the label from its contents. Percent-encoding is the packing tape used to transport characters that would otherwise look like separators, and repeated labels mean the manifest contains several items of the same kind.
 
-## 4. Visual / analogy
-Query string is compact form data in URL.
+The receiving desk must not throw away a second item just because the first item used the same label. It also must not decide that a label reading `"42"` is automatically a number: the manifest only carried text. `URLSearchParams` is the standards-aware receiving desk; a manual parser is a desk you build yourself, including its duplicate-key, decoding, malformed-input, and output-shape policies.
 
-```txt
-?q=react&page=2 -> { q: "react", page: "2" }
-```
+## 3. How It Actually Works — The Full Explanation
 
-## 5. Minimal example
+The query component is the text after `?` and before `#`. For example, in `/products?tag=office&tag=quiet#reviews`, the query is `tag=office&tag=quiet`; the fragment is not part of it. `location.search` includes the leading `?`, while `new URL(location.href).searchParams` gives a parser for the URL's query.
+
+`URLSearchParams` parses the query as an ordered list of name/value pairs, not as a one-value-per-name object. The important operations are:
+
+- `get(name)` returns the first matching value, or `null` if the name is absent.
+- `getAll(name)` returns every matching value in input order.
+- `has(name)` checks whether a name exists, even when its value is empty.
+- `entries()`, `keys()`, and `values()` preserve the pair sequence, including duplicates.
+- `set(name, value)` replaces all existing pairs for that name with one pair; `append(name, value)` adds another pair.
+- `toString()` serializes the current list using URL form encoding.
+
+Values are strings. A URL has no type metadata, so `page=2` is not the number `2`, and `enabled=false` is not the boolean `false`. Convert only after validating the feature's allowed range and vocabulary. In particular, `Boolean("false")` is `true` because every non-empty string is truthy.
+
+The form-encoding rules explain a common surprise: `URLSearchParams` reads `+` as a space, while `decodeURIComponent("+")` leaves it as `+`. Percent escapes such as `%26` decode to `&` after the pair boundaries have already been found. That ordering matters; decoding the whole query before splitting could turn encoded data into separators.
+
+Manual parsing therefore has a deliberate sequence: remove one leading `?`, split pairs on `&`, split each pair at its first `=`, translate `+` to a space, decode each component, and apply a duplicate-key policy. A value such as `redirect=https%3A%2F%2Fexample.com%2Fa%3Fx%3D1` must remain one value even though its decoded form contains `=`. `URLSearchParams` also handles a flag such as `?debug` as the pair `debug` with an empty value and ignores empty pair segments such as the one between `a=1&&b=2`.
+
+The parser does not make input safe or meaningful. A query value can still be an open redirect, an invalid page number, an oversized limit, or a string containing markup. Parsing gives structure; validation, authorization, output encoding, and business rules remain separate steps.
+
+## 4. Real Code — See It Working
+
+For ordinary browser code, use the built-in API and keep repeated values as repeated values until the feature chooses a shape:
 
 ```js
-Object.fromEntries(new URLSearchParams("?q=react&page=2"));
+// This fixture makes the example runnable in Node as well as understandable in a browser.
+const requestUrl = new URL(
+  "https://shop.example/products?query=wireless+keyboard&tag=office&tag=quiet&page=2",
+);
+
+const params = requestUrl.searchParams;
+const pageText = params.get("page");
+const page = Number(pageText);
+
+if (!Number.isInteger(page) || page < 1 || page > 100) {
+  throw new Error("page must be an integer from 1 to 100");
+}
+
+const filters = {
+  query: params.get("query") ?? "",
+  tags: params.getAll("tag"),
+  page,
+};
+
+console.log(filters);
+// { query: "wireless keyboard", tags: ["office", "quiet"], page: 2 }
 ```
 
-## 6. Real-world example
+`Object.fromEntries(params)` is convenient only when the application intentionally wants one value per name. With duplicate names, the later entry overwrites the earlier one:
 
 ```js
-const params = new URLSearchParams(location.search);
-const page = Number(params.get("page") ?? 1);
+const params = new URLSearchParams("tag=office&tag=quiet");
+
+console.log(Object.fromEntries(params));
+// { tag: "quiet" }
+
+console.log(params.getAll("tag"));
+// ["office", "quiet"]
 ```
 
-## 7. Common interview questions
+Here is a complete manual parser for a flat object whose repeated keys become arrays. It uses the first `=` only, handles form-style `+` spaces, and treats a missing value as an empty string. The output policy is explicit rather than pretending that every query should become a JSON object:
 
-#### How parse query string?
-- **The Engine Mechanism (Why it behaves this way):** A query string is a raw string of ASCII-compatible characters appended to a URL. To parse it manually, the engine must:
-  1. Strip the leading question mark `?` (if present) to prevent it from being parsed as part of the first key.
-  2. Split the remaining string into key-value pair strings using the `&` delimiter.
-  3. Iterate over each pair, splitting it into a key and value by the first occurrence of the `=` delimiter (to handle cases where the value itself contains nested `=` characters).
-  4. Pass each key and value through `decodeURIComponent()` to resolve percent-encoded strings (like `%20` to spaces or `%40` to `@`).
-  5. Assemble the result into a JavaScript object, handling edge cases such as missing values (`?flag` yielding `flag: ""` or `flag: true` depending on spec), and accumulating duplicate keys into array values.
-- **The Unforgettable Mental Model:** A cargo train carrying coupled cars. First, you unhook the engine (`?`). Next, you split the train at every coupling joint (`&`). Then, for each car, you separate the cargo box from its serial label (`=`), unload the cargo, unpack the shrink-wrapped boxes (decode percentages), and file them into catalog drawers (the output object).
-- **The Trap:** Splitting on `=` blindly using `pair.split('=')`. If a query parameter value is itself a URL (e.g. `?redirect=https://site.com/callback?code=123`), splitting blindly will split the redirect URL value into separate array elements, destroying the query state. Always locate the index of the first `=` using `indexOf('=')` and split the string manually at that exact index.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: To parse a query string manually, we must first strip the leading `?` character, then split the segment by `&` to isolate individual key-value pairs. Each pair must be carefully split by the first `=` occurrence—using `indexOf` to avoid corrupting nested URL values—and decoded using `decodeURIComponent`. Finally, we reduce these pairs into a structured object, implementing accumulator logic to collect duplicate keys into arrays."
+```js
+function decodeQueryComponent(component) {
+  // WHY: application/x-www-form-urlencoded uses + for a space.
+  return decodeURIComponent(component.replace(/\+/g, " "));
+}
 
-#### Why use URLSearchParams?
-- **The Engine Mechanism (Why it behaves this way):** `URLSearchParams` is a built-in browser host utility conforming to the Living Standard URL specification. Written in highly optimized C++ in browser engines, it handles all raw query string parsing natively. It provides highly reliable, standard-compliant algorithms for complex edge cases—such as parsing percent-encoded strings, handling leading/trailing whitespace, normalizing special characters, resolving legacy `+` symbols as spaces, and supporting iteration interfaces (like `keys()`, `values()`, and `entries()`).
-- **The Unforgettable Mental Model:** A Swiss Army knife vs a rusty pocketknife you found in a drawer. While you can manually try to cut a branch with the pocketknife (custom parser), the Swiss Army knife (`URLSearchParams`) has a perfectly engineered, sharp saw, scissors, and file designed specifically to handle all wood types (edge cases) without breaking.
-- **The Trap:** Assuming `URLSearchParams` parses nested arrays or objects (like `?filters[0]=active` or `?user.age=25`) automatically. It treats these complex structures strictly as flat string keys (`"filters[0]"` and `"user.age"`), so you must still write custom parser logic to de-serialize structured, deeply nested query states.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: `URLSearchParams` is the standard, browser-native API designed for query string operations. It runs on highly optimized, spec-compliant C++ engines, automatically resolving percent-encodings, correctly converting `+` symbols to spaces, and natively offering clean iterator interfaces. For production code, relying on `URLSearchParams` is mandatory as it eliminates the dozens of edge-case bugs associated with manual regex-based parsers."
+function parseQueryString(input) {
+  const query = input.startsWith("?") ? input.slice(1) : input;
+  const result = Object.create(null);
 
-#### How handle repeated keys?
-- **The Engine Mechanism (Why it behaves this way):** URL specifications allow the same key to appear multiple times in a query string (e.g. `?color=red&color=blue`). There are three approaches to handling these duplicates:
-  1. **Last-Write-Wins:** The last value overrides all previous ones (e.g., yielding `{ color: 'blue' }`). This is the default behavior of `Object.fromEntries(new URLSearchParams(...))`.
-  2. **Array Accumulation:** Detecting if a key already exists in the accumulator object. If it does, convert the value into an array (if not already) and push the new value (yielding `{ color: ['red', 'blue'] }`).
-  3. **MultiMap Interface:** The browser's native `URLSearchParams` utilizes a MultiMap internally. Calling `.get('color')` returns the *first* matching value (`'red'`), while calling `.getAll('color')` returns a complete array of all matching values (`['red', 'blue']`).
-- **The Unforgettable Mental Model:** A filing cabinet. When a folder already exists for a label (e.g. "Color"), instead of throwing out the old document and replacing it with the new one (Last-Write-Wins), you open the folder, put both papers inside, and write an index list on the cover (Array Accumulation).
-- **The Trap:** Standardizing on Last-Write-Wins when parsing multi-select filters. If your UI has a checkbox group (like select categories) and you use `Object.fromEntries`, refreshing the page will strip out all categories except the last one, breaking the user's active filter state.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Repeated keys can be handled in a few ways depending on requirements. Standard serialization via `Object.fromEntries` uses a last-write-wins strategy, which discards historical values. For multi-value fields like checkbox arrays, we must accumulate duplicates into client-side arrays. Natively, `URLSearchParams` resolves this by exposing a `.getAll()` method, returning all collected values for a given key as a clean array."
+  if (query === "") return result;
 
-#### How decode spaces?
-- **The Engine Mechanism (Why it behaves this way):** The query component of a URL has historical encoding rules. Spaces can be represented as `%20` or as a literal plus sign `+` (derived from application/x-www-form-urlencoded media type standards). The global function `decodeURIComponent()` converts `%20` back into a space, but leaves `+` characters completely untouched. To parse a query string fully and accurately, the parser must preemptively replace all `+` characters with literal space characters `" "` *before* passing the string to `decodeURIComponent()`. Natively, `URLSearchParams` handles this replacement internally.
-- **The Unforgettable Mental Model:** A strict foreign translator who knows how to translate formal encoding syntax (%20) but doesn't understand street slang (the plus sign `+` meaning space). To help the translator understand, you must manually run through the text and swap out the slang symbols with standardized text before handing it to them.
-- **The Trap:** Blindly using `decodeURIComponent(location.search)` without replacing `+` signs first. If the search query contains `?q=react+router`, it will render in your UI as `"react+router"`, which is highly unprofessional and breaks exact matches in search filters.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Decoding query strings requires careful handling of spaces. While standard URL encoding translates spaces to `%20`, forms often encode them as `+` symbols. Because the native `decodeURIComponent` utility does not convert `+` signs into spaces, a manual parser must replace all `+` characters with a literal space character before decoding, whereas `URLSearchParams` handles this translation natively."
+  for (const pair of query.split("&")) {
+    if (pair === "") continue;
 
-#### How parse numbers/booleans?
-- **The Engine Mechanism (Why it behaves this way):** Out of the box, URL strings contain no type metadata; every query parameter value parsed by `URLSearchParams` or manual parsers is strictly returned as a primitive `string`. To convert these into true JavaScript booleans or numbers, you must apply explicit type coercion or schema parsing. For booleans, you cannot simply cast `Boolean("false")` as it evaluates to `true` (non-empty strings are truthy). Instead, check for exact equality: `value === 'true'`. For numbers, use `Number(value)` or `parseFloat()`, verifying if the output is `NaN` before saving it to your application state.
-- **The Unforgettable Mental Model:** A customs inspector receiving boxes of goods. Even if a box is labeled "123" or "true", it is still a cardboard container (a String). The inspector must physically open the box, verify the items inside, and transfer them into designated metal slots (Numbers) or boolean switches to ensure the factory machines can read the values correctly.
-- **The Trap:** Relying on implicit numeric coercion for state. For example, if a page query parameter is missing and evaluates to `undefined`, calling `Number(undefined)` yields `NaN`, which can crash chart components or offset parameters. Always define robust fallback values.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: URL query values are inherently strings. To normalize them into boolean or numeric types, we must perform explicit verification. For booleans, we compare the string value directly to the literal string `'true'`. For numbers, we cast via `Number()` or `parseFloat` while validating that the result is not `NaN`. In large production applications, this parsing is best done using schema validation libraries like Zod to ensure type-safe parameters."
+    const separator = pair.indexOf("=");
+    const rawName = separator === -1 ? pair : pair.slice(0, separator);
+    const rawValue = separator === -1 ? "" : pair.slice(separator + 1);
+    const name = decodeQueryComponent(rawName);
+    const value = decodeQueryComponent(rawValue);
 
-## 8. Active recall test
+    if (name in result) {
+      result[name] = Array.isArray(result[name])
+        ? [...result[name], value]
+        : [result[name], value];
+    } else {
+      result[name] = value;
+    }
+  }
 
-#### 1. What modern, built-in browser API handles query string parsing and serialization natively?
-`URLSearchParams`.
+  return result;
+}
 
-#### 2. What value does URLSearchParams.prototype.get() return if the queried parameter is completely missing from the query string?
-It returns `null`.
+console.log(parseQueryString("?tag=office&tag=quiet&redirect=https%3A%2F%2Fexample.com%2Fa%3Fx%3D1&debug"));
+// {
+//   tag: ["office", "quiet"],
+//   redirect: "https://example.com/a?x=1",
+//   debug: ""
+// }
+```
 
-#### 3. How do you retrieve all duplicate values associated with a single repeated key in a query string using URLSearchParams?
-By calling the `.getAll(key)` method, which returns a complete array of all corresponding value strings.
+This manual function is useful for understanding an interview exercise, but production code should normally use `URLSearchParams`. The native API has well-defined behavior for malformed percent escapes and serialization details that a small custom function can easily get wrong. If a custom grammar is required, define and test that grammar instead of quietly assuming it matches the platform API.
 
-#### 4. Why must raw query strings undergo decoding during the parsing phase?
-Because URLs are legally restricted to standard ASCII characters. Any special characters, symbols, or spaces are percent-encoded during URL transport, and must be translated back via decoding to prevent UI data corruption.
+Serialization is the reverse boundary. Pass values as strings and let the API encode separators and spaces:
 
-#### 5. What are the primitive data types of all values parsed directly from location.search?
-They are strictly primitive strings. Any numeric or boolean representations must be parsed explicitly.
+```js
+const params = new URLSearchParams();
+params.set("query", "wireless keyboard");
+params.append("tag", "office");
+params.append("tag", "quiet");
 
-## 9. Mistakes / traps
-- Forgetting URL decoding.
-- Losing repeated keys with Object conversion.
-- Treating all values as numbers.
-- Not handling empty query.
+const url = new URL("https://shop.example/products");
+url.search = params;
 
-## 10. Compare with related concepts
-- **URLSearchParams vs manual parser:** built-in robust API vs interview implementation.
-- **Query params vs route params:** optional view state vs path identity.
-- **Parse vs serialize:** read URL vs create URL.
+console.log(url.href);
+// https://shop.example/products?query=wireless+keyboard&tag=office&tag=quiet
+```
 
-## 11. Summary from memory
-Explain how to parse pagination/filter params safely.
+## 5. The Interview Questions — All of Them, Done Properly
 
-## 12. Spaced revision prompts
-- 1 day: Use URLSearchParams.
-- 3 days: Handle repeated keys.
-- 7 days: Implement basic parser.
-- 14 days: Parse typed filter state.
+**Q: What is the difference between `URLSearchParams` and `Object.fromEntries(new URLSearchParams(...))`?**
 
+`URLSearchParams` retains an ordered list of pairs and can retrieve all values with `getAll`. `Object.fromEntries` collapses that list into ordinary object properties, so duplicate names become last-write-wins. Use the object conversion only when that loss is intentional.
+
+**Q: Why does `URLSearchParams("q=hello+world").get("q")` return `"hello world"` but `decodeURIComponent("hello+world")` return `"hello+world"`?**
+
+`URLSearchParams` follows form-style query decoding, where `+` represents a space. `decodeURIComponent` only decodes percent escapes; it does not assign special meaning to `+`. A manual form parser must replace `+` before calling it.
+
+**Q: Why split a pair at the first `=` instead of calling `pair.split("=")`?**
+
+The value may contain an encoded or literal `=`. `redirect=https://example.com/a?x=1` has one key and a value containing another equals sign. Splitting at the first separator preserves the entire remainder as the value.
+
+**Q: What do missing, empty, and repeated parameters look like?**
+
+For `?flag&empty=&tag=a&tag=b`, `get("flag")` and `get("empty")` both return `""`; `has("flag")` is still true; and `getAll("tag")` returns `["a", "b"]`. A completely absent name makes `get` return `null`, not an empty string.
+
+**Q: Are query values automatically numbers or booleans?**
+
+No. They are strings. Parse a number with a deliberate rule such as `Number(value)` followed by `Number.isInteger` and range checks. For booleans, compare an allowed string such as `value === "true"`; never use `Boolean(value)` to interpret the text `"false"`.
+
+**Q: Can `new URLSearchParams` parse a full URL?**
+
+Not in the way many people expect. `new URLSearchParams("https://example.com/?q=react")` treats that entire string as query text, rather than first extracting the URL's search component. Use `new URL(fullUrl).searchParams`, or pass only `url.search` when you already have a URL string.
+
+**Q: Does parsing make a query parameter safe to use?**
+
+No. It only turns transport text into structured strings. A redirect target still needs an origin/path policy, a page number still needs bounds, and text inserted into HTML still needs context-appropriate output encoding. Treat every URL parameter as user-controlled input.
+
+## 6. The Traps — What Goes Wrong
+
+**Blindly using `Object.fromEntries`.** A multi-select UI serialized as `tag=office&tag=quiet` loses `office` when converted to an object. Read repeated fields with `getAll`, or intentionally accumulate them while parsing.
+
+**Decoding before finding separators.** `%26` represents data containing an ampersand. If the whole query is decoded before splitting, that data can be mistaken for a second pair. Find the raw pair boundaries first, then decode each name and value.
+
+**Using `split("=")` without a limit.** A URL, token, or expression can contain `=`. Use the first separator and keep the remainder intact.
+
+**Assuming missing and empty mean the same thing.** `get("page")` returning `null` means no `page` pair was present. Returning `""` means the pair existed without a value, such as `?page=`. Defaults and validation may choose to treat them alike, but the parser does not.
+
+**Calling `decodeURIComponent` without handling malformed input.** The global decoder can throw a `URIError` for malformed percent escapes. `URLSearchParams` has its own forgiving decoding behavior. If a custom parser uses the global decoder, decide whether malformed input should be rejected or converted to a controlled error; do not let an unexpected exception become a 500 response or a broken page.
+
+**Converting types too early or too loosely.** `Number("")` is `0`, and `Boolean("false")` is `true`. Validate presence, syntax, range, and allowed strings before constructing application state.
+
+**Confusing query strings with fragments.** The server receives the query component in an HTTP request, but the `#fragment` is handled by the browser and is not sent as part of that request. If a client feature stores state after `#`, `location.search` will not contain it.
+
+**Putting secrets in query parameters.** Query strings can appear in browser history, copied links, referrer data, access logs, and analytics. Parsing a value correctly does not make it appropriate for credentials, session tokens, or other sensitive data.
+
+## 7. Compare With Related Concepts
+
+**`URLSearchParams` vs a manual parser.** The built-in API supplies platform-defined parsing, repeated-value operations, and serialization. A manual parser exposes the algorithm and can support a deliberately different output shape, but it owns every edge case and must be tested. Use `URLSearchParams` for normal URL query work; implement manually when the exercise or a non-standard grammar specifically requires it.
+
+**`get` vs `getAll`.** `get` is for a field whose feature contract uses one value and returns the first occurrence. `getAll` is for repeated filters, checkboxes, and other multi-value fields. Choose based on the data contract, not whichever method is shorter.
+
+**Query parameters vs route parameters.** `/products/42` uses the path to identify the resource; `/products?sort=price&page=2` uses the query to modify the representation or view. Route parameters are usually required identity components, while query parameters are optional input—but both are untrusted strings that require validation.
+
+**Parsing vs validation.** Parsing answers “what pairs did the URL contain?” Validation answers “is this value allowed for this operation?” Keep them separate so a syntactically valid `page=999999` or `redirect=https://other.example` cannot slip through as trusted state.
+
+**Query strings vs request bodies.** A query string is useful for safe-to-share, cache-visible selection state such as search, filters, and pagination. A request body is generally a better place for larger or sensitive input, but it still requires validation and does not automatically become safe merely because it is not in the URL.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Treat the query as an ordered manifest, not a one-value object: split the raw lines first, decode each item second, preserve duplicate labels when the feature needs them, and type-check only at the application boundary. `URLSearchParams` is the receiving desk; validation is the security guard who decides whether the received value may enter.
