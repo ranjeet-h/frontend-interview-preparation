@@ -1,122 +1,290 @@
 # Detached DOM Nodes
 
-## Detailed explanation
-Detached DOM node is node removed from document but still referenced by JavaScript. Because reference remains reachable, garbage collector cannot free node or its subtree.
+## 1. Why This Exists — The Problem First
 
-Common causes: caches, closures, event listeners, old component refs, third-party widgets.
+A single-page app can open and close the same modal hundreds of times without reloading. The screen looks clean after each close, yet the tab's memory keeps climbing and typing eventually becomes sluggish. The usual surprise is that “removed from the page” and “eligible for garbage collection” are different events: a stale cache, closure, observer, or ref can still make an old DOM subtree reachable.
 
-## 1. One-line mental model
-Detached DOM node is removed from page but still kept alive by JS reference.
+Detached DOM nodes matter because they turn an ordinary UI lifecycle bug into a production memory leak. The browser has no way to infer that a reachable node is no longer useful to your feature; your code must release the reference that keeps it alive.
 
-## 2. Problem it solves
-Explains memory leaks where DOM appears gone but heap keeps growing.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Node removed from DOM.
-- JS still references it.
-- GC cannot collect it.
-- Subtree/listeners may stay alive.
-- Clear references/listeners on cleanup.
+Imagine a theatre striking a stage set after a performance. The crew removes the set from the stage, so the audience can no longer see it. That is removing a DOM node from its document parent.
 
-## 4. Visual / analogy
-Taking sign off wall but keeping it tied with rope.
+Now imagine the props manager has put a key to that set in a permanent inventory drawer. The set is off stage, but the theatre still has a path to it through the inventory. Garbage collection is the cleanup crew: it can discard only objects with no path from a live store, worker, callback, or other root. The inventory entry is a strong JavaScript reference; the removed set is the detached DOM subtree; the cleanup ticket is the code that deletes the entry and unregisters any work associated with the set.
 
-```txt
-document removed node
-cache still points to node
-node not collected
+The mapping is deliberately precise. Removing a node changes whether it belongs to the live document tree. Clearing the cache, listener, timer, observer, or closure changes whether the node is still reachable. Only the second change makes collection possible, and even then collection may happen later according to the browser's garbage-collection schedule.
+
+## 3. How It Actually Works — The Full Explanation
+
+The important invariant is:
+
+> A node can be disconnected from `document` and still be retained by JavaScript. A node that is no longer reachable can be collected, even if no code explicitly sets it to `null`.
+
+Consider this lifecycle:
+
+```text
+create node → append node → remove node → release every strong reference → collect later
 ```
 
-## 5. Minimal example
+When `panel.remove()` runs, the browser removes `panel` from its parent. It does not promise to immediately destroy the node, its descendants, their event handlers, or every JavaScript object associated with them. A variable, array, `Map`, closure, observer, timer callback, or third-party widget may still point at part of that structure.
 
-```js
-let saved = document.querySelector("#panel");
-saved.remove();
-// saved still keeps node alive
+The garbage collector works from roots such as global objects, active execution state, timers, and host-managed objects. It follows references from those roots. If it can reach a removed element, that element remains live. If a retained descendant links back to its detached DOM structure, the retained memory can include much more than the one element you expected to cache. The exact native memory accounting is browser-dependent, so treat the retaining path shown by DevTools as the evidence rather than assuming a fixed amount of memory per node.
+
+**Removal is not the same as hiding**
+
+These operations have different meanings:
+
+- `element.remove()` disconnects the element from its parent. It is no longer rendered as part of that document tree, but JavaScript can still use the object.
+- `element.hidden = true` or `display: none` keeps the element in the DOM while making it absent from the rendered view. This is not a detached node.
+- `element.replaceChildren()` removes the old children from that parent. A child can remain alive if another strong reference still reaches it.
+
+Keeping a node in a bounded cache can be intentional. It becomes a leak when the application no longer needs the node and the cache has no removal or eviction path.
+
+**Where the retaining path commonly comes from**
+
+The most common pattern is a long-lived owner holding a short-lived view:
+
+```text
+window / app store / timer
+        ↓
+closure, array, Map, observer, or widget instance
+        ↓
+removed element or one of its descendants
 ```
 
-## 6. Real-world example
+Global listeners are especially easy to miss. A callback registered on `window` remains registered until it is removed, aborted, or replaced according to the listener API. If that callback closes over a panel, the listener can keep the panel reachable after the panel leaves the document. The issue is not that every listener on a removed element automatically leaks; an isolated, unreachable group can still be collected. The issue is an active reference path from something long-lived.
 
-```js
-return () => {
-  widget.destroy();
-  widgetRef.current = null;
-};
+The same reasoning applies to `Map`: its keys and values are strong references. `WeakMap` holds its object keys weakly, so it is useful for metadata associated with a node when the metadata should not keep that node alive. Putting the node as a value in an ordinary `Map`, or in a `WeakMap` value, does not make that node weak.
+
+**Cleanup breaks the path; it does not force collection**
+
+Cleanup is lifecycle work:
+
+1. Stop the widget, subscription, observer, timer, or request that owns the view.
+2. Remove listeners using the same callback and capture setting, or abort the controller used to register them.
+3. Delete node entries from strong caches and clear fields that no longer need the node.
+4. Let the browser collect the now-unreachable objects later.
+
+Setting a variable to `null` only removes that one edge. If an array, closure, or observer still has another edge, the node remains reachable. Conversely, no explicit null assignment is required if the containing scope ends and no other reference survives.
+
+**How DevTools confirms the diagnosis**
+
+Use Chrome DevTools' Memory panel to compare a baseline with the same user flow repeated several times:
+
+1. Force garbage collection when the DevTools setup allows it, then take a baseline heap snapshot.
+2. Open and close the view repeatedly so a real leak becomes easier to distinguish from one-time allocations.
+3. Force collection again and take a second snapshot.
+4. Compare the snapshots and inspect retained detached DOM entries or the relevant element type.
+5. Follow the **Retainers** path back to the array, closure, listener, observer, or widget that still owns the node.
+
+A snapshot is evidence of a memory graph at a point in time, not proof that every object shown is a leak. A node may be waiting for a later collection, and a cache may be intentionally bounded. Reproduce the same flow, collect at comparable points, and verify the owner before changing code.
+
+## 4. Real Code — See It Working
+
+**A removed node retained by a strong cache**
+
+Save this as `detached-cache.html` and open it in a browser. Click **Create and remove** several times, then click **Release cache**. The page still looks empty in both cases; the difference is whether the module-level array retains each removed panel.
+
+```html
+<!doctype html>
+<meta charset="utf-8" />
+<title>Detached node cache demo</title>
+<button id="remove">Create and remove</button>
+<button id="release">Release cache</button>
+<output id="status" aria-live="polite"></output>
+<main id="mount"></main>
+
+<script>
+  const mount = document.querySelector("#mount");
+  const status = document.querySelector("#status");
+  const removedPanels = [];
+
+  document.querySelector("#remove").addEventListener("click", () => {
+    const panel = document.createElement("section");
+    panel.innerHTML = "<h2>Temporary report</h2><p>Report contents</p>";
+    mount.append(panel);
+
+    // The panel leaves the document, but the array is still a strong path to it.
+    panel.remove();
+    removedPanels.push(panel);
+    status.textContent = `${removedPanels.length} removed panel(s) still cached`;
+  });
+
+  document.querySelector("#release").addEventListener("click", () => {
+    // Releasing this owner makes the panels eligible for collection if no other
+    // strong reference remains. Collection itself is not synchronous.
+    removedPanels.length = 0;
+    status.textContent = "Cache released; collectable memory may be reclaimed later";
+  });
+</script>
 ```
 
-## 7. Common interview questions
+**Cleanup for a global listener and a node cache**
 
-#### What is a detached DOM node?
-- **The Engine Mechanism (Why it behaves this way):** A detached DOM node is a DOM element (an instance of the C++ `Node` class in the browser's rendering engine, such as Blink or WebKit) that has been programmatically removed from the active document layout tree (e.g., via `element.remove()` or `parent.removeChild(element)`), but is still kept alive in memory because it remains reachable from the JavaScript runtime heap. In the V8 engine, standard garbage collection is based on *reachability analysis* starting from roots (like the global `window` object, the Call Stack frames, or active closure scopes). If a JavaScript object (such as a variable, a cache array, or a closure scope) holds a direct or indirect reference to a DOM node, the GC must assume the node is still in use and cannot reclaim it.
-- **The Unforgettable Mental Model:** A balloon tied to a post in a park. If you cut the string tying the balloon to the post (removing the node from the document body), the balloon should float away (be garbage collected). But if you are still holding onto a separate string attached to the balloon in your hand (a JavaScript variable reference), the balloon remains trapped on the ground next to you.
-- **The Trap:** Believing that because you removed a parent container from the DOM, all of its child elements are automatically freed. If your JavaScript code holds a reference to even a *single* deeply nested child span (e.g., `const span = parent.querySelector('span')`), the entire parent tree structure above that child is pinned in memory because the child maintains a C++ pointer to its parent (`parentNode`), preventing the GC from collecting *any* node in that entire subtree.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'A detached DOM node is a DOM element that has been disconnected from the active document tree, but remains pinned in memory because it is still reachable from the JavaScript execution context. Because the browser’s engine links DOM nodes bidirectionally to JS wrappers, holding a reference to any single element prevents the garbage collector from reclaiming that element, its children, or its entire parent DOM subtree.'"
+This complete page shows a small component-style lifecycle. The controller removes the `window` listener, and `destroy()` drops the strong node reference. The same cleanup shape works when a real component is unmounted.
 
-#### How does it cause a memory leak?
-- **The Engine Mechanism (Why it behaves this way):** A memory leak occurs when memory that is no longer needed by the application is not returned to the operating system. When a DOM node is detached but retained by JS, the browser engine must preserve the C++ DOM object representation, the matching JavaScript wrapper object in the V8 heap, and all associated inline styles, event listener structures, and children. In large applications (like Single Page Applications with infinite scrolling or heavy dashboard grids), creating, detaching, and leaking thousands of nodes (and their nested subtrees) during route changes causes the browser process's resident set size (RSS) memory to climb exponentially, eventually leading to extreme tab sluggishness and an "Out of Memory" crash.
-- **The Unforgettable Mental Model:** Renting hotel rooms. When a guest checks out, they leave their luggage in the room, but the hotel fails to clear it. If this happens with every guest, eventually all rooms in the hotel (available heap memory) are packed full of old luggage (detached DOM nodes), and new guests can no longer be checked in, forcing the hotel to shut down (tab crash).
-- **The Trap:** Storing references to elements inside global lookup tables or event handlers without clearing them. For example, a global caching system that indexes elements by ID to speed up access, but never deletes the entries when those elements are removed from the layout.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Detached DOM nodes cause memory leaks because they prevent the Garbage Collector from freeing the substantial memory footprints of the elements, their subtrees, and their styles. If we continually mount and unmount components—such as modals, grids, or charts—while keeping active JS references to them in caches, closures, or event handlers, our heap allocation will grow monotonically, leading to severe performance degradation and ultimate browser process crashes.'"
+```html
+<!doctype html>
+<meta charset="utf-8" />
+<title>Detached node cleanup demo</title>
+<button id="open">Open panel</button>
+<button id="close">Close panel</button>
+<main id="mount"></main>
 
-#### How do we find them in DevTools?
-- **The Engine Mechanism (Why it behaves this way):** We detect detached DOM nodes by analyzing heap snapshots inside the **Chrome DevTools Memory Panel**:
-  1. Open Chrome DevTools, navigate to the **Memory** tab, and select **"Heap snapshot"**.
-  2. Take an initial snapshot, perform the suspicious action (e.g., opening and closing a modal multiple times), run Garbage Collection manually by clicking the trash can icon, and take a second snapshot.
-  3. Filter the second snapshot's class list by typing **"Detached"** in the class filter box. Look for constructor names like `Detached HTMLDivElement` or `Detached HTMLElement`.
-  4. Expand the entry and inspect the **Retainers panel** at the bottom. This displays the reachability chain, showing the exact JavaScript reference (such as a variable inside a closure, an item in an array, or a property on a global object) that is actively holding the node in memory.
-- **The Unforgettable Mental Model:** A high-precision X-ray machine. When you scan the patient (heap snapshot), you see a foreign object inside them (a detached node). The retainer trace is like tracing the physical wire that runs from the foreign object directly to the battery pack (the JS root variable) keeping it powered.
-- **The Trap:** Forgetting to run garbage collection manually before taking the second heap snapshot. Modern engines run GC lazily. If you don't force a GC cycle, you may see "detached" nodes that are actually just waiting for the next scheduled GC pass and are not true memory leaks.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'To identify detached DOM nodes, we capture Heap Snapshots in Chrome DevTools before and after executing a component lifecycle. After manually forcing garbage collection, we filter the snapshot for the term `Detached`. DevTools will list all detached nodes. We then analyze the Retainers panel for the yellow-highlighted variables to trace the exact allocation path and identify the closure or global reference anchoring the node in memory.'"
+<script>
+  const mount = document.querySelector("#mount");
+  let activePanel = null;
+  let stopPanel = () => {};
 
-#### How do we clean them up?
-- **The Engine Mechanism (Why it behaves this way):** To clean up detached DOM nodes, you must break the reachability chain from the GC roots to the DOM object:
-  1. **Nullify References:** Explicitly set any variable, object property, or array index holding the element to `null` or `undefined` (e.g., `elementRef = null`) once the element is removed.
-  2. **Unbind Event Listeners:** Call `element.removeEventListener()` to release closures that reference the element, or rely on automated framework cleanup hooks (like React's `useEffect` cleanup or Vue's `onUnmounted`).
-  3. **Use Weak References:** When caching elements or binding data, use `WeakMap` or `WeakSet`. Because `WeakMap` keys are held *weakly*, they do not prevent garbage collection: if a DOM node is removed from the document and has no other strong references, V8 automatically reclaims the node and sweeps the entry from the WeakMap.
-- **The Unforgettable Mental Model:** Cutting the physical cables holding a suspension bridge. Once you cut the steel cables (nullify references and clear event handlers), the bridge immediately collapses and falls into the river (is swept away by GC).
-- **The Trap:** Relying on `WeakMap` values instead of keys. In a `WeakMap`, only the *keys* are weakly referenced. If you store the DOM node as a *value* (e.g., `map.set(id, domNode)`), the reference remains strong, and the node will leak. You must store the DOM node as the *key* (e.g., `map.set(domNode, metadata)`).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'We clean up detached DOM nodes by systematically breaking the reference paths that link GC roots to our elements. This means nullifying DOM-referencing variables in our destructors, unbinding event listeners, and using `WeakMap` or `WeakSet` instead of strong objects for caching. This ensures that as soon as a node is removed from the DOM, it becomes unreachable and is instantly swept in the next garbage collection cycle.'"
+  function createPanel() {
+    const panel = document.createElement("section");
+    panel.textContent = "Resize the window, then close this panel.";
+    mount.append(panel);
 
-#### How do event listeners relate to this?
-- **The Engine Mechanism (Why it behaves this way):** Event listeners are a major source of detached DOM node leaks due to *closures*. When you call `element.addEventListener('click', handler)`, the browser engine creates a listener binding. If `handler` is a closure that captures outer variables (such as an active component instance or outer scope states), those outer variables are retained. Conversely, if a parent container is removed, but an outer global variable is still listening to a child's event, the event listener registry retains a reference to the child element to dispatch events. The reference from the event registry to the element's callback acts as a strong retainer link, keeping the node alive in memory even if it has been removed from the DOM.
-- **The Unforgettable Mental Model:** A walkie-talkie connection. If you leave the walkie-talkie turned on and tuned to a channel (the event listener registration), the power remains active and drains the battery (retains memory), even if you have walked away from the walkie-talkie itself.
-- **The Trap:** Creating anonymous inline event handlers on global elements, such as `window.addEventListener('resize', () => this.handleResize())` inside a component. When the component unmounts and its DOM is removed, the global `window` object still retains the anonymous function in its listener array, which in turn retains `this` (the component instance), causing the entire component DOM tree to leak.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: 'Event listeners are a primary vector for detached DOM leaks because of closure retention. When an event listener is registered, the callback retains its lexical scope, which often includes references to parent components or sibling nodes. If we fail to remove listeners from global objects like `window` or `document` when a local element is destroyed, the global listener keeps the callback—and consequently the entire local DOM tree—alive in memory forever.'"
+    const controller = new AbortController();
+    const onResize = () => {
+      panel.dataset.width = String(window.innerWidth);
+    };
+    window.addEventListener("resize", onResize, { signal: controller.signal });
 
-## 8. Active recall test
+    return {
+      destroy() {
+        // Abort removes the long-lived window listener and its closure path.
+        controller.abort();
+        panel.remove();
+      },
+      panel,
+    };
+  }
 
-#### 1. Is the node in the document?
-- **Explanation/Answer:** No, it has been removed from the active layout document tree, so it is no longer visible or rendered on the page.
+  document.querySelector("#open").addEventListener("click", () => {
+    if (activePanel) return;
+    activePanel = createPanel();
+    stopPanel = () => {
+      activePanel?.destroy();
+      activePanel = null;
+      stopPanel = () => {};
+    };
+  });
 
-#### 2. Why is it not collected?
-- **Explanation/Answer:** Because a JavaScript object, variable, closure, or event listener registry still holds a reachable reference to it, preventing the Garbage Collector from freeing its memory.
+  document.querySelector("#close").addEventListener("click", () => {
+    stopPanel();
+  });
+</script>
+```
 
-#### 3. What references can retain it?
-- **Explanation/Answer:** References stored in global variables, caches, class properties, closures, active call stack frames, or un-removed event listeners.
+**Weak metadata without owning the node**
 
-#### 4. How do we clean up a widget?
-- **Explanation/Answer:** By calling its destroy method, unbinding all event listeners, and setting any DOM element references or instance pointers to `null`.
+```html
+<!doctype html>
+<meta charset="utf-8" />
+<title>Weak DOM metadata demo</title>
+<main id="mount"></main>
 
-#### 5. What tool finds them?
-- **Explanation/Answer:** The Chrome DevTools Memory Panel, specifically by capturing Heap Snapshots and searching for the class term `Detached`.
+<script>
+  const metadataByNode = new WeakMap();
 
-## 9. Mistakes / traps
-- Assuming `.remove()` frees memory instantly.
-- Keeping DOM nodes in global arrays.
-- Forgetting third-party widget cleanup.
-- Ignoring retained listeners.
+  function rememberMetadata(node, metadata) {
+    // The node is the weak key. Metadata lookup does not keep the node alive.
+    metadataByNode.set(node, metadata);
+  }
 
-## 10. Compare with related concepts
-- **Detached node vs hidden node:** removed from document vs still in DOM.
-- **Memory leak vs normal cache:** unintended retention vs bounded useful storage.
-- **GC vs cleanup:** GC needs unreachable data; cleanup removes refs.
+  function demonstrateWeakMetadata() {
+    const temporaryButton = document.createElement("button");
+    temporaryButton.textContent = "Temporary toolbar button";
+    document.querySelector("#mount").append(temporaryButton);
+    rememberMetadata(temporaryButton, { source: "temporary-toolbar" });
+    temporaryButton.remove();
+  }
 
-## 11. Summary from memory
-Explain how removed modal DOM can leak through stored ref.
+  demonstrateWeakMetadata();
+  // Do not expect metadataByNode.size or immediate deletion: WeakMap is not
+  // enumerable, and collection timing is controlled by the browser.
+</script>
+```
 
-## 12. Spaced revision prompts
-- 1 day: Define detached node.
-- 3 days: Give leak example.
-- 7 days: Cleanup widget refs.
-- 14 days: Use heap snapshot idea.
+## 5. The Interview Questions — All of Them, Done Properly
 
+**Q: What is a detached DOM node?**
+
+A DOM node that is no longer connected to the document tree but is still reachable through a live reference. It is not automatically a leak: it becomes a leak when the application keeps it, or the data reachable from it, after the feature no longer needs it.
+
+**Q: Does calling `remove()` immediately free the element?**
+
+No. `remove()` disconnects the element from its parent. If no strong reference remains, the element becomes eligible for garbage collection, but collection is scheduled by the browser and is not synchronous. If a cache, closure, listener, observer, or widget still reaches it, it remains alive.
+
+**Q: Can an event listener cause a detached-node leak?**
+
+Yes, but the important detail is where the listener is registered and what its callback retains. A listener on `window` or `document` can remain active after a component's panel is removed, and its closure can retain the panel. Store the callback or use an `AbortSignal` so teardown can remove the registration. Do not claim that any listener on any removed node is automatically a leak; reachability is the deciding factor.
+
+**Q: What is the difference between `Map` and `WeakMap` for DOM metadata?**
+
+`Map` strongly retains its keys and values, so a node used as a key can stay alive until that entry is deleted. `WeakMap` weakly holds object keys, so a key does not stay alive solely because of the `WeakMap`. The node must be the key; storing a node as a value in an ordinary map is still a strong reference. `WeakMap` is also not enumerable, has no `size`, and does not provide a way to observe when collection happens.
+
+**Q: How do you debug detached DOM nodes in production-like flows?**
+
+Reproduce the lifecycle repeatedly, compare heap snapshots after comparable garbage-collection points, and inspect the retaining path. The goal is to identify the owner that should have released the node, not merely to count objects named “Detached.” Then fix the lifecycle and repeat the same measurement to verify that old instances no longer accumulate.
+
+**Q: Does holding one child retain the whole detached subtree?**
+
+It can retain the surrounding detached DOM structure because the browser's DOM objects are connected, but the exact retained set and native memory cost depend on the engine and references involved. Treat the DevTools Retainers view as the source of truth. The safe engineering rule is not to keep any node from a removed subtree unless the feature intentionally needs it.
+
+**Q: Is this a React-specific problem?**
+
+No. React, Vue, and other frameworks can remove DOM nodes during unmount, but JavaScript code can still retain those nodes through refs, maps, callbacks, third-party widgets, or global listeners. Framework cleanup hooks help coordinate teardown; they do not change the browser's reachability rule.
+
+## 6. The Traps — What Goes Wrong
+
+**“The screen is empty, so the memory is gone.”**
+
+Visual absence only tells you that the node is not currently rendered as part of that document tree. Inspect the references that survive the close or unmount operation. A cache entry or global callback can keep the old node alive while the user sees nothing.
+
+**“Set every ref to `null` and the leak is fixed.”**
+
+That removes one reference, not necessarily every reference. The same node may also be in a `Map`, captured by a listener closure, owned by a `ResizeObserver`, or held by a widget. Find the retaining path and clean up the owner that created it.
+
+**“A `WeakMap` makes every value weak.”**
+
+Only object keys are weak. `weakMap.set(id, node)` is not valid because primitive keys are rejected, and `weakMap.set(objectId, node)` still does not make the value weak. Use `weakMap.set(node, metadata)` when node lifetime should not be extended by the metadata table.
+
+**“Every detached node shown in one snapshot is a leak.”**
+
+A snapshot may include objects that are eligible for collection but have not been collected yet, or nodes intentionally retained by a cache. Compare repeated flows after comparable collection points and inspect retainers before diagnosing a leak.
+
+**“Removing a listener with a new function works.”**
+
+It does not. `removeEventListener("resize", () => {})` creates a different function object from the one registered. Keep the original callback, use the same capture setting, or register with an `AbortSignal` and abort it during teardown.
+
+```html
+<!doctype html>
+<meta charset="utf-8" />
+<title>Event listener cleanup demo</title>
+<output id="status" aria-live="polite">Listener fixture loaded</output>
+
+<script>
+  const status = document.querySelector("#status");
+  const onResize = () => {
+    status.textContent = `Window width: ${window.innerWidth}px`;
+  };
+  window.addEventListener("resize", onResize);
+  window.removeEventListener("resize", onResize); // Same function object.
+</script>
+```
+
+## 7. Compare With Related Concepts
+
+| Concept | Key difference | Rule for choosing or diagnosing |
+|---|---|---|
+| Detached DOM node | Removed from its document parent but still possibly reachable | Look for stale owners after DOM removal |
+| Hidden DOM node | Still in the DOM, but not currently rendered or visible | Hide it when preserving the live node is intentional |
+| Garbage collection | Reclaims objects that are unreachable | Break strong references; do not expect immediate collection |
+| Memory leak | Unneeded memory remains reachable over time | Confirm repeated growth and inspect retaining paths |
+| `Map` | Strongly retains keys and values | Use when the cache intentionally owns entries and has eviction/cleanup |
+| `WeakMap` | Weakly holds object keys and is not enumerable | Attach metadata without making the key's lifetime longer |
+| `removeEventListener` | Removes one matching listener registration | Use the same event type, callback object, and capture setting |
+| Heap snapshot | Point-in-time view of retained objects and references | Compare snapshots to find what a lifecycle failed to release |
+| Performance recording | Timeline of tasks, rendering, allocations, and GC activity | Use it for runtime jank and allocation behavior, not exact retainers |
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Taking a panel off stage does not throw it away if the props manager still has its key. `remove()` cuts the panel out of the document; cleanup removes every remaining key so the browser's cleanup crew can reclaim it later.
