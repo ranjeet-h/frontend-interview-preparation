@@ -1,134 +1,242 @@
 # Race Conditions Inside Effects
 
-## Detailed explanation
-A race condition inside an effect happens when multiple async operations are started, but they finish in a different order than expected. A common example is search or detail pages where request A starts, request B starts later, but request A finishes last and overwrites B's newer result.
+## 1. Why This Exists — The Problem First
 
-Race conditions are fixed by cancellation, ignoring outdated responses, or delegating server state to libraries that manage request identity and cancellation.
+Picture a product search page. The user types `rea`, then `read`, then `react`. Each change starts a request. The UI does not care which request was started first; it cares that the results match the query currently on screen.
 
-## 1. One-line mental model
-Effect race conditions happen when older async work finishes after newer async work and updates state incorrectly.
+Now suppose the `react` request returns quickly, so the user sees the right results, but the older `rea` request finishes a moment later. If every response blindly calls `setResults`, the screen silently goes backward and shows results for `rea`. Nothing crashed. The bug is that an old operation was allowed to write into new UI state.
 
-## 2. Problem it solves
-Fast-changing inputs can trigger overlapping requests with out-of-order results.
+This is a race condition inside an effect: overlapping async work competes to update state, and completion order is not the same as “which result is current.” The same failure appears in route changes, filters, autocomplete, profile panels, and any component that starts work when a changing dependency changes.
 
-## 3. Core idea
-- Effects can start async work.
-- Dependencies may change before work finishes.
-- Old responses can overwrite new state.
-- Cleanup can mark old work inactive or abort it.
-- Query libraries handle this better for server state.
+## 2. The Analogy — Make It Obvious
 
-## 4. Visual / analogy
-It is like ordering two taxis: the first one arrives late after the second, but you accidentally get into the wrong one.
+Imagine a restaurant where a customer changes their order while the kitchen is busy. The waiter sends order ticket A for “vegetable pasta.” Before it is ready, the customer changes the order and the waiter sends ticket B for “mushroom risotto.” Ticket B is prepared first and served. Then ticket A arrives late. If the table accepts every plate that arrives, the customer ends up with the old meal.
 
-```mermaid
-sequenceDiagram
-  participant UI
-  participant A as Request A
-  participant B as Request B
-  UI->>A: start old request
-  UI->>B: start new request
-  B-->>UI: returns first
-  A-->>UI: returns later and overwrites state
-```
+The customer’s current order is the component’s latest render and dependency values. Each ticket is one effect run. The kitchen is the server and network; it can finish tickets in any order. A plate is a resolved promise callback that is about to call `setState`.
 
-## 5. Minimal example
+The restaurant needs a rule: only the ticket that still represents the current order may be served. React cleanup gives each old effect run a chance to mark its ticket obsolete. An ignore flag is the waiter checking the ticket before serving it. An `AbortController` is a cancellation message sent to the kitchen so it can stop preparing an obsolete ticket when the kitchen and transport support cancellation.
+
+The important part of the analogy is not “async is slow.” It is that there are multiple independent tickets and no automatic ordering guarantee between them.
+
+## 3. How It Actually Works — The Full Explanation
+
+When a component renders with `query = "react"`, React commits that render and runs its effect. The effect starts request A. Later, the query changes to `"react hooks"`; React commits another render. Because the dependency changed, React runs the cleanup belonging to the first effect instance before running the new effect. The new effect starts request B.
+
+Each effect instance captures the dependency values from the render snapshot that created it. Cleanup invalidates that particular effect instance, but it does not update the values already captured by its callbacks; an old callback still sees the old `query`, which is why it must lose permission to commit rather than somehow become current.
+
+At this point, A and B are both in flight. They are not made sequential by React. The browser’s networking layer, the server, caches, payload sizes, connection reuse, and failures all affect when each promise settles. If B settles first, its callback runs in a later JavaScript turn and stores the new result. If A settles afterward, its callback can still run unless the code has made A irrelevant or cancelled it.
+
+The core invariant is:
+
+> Only work associated with the currently selected input may commit a result to the current component state.
+
+There are two common ways to preserve that invariant.
+
+An ignore flag invalidates the effect instance. Each invocation creates its own lexical variable, such as `let active = true`. Cleanup changes that variable to `false`. The callback closes over the variable from its own effect invocation, so an old callback sees `false` while the newest effect’s callback sees its own `true`. The request still uses network and server resources, but its result is ignored.
+
+`AbortController` asks an abort-aware API, most commonly `fetch`, to stop observing the request. The controller must be created inside the effect because a controller is one-shot: once aborted, its signal remains aborted and cannot be reset. Cleanup calls `abort()`. `fetch` then rejects with an `AbortError`, which is expected control flow and should not become a visible “Search failed” message.
+
+Cancellation and ignoring are related but not identical. Aborting prevents the client from continuing to consume the response when the API honors the signal; it does not undo server-side work that already happened, and it does not replace the final state guard. A custom client may accept a signal but fail to propagate it. A promise that is not cancellable can only be ignored.
+
+Cleanup also runs when the component unmounts. That matters because an async callback may settle after the component that started it is gone. In modern React, the old “setState on an unmounted component” warning is not a reliable definition of the bug; the real concern is leaked work, wasted resources, and stale or invalid side effects. Cleanup is where subscriptions, timers, and request cancellation belong.
+
+Development Strict Mode can make this easier to notice: React may perform an extra setup/cleanup cycle to expose effects that do not clean up correctly. That is not the same as a production user typing twice, but correct cleanup must handle both. Also, changing a dependency does not cancel arbitrary promises automatically. React controls effect setup and cleanup; it does not control the async operation you started.
+
+`startTransition` addresses a different part of the problem. If rendering a large result list is non-urgent, wrapping the state update that displays those results in `startTransition` lets React prioritize urgent updates such as the user’s input and mark the result render as lower priority. With `useTransition`, the UI can expose an `isPending` loading indicator while that non-urgent render is pending. It does not cancel the request, change which response finishes first, or invalidate an older effect instance. Keep the abort and/or current-result guard; transition priority controls rendering work after a result is chosen, not request ownership.
+
+For server state, a query library can make request identity a first-class concept. A key such as `['search', query]` identifies the data. The library can deduplicate requests, cache results, track loading and error state, and pass an abort signal to a query function. That reduces the amount of lifecycle bookkeeping in a component, but the query function still needs to honor cancellation and the server response still needs authorization and validation on the backend.
+
+## 4. Real Code — See It Working
+
+This first example is intentionally unsafe. It is valid React code, but an older response can overwrite a newer one:
 
 ```tsx
-React.useEffect(() => {
-  let active = true;
-  fetchUser(id).then((user) => {
-    if (active) setUser(user);
+import { useEffect, useState } from "react";
+
+type Result = { id: string; title: string };
+
+declare function searchProducts(query: string): Promise<Result[]>;
+
+export function UnsafeSearch({ query }: { query: string }) {
+  const [results, setResults] = useState<Result[]>([]);
+
+  useEffect(() => {
+    void searchProducts(query).then((nextResults) => {
+      // Unsafe: this callback does not know whether query is still current.
+      setResults(nextResults);
+    });
+  }, [query]);
+
+  return <pre>{JSON.stringify(results, null, 2)}</pre>;
+}
+```
+
+The following component is self-contained apart from React and can be pasted into a browser-based React/TypeScript app. The fake API deliberately makes shorter queries slower, so an old request is likely to finish last. The `active` guard preserves correctness even though the fake promise cannot be cancelled:
+
+```tsx
+import { useEffect, useState } from "react";
+
+type Result = { id: string; title: string };
+
+function fakeSearch(query: string): Promise<Result[]> {
+  const delay = Math.max(80, 500 - query.length * 70);
+
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      resolve([{ id: query, title: `Result for “${query}”` }]);
+    }, delay);
   });
-  return () => {
-    active = false;
-  };
-}, [id]);
+}
+
+export function SafeSearchWithIgnore({ query }: { query: string }) {
+  const [results, setResults] = useState<Result[]>([]);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setError(null);
+
+    void fakeSearch(query)
+      .then((nextResults) => {
+        // Cleanup flips only this effect run's variable to false.
+        if (active) setResults(nextResults);
+      })
+      .catch((reason: unknown) => {
+        if (active) setError(reason instanceof Error ? reason : new Error("Search failed"));
+      });
+
+    return () => {
+      // The request may still finish, but it no longer owns the state update.
+      active = false;
+    };
+  }, [query]);
+
+  if (error) return <p>{error.message}</p>;
+  return <pre>{JSON.stringify(results, null, 2)}</pre>;
+}
 ```
 
-## 6. Real-world example
+For a real `fetch`, use a new controller per effect run and treat abort as expected:
 
 ```tsx
-React.useEffect(() => {
-  const controller = new AbortController();
-  searchApi.search(query, { signal: controller.signal }).then(setResults);
-  return () => controller.abort();
-}, [query]);
+import { useEffect, useState } from "react";
+
+type Result = { id: string; title: string };
+
+export function SafeFetchSearch({ query }: { query: string }) {
+  const [results, setResults] = useState<Result[]>([]);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setError(null);
+
+    void fetch(`/api/products?query=${encodeURIComponent(query)}`, {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+        return response.json() as Promise<Result[]>;
+      })
+      .then((nextResults) => {
+        if (!controller.signal.aborted) setResults(nextResults);
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setError(reason instanceof Error ? reason : new Error("Search failed"));
+      });
+
+    return () => controller.abort();
+  }, [query]);
+
+  if (error) return <p>{error.message}</p>;
+  return <pre>{JSON.stringify(results, null, 2)}</pre>;
+}
 ```
 
-## 7. Common interview questions
-#### What is a race condition in effects?
-- **The Engine Mechanism (Why it behaves this way):** A race condition occurs when an effect starts async work (like a fetch), the dependency changes before that work completes, and a new async operation starts. Both operations run concurrently, but their completion order is non-deterministic — the older, slower request may finish after the newer one and overwrite its result with stale data. The Fiber scheduler doesn't coordinate async operations across effect re-runs; each effect instance is independent.
-- **The Unforgettable Mental Model:** The **Two-Courier Problem**. You send Courier A with instructions, then change your mind and send Courier B with updated instructions. If Courier A takes a longer route but arrives last, the recipient follows outdated instructions.
-- **The Trap:** Assuming network requests complete in the order they were sent. Network latency, server processing time, and response size all affect completion order independently of start order.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A race condition in effects happens when async operations started by an effect complete out of order. For example, a search input triggers request A for 'app', then request B for 'apple'. If A takes longer and finishes after B, the UI shows results for 'app' instead of 'apple'. The fix is to cancel outdated requests or ignore their responses."
+The last state check is deliberate. Aborting usually rejects `fetch`, but a response can already have crossed the point where cancellation changes delivery, and not every async operation is truly abortable. The guard makes the state-ownership rule explicit.
 
-#### How can API responses arrive out of order?
-- **The Engine Mechanism (Why it behaves this way):** Network requests are handled by the browser's networking layer, which operates independently of JavaScript's event loop. Response time depends on server processing, network congestion, response payload size, CDN caching, and TCP connection state. A request started later can complete first if the server responds faster, the response is smaller, or a cached version is available. React has no control over this ordering — it only processes `.then()` callbacks as they arrive.
-- **The Unforgettable Mental Model:** The **Multi-Lane Highway**. Cars (requests) enter the highway at different times, but traffic, speed limits, and lane changes mean they don't arrive in the same order they entered. The fastest car wins, not the first one.
-- **The Trap:** Testing only on fast local networks where responses arrive in order. Race conditions surface on slower networks, with larger payloads, or when server response times vary.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: API responses arrive out of order because network timing is non-deterministic. Server processing time, network latency, response size, and caching all affect when a response completes. A later request can finish first if the server responds faster or the payload is smaller. React processes responses as they arrive via promise callbacks, with no inherent ordering guarantee."
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### How do you prevent stale response updates?
-- **The Engine Mechanism (Why it behaves this way):** Two main patterns exist. The **active flag** pattern uses a `let active = true` variable in the effect scope, set to `false` in cleanup. The `.then()` callback checks `if (active)` before calling `setState`. The **AbortController** pattern passes `controller.signal` to `fetch` and calls `controller.abort()` in cleanup, which rejects the promise with an `AbortError`. Both prevent stale data from reaching state, but AbortController also cancels the network request itself, saving bandwidth.
-- **The Unforgettable Mental Model:** The **Bouncer at the Club**. The active flag is like a bouncer who checks a guest list — if your name was removed (cleanup set `active = false`), you don't get in. AbortController is like calling the guest and telling them not to come at all.
-- **The Trap:** Forgetting to handle the `AbortError` in the catch block. An aborted fetch rejects with a specific error that should be silently ignored, not displayed to the user as a failure.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I prevent stale responses using either an active flag or AbortController. The active flag sets `let active = true` in the effect and checks it before state updates — simple but the request still completes. AbortController is more efficient because it cancels the network request itself, saving bandwidth. I always filter out `AbortError` in the catch block since it's expected cancellation, not a real error."
+**Q: What is a race condition inside a React effect?**
 
-#### How does cleanup help?
-- **The Engine Mechanism (Why it behaves this way):** React runs the cleanup function before re-running the effect (when dependencies change) and on unmount. This timing is critical: it gives you a hook to invalidate the previous async operation before starting the new one. The cleanup can set an active flag to `false`, call `controller.abort()`, unsubscribe from a WebSocket, or clear a timer. This ensures the previous operation can't affect the current render's state.
-- **The Unforgettable Mental Model:** The **Reset Button**. Before starting a new game round (new effect), cleanup hits the reset button on the previous round — clearing the scoreboard, removing old players, and resetting the timer.
-- **The Trap:** Assuming cleanup runs synchronously with the state update. Cleanup runs before the new effect, but the old async operation may still be in-flight. Cleanup invalidates it; it doesn't instantly stop it (unless using AbortController).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Cleanup runs before the effect re-runs and on unmount, giving me a chance to invalidate previous async work. I use it to set active flags to false, abort in-flight requests, or cancel subscriptions. This prevents outdated operations from updating state after the component has moved on to new data. The key insight is that cleanup is the bridge between the old effect instance and the new one."
+A race occurs when an effect starts async work, the effect runs again before that work completes, and multiple operations can update the same state. Because completion order is nondeterministic, an older request can settle after a newer request and commit stale data. The bug is not that requests are concurrent by itself; the bug is that stale work still has permission to write.
 
-#### How does AbortController help?
-- **The Engine Mechanism (Why it behaves this way):** `AbortController` is a browser API that creates a signal object. When passed to `fetch` via `{ signal }`, the fetch monitors the signal's `aborted` property. Calling `controller.abort()` sets `aborted` to `true` and immediately rejects the fetch promise with a `DOMException` named `AbortError`. This cancels the request at the network layer — the browser stops waiting for the response and frees the connection. In React effects, creating a new controller per effect instance and aborting in cleanup ensures only the latest request can succeed.
-- **The Unforgettable Mental Model:** The **Kill Switch**. AbortController is a kill switch wired to a specific machine (request). Flip the switch (call `abort()`), and that machine stops immediately — no more processing, no more output.
-- **The Trap:** Reusing a single `AbortController` across multiple requests. Once aborted, a controller cannot be reset. Each effect run needs its own controller instance.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: AbortController cancels in-flight fetch requests at the network level. I create a new controller inside the effect, pass its signal to fetch, and call `controller.abort()` in the cleanup. This stops the old request when dependencies change, preventing stale responses. I always check for `AbortError` in the catch block and ignore it, since it's expected behavior, not a failure."
+**Q: Why can a request started later finish first?**
 
-#### Why are query libraries useful?
-- **The Engine Mechanism (Why it behaves this way):** Libraries like TanStack Query manage request identity through query keys. When a query key changes, the library automatically cancels the previous request, starts a new one, and ensures only the latest response updates the cache. They also handle deduplication (multiple components requesting the same data), background refetching, stale-while-revalidate caching, and error retries — all patterns that are error-prone to implement manually in effects.
-- **The Unforgettable Mental Model:** The **Air Traffic Controller**. Instead of each plane (component) navigating independently and risking collisions (race conditions), a central controller (query library) manages all flights, ensures proper spacing, and handles cancellations and redirects.
-- **The Trap:** Thinking query libraries are only for caching. Their race condition handling, request deduplication, and lifecycle management are equally valuable even for non-cached data.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Query libraries like TanStack Query solve race conditions automatically through query key identity — when the key changes, the old request is cancelled and only the latest response updates the cache. Beyond that, they handle request deduplication, background refetching, caching, retries, and error states. For any shared server data, I prefer a query library over manual effects because it eliminates an entire class of bugs."
+React does not serialize network operations. Server execution time, cache hits, connection state, network latency, response size, and failures can all differ per request. JavaScript runs each settled promise callback when it is scheduled, not according to request-start order. Therefore “last started” and “last completed” are separate facts.
 
-#### Race condition vs stale closure?
-- **The Engine Mechanism (Why it behaves this way):** A race condition is about async timing — multiple operations complete in unexpected order, and stale data overwrites fresh data. A stale closure is about lexical scoping — a function captures variables from its defining render and continues to reference those old values even after the component re-renders with new values. Race conditions are fixed with cancellation or ignore flags. Stale closures are fixed with functional updates, refs, or correct dependency arrays.
-- **The Unforgettable Mental Model:** The **Two Different Thieves**. Race condition: Thief A steals the treasure, but Thief B already replaced it with a fake — you get the fake. Stale closure: Thief A has an old map that points to where the treasure USED to be, not where it is now.
-- **The Trap:** Confusing the two and applying the wrong fix. Adding an active flag won't fix a stale closure, and using a functional update won't fix a race condition.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Race conditions and stale closures are different bugs with different fixes. A race condition is about async operations completing out of order — the old response overwrites the new one. Fixed with AbortController or active flags. A stale closure is about a function capturing old variable values from a previous render — it reads outdated data. Fixed with functional state updates, refs for mutable values, or correct dependency arrays. They can coexist in the same code, so I diagnose which one is causing the symptom."
+**Q: What should happen when the dependency changes?**
 
-## 8. Active recall test
-1. **What makes two requests race?**
-   - **Explanation:** When an effect starts an async request, dependencies change before it completes, and a new request starts. Both run concurrently, and the older one may finish after the newer one, overwriting fresh data with stale results. Network timing is non-deterministic, so order of completion doesn't match order of initiation.
-2. **Which response should win?**
-   - **Explanation:** The most recent request's response should win — the one corresponding to the current dependency values. Older requests are outdated and their results should be discarded or cancelled to prevent stale data from appearing in the UI.
-3. **How does cleanup ignore old work?**
-   - **Explanation:** Cleanup runs before the effect re-runs. It can set a boolean flag (`active = false`) that the async callback checks before updating state, or it can call `controller.abort()` to cancel the request entirely. Both prevent the old response from affecting current state.
-4. **What does abort do?**
-   - **Explanation:** `controller.abort()` cancels the in-flight fetch at the network layer, rejects the promise with an `AbortError`, and frees the browser connection. This prevents the response from ever arriving, saving bandwidth and eliminating the race condition entirely.
-5. **Why is search a common example?**
-   - **Explanation:** Search inputs change rapidly as users type. Each keystroke can trigger a new API request. If the network is slow, early requests (for shorter queries) may finish after later requests (for longer queries), showing irrelevant results. This makes search the textbook example of effect race conditions.
+The previous effect instance should lose ownership of the state update, and its work should be cancelled when possible. React runs the previous cleanup before the next effect setup for a dependency change. Cleanup can abort a fetch, invalidate an ignore flag, unsubscribe, or clear a timer. The new effect then starts work for the new dependency values.
 
-## 9. Mistakes / traps
-- Assuming requests finish in start order.
-- Updating state after component unmount.
-- Ignoring dependency changes.
-- Handling abort errors as real user errors.
-- Reimplementing server-state caching everywhere.
+**Q: Is an ignore flag enough to fix the race?**
 
-## 10. Compare with related concepts
-- **Race condition vs stale closure:** race is async order; stale closure is old captured value.
-- **Abort vs ignore flag:** abort cancels request; flag ignores result.
-- **Manual effect vs query library:** manual handles one case; library handles cache/request lifecycle.
+It is enough to prevent a stale callback from updating React state, provided the flag is declared inside the effect and checked at every path that can commit a result. It does not stop the request, server processing, bandwidth use, or other side effects. Use it for non-cancellable work; pair it with cancellation when the underlying API supports cancellation.
 
-## 11. Summary from memory
-Explain how a search box can show old results and how AbortController fixes it.
+**Q: What does `AbortController` actually cancel?**
 
-## 12. Spaced revision prompts
-- After 1 day: Define effect race condition.
-- After 3 days: Write active flag cleanup.
-- After 7 days: Use AbortController.
-- After 14 days: Compare manual fetching and TanStack Query.
+It signals an abort-aware operation such as `fetch` to stop waiting for or consuming the request. The client-side promise rejects, commonly with a `DOMException` named `AbortError`. It cannot roll back a server mutation that already ran, and a custom API must actually pass the signal through. For mutations, cancellation is not a substitute for idempotency and server-side consistency.
 
+**Q: Why must the controller be created inside the effect?**
+
+Each effect run represents one request and needs an independent signal. An `AbortController` is one-shot; after `abort()`, its signal stays aborted. Reusing one controller across renders means the next request may start already cancelled, or cleanup for one request may cancel another request it does not own.
+
+**Q: Does React automatically cancel promises when an effect cleans up?**
+
+No. React calls the function you return from the effect. It has no general way to cancel an arbitrary promise because promises do not have a universal cancellation protocol. The effect must use the API’s cancellation mechanism or prevent the callback from committing with an ownership check.
+
+**Q: What is the difference between this race and a stale closure?**
+
+A race condition is about multiple async operations completing in an unsafe order. A stale closure is about one callback reading values captured from an older render snapshot. Cleanup can invalidate that effect instance, but it does not rewrite the callback’s captured values or make its old `query` current. They can occur together, but their fixes differ: cancel or invalidate old work for the race; use correct dependencies, functional state updates, or a deliberately managed ref for stale captured values. Adding an abort controller does not make a callback’s captured `query` current.
+
+**Q: Does putting the request in `useEffect` make it safe?**
+
+No. `useEffect` gives the request a lifecycle boundary, but it does not impose ordering on the work started inside it. Safety comes from preserving the current-input invariant during cleanup and completion. The dependency array controls when the effect runs; it is not a cancellation or freshness guarantee.
+
+**Q: Does `startTransition` fix this race?**
+
+No. `startTransition` changes the priority of React state updates and the rendering work they schedule. It can keep urgent input responsive while a result list renders at lower priority, and `useTransition` can expose a pending/loading state for that render. It does not cancel network requests, prevent an old promise from settling, or replace an ignore flag or abort/result guard. Request cancellation and stale-result protection are still effect-lifecycle concerns.
+
+**Q: When would you choose a query library instead of manual fetching?**
+
+For shared server state, a query library usually earns its complexity through cache identity, deduplication, retries, refetch policies, loading/error state, and request cancellation. A small one-off effect may be simpler when the work is genuinely local or not reusable. Whichever approach you choose, the query function must handle aborts and the backend must still enforce authorization; a client cache is not a security boundary.
+
+**Q: How would you test this race?**
+
+Control completion order rather than relying on real network timing. Mock two requests, resolve the newer one first, then resolve the older one, and assert that the UI still shows the newer result. Also test dependency cleanup, unmount before resolution, abort errors being ignored, real errors being shown, and rapid changes that start several requests. This verifies the invariant directly and avoids a flaky “sleep and hope” test.
+
+## 6. The Traps — What Goes Wrong
+
+The first trap is assuming start order determines display order. It does not. A local development server often responds in a predictable order, which hides the bug. Force out-of-order responses in tests and inspect behavior under slow connections and variable server latency.
+
+Another trap is using one module-level or component-level `active` flag for every request. That creates shared mutable state: cleanup for request A can affect request B, or a later effect can turn the flag back on while A is still finishing. Declare the flag inside the effect so each invocation owns its own closure.
+
+A third trap is checking the flag before an `await` but not after it. Every asynchronous boundary can allow cleanup to run. Check ownership immediately before each state update or side effect that must belong to the current effect instance.
+
+Treating `AbortError` as a user-visible network failure is also wrong. Typing a new character normally aborts the previous search; showing “Search failed” on every keystroke makes expected control flow look like an outage. Filter aborts, but continue to report genuine HTTP and parsing errors.
+
+The opposite mistake is assuming abort solves everything. It may happen after the server has accepted the request, and some libraries do not propagate the signal. Keep a result guard where correctness matters, and design write APIs with idempotency, authorization, and server-side validation.
+
+An incomplete dependency array can create a different bug that looks similar. If the effect reads `query` but does not list it as a dependency, it may keep using an old query rather than starting a new request. Fix the dependency model first; do not hide a stale closure by adding cancellation.
+
+Finally, do not use an effect as a hand-built server-state cache for every screen. Manual code tends to miss deduplication, retries, cache invalidation, refetch-on-focus behavior, loading transitions, and cross-component ownership. Use the smallest correct abstraction, and move shared server data to a query layer when those responsibilities appear.
+
+## 7. Compare With Related Concepts
+
+**Ignore flag vs `AbortController`:** An ignore flag prevents a completed callback from committing, while `AbortController` asks the underlying operation to stop and also rejects the client promise. Use an ignore guard for work with no cancellation protocol; use abort plus a guard for abort-aware fetches where wasted work matters.
+
+**Race condition vs stale closure:** A race chooses the wrong completion among multiple operations; a stale closure reads old values from one callback’s render. Use cancellation or invalidation for the former, and correct dependencies, functional updates, or refs for the latter.
+
+**Effect cleanup vs component unmount:** Cleanup runs before a dependency-driven rerun as well as on unmount. Use it to end the ownership of every effect instance, not only to prevent work after unmount.
+
+**Client-side cancellation vs server rollback:** Aborting a browser request does not undo a mutation that reached the server. Use cancellation to reduce client work; use transactions, idempotency keys, and server-side authorization to make writes safe.
+
+**Manual effect fetching vs a query library:** A manual effect can solve one component’s lifecycle, while a query library models server data identity and sharing across components. Use manual code for narrowly scoped local work; use a query layer when caching, deduplication, invalidation, or coordinated refetching are requirements.
+
+**Race condition vs debouncing:** Debouncing reduces how many requests start by waiting for input to settle; it does not guarantee that the remaining overlapping requests finish safely. Debounce for load reduction, and still enforce current-result ownership with cancellation or invalidation.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Every effect run gets a ticket, and cleanup revokes the old ticket before a new one is issued. The network may deliver plates in any order, but only the ticket belonging to the current render is allowed to update the table.
