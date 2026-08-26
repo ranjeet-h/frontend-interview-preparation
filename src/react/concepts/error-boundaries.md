@@ -2,433 +2,415 @@
 
 ## 1. Why This Exists — The Problem First
 
-Picture an e-commerce dashboard on Black Friday. The page contains a top navigation bar, an active shopping cart with three high-value items, a checkout form where the user is typing their payment details, and at the bottom, a small "Recommended Accessories" carousel. 
+Imagine a dashboard with a header, navigation, checkout form, and a small recommendations widget. The API returns one recommendation with `metadata: null`, and the widget renders `item.metadata.badge.toLowerCase()`. That one property access throws while React is rendering.
 
-A backend API unexpectedly returns a single recommendation product where the `metadata` property is `null` instead of an object. The carousel component attempts to execute `item.metadata.badge.toLowerCase()`. In vanilla JavaScript, a failure inside a utility function or event handler might log an unhandled exception to the browser console while the rest of the webpage remains usable. 
+The failure is not confined to the widget automatically. Without an Error Boundary, React cannot safely finish the affected render tree. An uncaught render error reaches the root and React unmounts the root tree, which can look like a blank page. A user may lose the visible checkout form, navigation, and every unrelated widget even though only one component had bad data.
 
-In React 16 and later, unhandled errors thrown during the render cycle trigger a destructive fail-safe: React unmounts the entire component tree from the DOM. The user's screen instantly flashes to a stark, blank white page—the dreaded "White Screen of Death." The user loses their active checkout form, their filled address inputs, and their shopping cart context. They cannot even click the navigation menu or the customer support widget.
+An ordinary `try...catch` around JSX does not solve this:
 
-Standard JavaScript `try...catch` blocks cannot solve this problem across your UI. When you write `<RecommendationCarousel />` in a parent component, you are not invoking the component's rendering logic at that moment; you are simply creating a lightweight React element descriptor (`React.createElement`). React executes the actual component function and constructs the DOM later during its internal Fiber reconciliation pass. By the time the crash occurs, the parent's `try...catch` block has already finished executing and exited the call stack.
+```tsx
+try {
+  return <Recommendations items={items} />;
+} catch {
+  return <p>Recommendations unavailable</p>;
+}
+```
 
-Error Boundaries exist to introduce declarative, hierarchical fault tolerance into the React tree. They allow you to draw containment zones around unstable or third-party widgets, catch rendering crashes before they bubble to the root, log telemetry to monitoring services, and render graceful fallback UI without taking down the rest of the application.
+The parent is creating a React element description. React later executes descendants during reconciliation. The `try...catch` has already finished by then. An Error Boundary is the React-native solution: it is an ancestor component that gives React a declared recovery point in the rendered tree.
+
+The goal is not to hide every problem. Expected API states such as `404`, a validation failure, an empty result, or a temporarily offline request should normally be modeled as data and rendered intentionally. A boundary is for unexpected exceptions that interrupt React’s ability to render or commit a subtree. It limits the blast radius, gives the user a usable fallback, and supplies an observability hook.
 
 ## 2. The Analogy — Make It Obvious
 
-Think of an Error Boundary as a submarine's watertight bulkhead door.
+Think of the UI as a submarine divided by watertight bulkheads. Each compartment is a meaningful subtree: the whole app, a route, a checkout panel, or one third-party chart.
 
-A modern submarine is not built as one giant, continuous hollow tube. It is engineered with sealed compartments separated by heavy, automated bulkhead doors. Under normal cruising conditions, crew members and air circulate freely across all sections. 
+The boundary is the bulkhead. A render crash is a hull breach. React searches upward for the nearest boundary, abandons the damaged child subtree, and renders the boundary’s fallback in its place. The rest of the tree can keep its own state and remain interactive. A root boundary is the final bulkhead; a widget boundary is a smaller, more useful compartment.
 
-If a collision punctures a hull breach in the rear auxiliary storage room, water immediately rushes in. Instead of allowing the floodwaters to sweep through the entire vessel and drag the submarine to the ocean floor, the bulkhead doors on either side of the storage room slam shut. That single compartment is flooded and sealed off, but the navigation bridge, the nuclear reactor, the propulsion engines, and the life support systems in every other compartment remain completely dry, powered, and operational. 
+The analogy also shows why placement matters. A boundary placed around the entire application can prevent a white screen, but a chart failure may still replace the whole dashboard. Boundaries around independent routes and high-risk widgets usually produce a smaller failure domain. A fallback should be a lifeboat, not another complicated compartment: keep it small, defensive, accessible, and able to offer a meaningful next action.
 
-Here is how each piece maps to React:
-
-- **The Watertight Compartment:** A subtree of child components wrapped inside an `<ErrorBoundary>` tag.
-- **The Hull Breach:** An uncaught JavaScript runtime error (such as a null pointer or undefined property access) thrown during component rendering.
-- **The Bulkhead Door Slamming Shut:** `static getDerivedStateFromError` intercepting the error and switching the boundary's state to render fallback UI.
-- **The Damage Report Sent to the Bridge:** `componentDidCatch` capturing the error object and component stack trace to send to telemetry systems like Sentry or Datadog.
-- **Pumping Out the Water and Opening the Door:** Resetting the error boundary state via user action (a "Try Again" button) or a route transition to restore the original UI.
-- **An Uncompartmentalized Ship Sinking:** An unhandled error in a React app without boundaries, causing React to unmount the entire application tree and leave a blank screen.
+The two class methods have different jobs. `getDerivedStateFromError` closes the bulkhead during React’s render work by switching state to fallback mode. `componentDidCatch` records the damage after React commits the fallback. Resetting the boundary is reopening the compartment, but reopening without changing the cause simply lets the same breach happen again.
 
 ## 3. How It Actually Works — The Full Explanation
 
-React builds and updates user interfaces using a two-phase architecture: the **Render Phase** (reconciliation where React computes virtual DOM changes and executes component functions) and the **Commit Phase** (where React mutates the actual browser DOM and executes layout/mount effects).
+**Render-time errors.** During the render phase, React calls function components, class `render()` methods, and render-time computations to calculate the next UI. A descendant may throw any JavaScript value, not only an `Error`; React unwinds the work and looks for the nearest ancestor class component that qualifies as an Error Boundary. Normalize that value at the boundary before reading `.message`, recording telemetry, or exposing it to fallback UI. React’s recovery is tree-relative: the nearest boundary owns the failed subtree, while ancestors outside that subtree can remain mounted.
 
-When a component throws an unhandled exception during rendering, in a constructor, or during a lifecycle method, React halts normal work on that fiber node and begins unwinding the Fiber work loop (`throwException` in React Fiber internals). React inspects the current fiber's parent chain, walking upward through the tree toward the root container to locate the nearest ancestor component configured as an Error Boundary.
+The official boundary primitive is a class component with `static getDerivedStateFromError` and/or `componentDidCatch`. In practice, implement both. The static method is a pure render-phase state transition. It cannot read `this`, and it should not log, mutate a store, call a network service, or show a notification. Render work can be restarted or discarded, especially with concurrent rendering, so side effects in this method can duplicate or happen for work the user never sees.
 
-To qualify as an Error Boundary, a component must be a Class Component that defines one or both of two special lifecycle methods:
+`componentDidCatch(error, errorInfo)` runs during the commit-side lifecycle after React has selected the fallback. `errorInfo.componentStack` is a React component stack, useful alongside the JavaScript stack for telemetry. This is the appropriate place to report the error, attach route or release metadata, and increment a diagnostic counter. Logging must still be resilient: if the logger or fallback throws, an outer boundary is needed.
 
-**1. `static getDerivedStateFromError(error)` (Render Phase):**
-This is a pure static method invoked synchronously during the render phase immediately after an error is thrown in a descendant. It receives the thrown error and must return a state object (for example, `{ hasError: true, error }`). Because it executes during the render phase, it must not perform side effects. Its sole responsibility is updating state so React can render the fallback UI in the very same render pass.
+**What boundaries catch.** A boundary catches errors thrown by descendants during synchronous React-managed work, including:
 
-**2. `componentDidCatch(error, errorInfo)` (Commit Phase):**
-This lifecycle method runs during the commit phase, after React has committed the fallback UI to the browser DOM. It receives the original `error` object and an `errorInfo` object containing a `componentStack` string. The component stack traces the exact React component hierarchy that led to the crash (e.g., `in CommentList > in CommentCard > in div`). This is the designated location for side effects, such as dispatching diagnostic reports to Sentry, DataDog, or internal logging endpoints.
+- a function component body or class `render()` method;
+- a descendant constructor;
+- descendant class lifecycle methods such as `componentDidMount`, `componentDidUpdate`, or `componentWillUnmount`;
+- a render-time helper called by a component, including a calculation performed while producing JSX; and
+- errors raised by a descendant during client commit work, such as an effect callback, when React routes that commit error through the tree.
 
-If React walks up the entire Fiber tree and reaches the root without finding any Error Boundary, it treats the application state as corrupted and unmounts the entire host root container.
+Do not say that `useCallback` itself is caught as an effect. `useCallback` only stores a function; it does not execute that function. If the callback is called during render and throws, that is a render error. If it is called by a click handler, it is an event error and follows the event-handler rule below.
 
-### What Error Boundaries Catch vs What They Miss
+**What boundaries do not catch.** They do not automatically catch:
 
-Understanding the exact boundaries of what Error Boundaries capture is essential:
+- exceptions thrown in event handlers such as `onClick` or `onSubmit`;
+- exceptions in `setTimeout`, `requestAnimationFrame`, WebSocket callbacks, or other later browser callbacks;
+- rejected promises from `fetch`, a query client, or arbitrary async work unless the error is represented in render or explicitly bridged back to a boundary;
+- errors thrown while server-rendering HTML; the server request and streaming framework must handle those; or
+- errors thrown by the boundary’s own `render`, fallback construction, `getDerivedStateFromError`, or `componentDidCatch` implementation.
 
-**What Error Boundaries DO Catch:**
-- Errors thrown inside the body of functional components during rendering.
-- Errors thrown inside class component `render()` methods.
-- Errors thrown inside component constructors.
-- Errors thrown inside lifecycle methods (`componentDidMount`, `componentDidUpdate`, `componentWillUnmount`).
-- Errors thrown inside `useMemo`, `useCallback`, and `useLayoutEffect` hooks during execution.
-- Errors thrown inside child component `useEffect` callbacks during the commit phase.
+The reason is execution ownership. Event and timer callbacks run after the React work that produced the handler has finished. A rejected promise is also not automatically a thrown value in a later React render. Use local `try...catch` and error state for imperative work, or deliberately store the error and throw it from a later render when a boundary-level fallback is truly appropriate.
 
-**What Error Boundaries DO NOT Catch:**
-- **Event Handlers (e.g., `onClick`, `onSubmit`):** Event handlers do not run during React's render phase. They execute in the browser's JavaScript event loop triggered by user events long after React has finished rendering. An unhandled error in an `onClick` handler will log to the console, but it will not crash the component tree or trigger an Error Boundary. To catch these, use standard `try...catch` inside the handler.
-- **Asynchronous Code (e.g., `setTimeout`, `setInterval`, `requestAnimationFrame`):** Callbacks scheduled on the browser task queue execute outside React's Fiber execution context.
-- **Async/Promise Rejections in Data Fetching:** Unhandled promise rejections inside `fetch` or `axios` calls do not trigger Error Boundaries unless bridged explicitly.
-- **Server-Side Rendering (SSR):** Errors thrown during Node.js streaming or server-side string rendering must be handled by the server framework's request/response stream handlers.
-- **Errors Inside the Error Boundary Itself:** An Error Boundary catches errors in its *children*, not errors thrown inside its own `render()` or `getDerivedStateFromError()` methods. If a boundary crashes, the error bubbles up to the next outer boundary.
+**Render, commit, and effects.** A useful mental model is:
 
-### Resetting and Error Recovery
+1. Render computes a candidate tree. React may pause, restart, or abandon it.
+2. Commit applies the chosen tree to the host environment and runs commit-related lifecycle work.
+3. Passive effects synchronize with external systems after commit; their callbacks are not a universal error transport for arbitrary async work.
 
-A well-designed Error Boundary does not leave the user stranded on a dead fallback screen. Recovery typically follows three patterns:
+The boundary’s state transition belongs to render; telemetry belongs to commit. A child that fails during rendering can be replaced before the failed subtree is committed. A child that fails during client lifecycle or effect work can be reported through the nearest boundary, but an error thrown later inside a promise continuation or timer has left that React call and must be bridged explicitly. This distinction explains why “Error Boundaries catch effects” is incomplete: React-managed commit execution may be routed, but arbitrary work started by an effect is not automatically covered forever.
 
-- **State-driven Reset:** The fallback UI renders a "Try Again" button that calls `this.setState({ hasError: false, error: null })`.
-- **Key-based Reset:** Changing a `key` prop on the `<ErrorBoundary key={currentRoute}>` causes React to unmount the failed instance and mount a fresh boundary with pristine initial state.
-- **Prop-driven Reset Keys (`resetKeys`):** The boundary accepts an array of dependencies (such as a search query or URL parameter). In `componentDidUpdate`, if any dependency in `resetKeys` changes, the boundary automatically clears its error state and attempts to re-render the children.
+**Fallback, reset, and recovery.** Once `hasError` is true, the boundary renders fallback instead of its children. A retry can call `setState({ hasError: false, error: null })`, but the child will immediately be attempted with the same inputs. The retry is useful only if the underlying condition may have changed, such as a refetch, a corrected cache entry, or a user action that changes the input.
 
-### Strategic Placement: The Multi-Layer Blast Radius
+A `key` is often the cleanest reset boundary. `<ErrorBoundary key={routeKey}>` gives React a new component identity when `routeKey` changes, so the old boundary and its failed child state are discarded together. The same technique works for a form or widget that must start fresh for a new entity. A custom `resetKeys` API can compare shallowly with `Object.is`, but it adds synchronization rules and should not reset merely because an unrelated render occurred.
 
-Senior frontend architecture structures Error Boundaries in concentric defensive layers:
+**Identity and keys.** React preserves state when the same component type remains in the same position with the same key. Changing a key is not “updating an error flag”; it is asking React to unmount the old identity and mount a new one. That clears boundary state and descendant local state. Use a stable key for ordinary rerenders, and use an intentional route, document ID, or query key when a clean recovery scope is desired. Do not use an array index as a reset key when list order can change.
 
-- **Global / Root Layer:** Wraps the entire application. Acts as the safety net of last resort. If an uncaught bug escapes all inner boundaries, this prevents the white screen and displays a branded "Something went wrong — please reload" page with a contact support link.
-- **Route / Page Layer:** Wraps individual page routes (e.g., `/dashboard`, `/settings`, `/checkout`). A crash in the settings panel will display a page-level error state while keeping the global header, sidebar navigation, and user authentication session fully operational.
-- **Feature / Widget Layer:** Wraps isolated, complex, or data-volatile widgets (e.g., third-party charting libraries, real-time comment streams, user-generated content feeds). A failure in one chart renders a clean "Chart unavailable" placeholder card while the rest of the dashboard remains completely interactive.
+**SSR, event, and async limitations.** Server rendering has no browser commit in which a class boundary can display fallback UI. A server framework must catch the request/stream error, decide whether the stream can continue, and send an appropriate response. On hydration, a client boundary can handle a client-side render failure, but it does not retroactively repair a server request that already failed.
+
+For an event or async error, first choose the owner. A form submission usually owns its error and should show inline feedback. A query library usually owns loading, retry, and server-error state. A truly fatal feature error can be bridged to a boundary by normalizing the thrown value, storing the resulting `Error` in state, and throwing it from the component’s next render. The bridge is explicit because it changes an imperative failure into a declarative render failure.
+
+**Strict Mode and concurrency.** Strict Mode in development intentionally replays some work and mount/cleanup behavior to expose unsafe assumptions. Concurrent rendering can render a candidate more than once before committing it. Therefore, keep render and `getDerivedStateFromError` pure, make telemetry deduplicate when needed, and make cleanup and reset paths idempotent. A boundary is containment, not a guarantee that `componentDidCatch` runs exactly once for every underlying exception in every development or recovery scenario.
 
 ## 4. Real Code — See It Working
 
-Here is a production-grade, reusable TypeScript Error Boundary implementation supporting fallback rendering, side-effect logging, and automatic reset keys:
+**Example 1 — a reusable class boundary.** This self-contained TSX example can run in a React + TypeScript app. The fallback accepts the error and a reset callback, while `componentDidCatch` owns logging. The default fallback deliberately avoids complex rendering.
 
 ```tsx
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { ErrorInfo, ReactNode } from "react";
 
-export interface FallbackProps {
+type FallbackProps = {
   error: Error;
-  resetErrorBoundary: () => void;
-}
+  reset: () => void;
+};
 
-export interface ErrorBoundaryProps {
+type BoundaryProps = {
   children: ReactNode;
-  fallback?: ReactNode;
-  fallbackRender?: (props: FallbackProps) => ReactNode;
-  onError?: (error: Error, errorInfo: ErrorInfo) => void;
-  onReset?: () => void;
-  resetKeys?: Array<unknown>;
-}
+  fallback?: (props: FallbackProps) => ReactNode;
+  onError?: (error: Error, info: ErrorInfo) => void;
+};
 
-interface ErrorBoundaryState {
-  hasError: boolean;
+type BoundaryState = {
   error: Error | null;
+};
+
+function normalizeError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = {
-    hasError: false,
-    error: null,
+export class ErrorBoundary extends React.Component<
+  BoundaryProps,
+  BoundaryState
+> {
+  state: BoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: unknown): BoundaryState {
+    // Render phase: pure state transition only.
+    return { error: normalizeError(error) };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo): void {
+    // Commit phase: side effects such as telemetry belong here.
+    this.props.onError?.(normalizeError(error), info);
+  }
+
+  reset = (): void => {
+    this.setState({ error: null });
   };
 
-  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    // Pure function: update state so the next render shows fallback UI
-    return { hasError: true, error };
-  }
+  render(): ReactNode {
+    const { error } = this.state;
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    // Commit phase: safe for side effects, telemetry, and external error logging
-    if (this.props.onError) {
-      this.props.onError(error, errorInfo);
-    }
-  }
-
-  public componentDidUpdate(prevProps: ErrorBoundaryProps): void {
-    const { hasError } = this.state;
-    const { resetKeys } = this.props;
-
-    // If we are in an error state and resetKeys changed, automatically reset
-    if (hasError && prevProps.resetKeys && resetKeys) {
-      const hasKeyChanged = resetKeys.some(
-        (key, index) => !Object.is(key, prevProps.resetKeys?.[index])
-      );
-
-      if (hasKeyChanged) {
-        this.resetErrorBoundary();
-      }
-    }
-  }
-
-  public resetErrorBoundary = (): void => {
-    if (this.props.onReset) {
-      this.props.onReset();
-    }
-    this.setState({ hasError: false, error: null });
-  };
-
-  public render(): ReactNode {
-    const { hasError, error } = this.state;
-    const { children, fallback, fallbackRender } = this.props;
-
-    if (hasError && error) {
-      if (fallbackRender) {
-        return fallbackRender({
-          error,
-          resetErrorBoundary: this.resetErrorBoundary,
-        });
-      }
-      if (fallback) {
-        return fallback;
-      }
-      return (
-        <div style={{ padding: '16px', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-          <h3>Something went wrong in this section.</h3>
-          <button onClick={this.resetErrorBoundary}>Try Again</button>
-        </div>
+    if (error) {
+      return this.props.fallback?.({ error, reset: this.reset }) ?? (
+        <section role="alert">
+          <p>Something went wrong in this section.</p>
+          <button type="button" onClick={this.reset}>
+            Try again
+          </button>
+        </section>
       );
     }
 
-    return children;
+    return this.props.children;
   }
 }
 ```
 
-Now, let us see how this boundary is deployed in a granular dashboard architecture to isolate widget failures:
+**Example 2 — placement, identity, and a render crash.** The widget throws only when `broken` is true. The chart’s failure replaces the chart fallback, not the stable transactions panel. `broken` belongs to `RevenuePanel`, inside the keyed boundary subtree, so changing `reportId` remounts the owner and clears that state too.
 
 ```tsx
-import React, { useState } from 'react';
-import { ErrorBoundary, FallbackProps } from './ErrorBoundary';
+import React, { useState } from "react";
 
-// Volatile component that might throw on corrupt data
-function RevenueChart({ currency }: { currency: string }) {
-  const [data] = useState<{ rates: Record<string, number> } | null>(null);
+type FallbackProps = {
+  error: Error;
+  reset: () => void;
+};
 
-  // Intentional runtime crash if data is null
-  if (!data) {
-    throw new Error(`Failed to load exchange rates for ${currency}`);
-  }
+type BoundaryProps = {
+  children: React.ReactNode;
+  fallback?: (props: FallbackProps) => React.ReactNode;
+  onError?: (error: Error, info: React.ErrorInfo) => void;
+};
 
-  return <div>Chart rendering for {currency}: {data.rates[currency]}</div>;
+type BoundaryState = { error: Error | null };
+
+function normalizeError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }
 
-// Resilient, isolated widget fallback
-function WidgetErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
+class ErrorBoundary extends React.Component<BoundaryProps, BoundaryState> {
+  state: BoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: unknown): BoundaryState {
+    return { error: normalizeError(error) };
+  }
+
+  componentDidCatch(error: unknown, info: React.ErrorInfo): void {
+    this.props.onError?.(normalizeError(error), info);
+  }
+
+  reset = (): void => {
+    this.setState({ error: null });
+  };
+
+  render(): React.ReactNode {
+    if (this.state.error) {
+      return this.props.fallback?.({
+        error: this.state.error,
+        reset: this.reset,
+      }) ?? <p role="alert">This section is unavailable.</p>;
+    }
+
+    return this.props.children;
+  }
+}
+
+function RevenueChart({ broken }: { broken: boolean }) {
+  if (broken) {
+    throw new Error("Revenue data has an invalid shape");
+  }
+
+  return <p>Revenue chart rendered successfully.</p>;
+}
+
+function RevenuePanel() {
+  const [broken, setBroken] = useState(false);
+
   return (
-    <div style={{ background: '#fef2f2', border: '1px solid #f87171', padding: '16px', borderRadius: '6px' }}>
-      <h4 style={{ margin: '0 0 8px 0', color: '#991b1b' }}>Widget Error</h4>
-      <p style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#7f1d1d' }}>{error.message}</p>
-      <button
-        onClick={resetErrorBoundary}
-        style={{ padding: '6px 12px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-      >
-        Retry Widget
+    <section>
+      <button type="button" onClick={() => setBroken(true)}>
+        Simulate chart failure
       </button>
-    </div>
+      <RevenueChart broken={broken} />
+    </section>
   );
 }
 
-export function AnalyticsDashboard() {
-  const [selectedCurrency, setSelectedCurrency] = useState('USD');
+export function Dashboard({ initialReportId = "report-1" }: {
+  initialReportId?: string;
+}) {
+  const [reportId, setReportId] = useState(initialReportId);
 
   return (
-    <div style={{ padding: '24px', fontFamily: 'sans-serif' }}>
-      <header style={{ marginBottom: '20px', borderBottom: '1px solid #ccc', paddingBottom: '12px' }}>
-        <h2>Financial Overview</h2>
-        <select value={selectedCurrency} onChange={(e) => setSelectedCurrency(e.target.value)}>
-          <option value="USD">USD ($)</option>
-          <option value="EUR">EUR (€)</option>
-          <option value="GBP">GBP (£)</option>
-        </select>
-      </header>
+    <main>
+      <h1>Financial overview</h1>
+      <button type="button" onClick={() => setReportId(`${reportId}-next`)}>
+        Open another report
+      </button>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-        {/* Isolated Boundary 1: Chart Widget */}
-        <section>
-          <h3>Revenue Projections</h3>
-          <ErrorBoundary
-            fallbackRender={WidgetErrorFallback}
-            resetKeys={[selectedCurrency]} // Automatically retries when user picks another currency
-            onError={(error, info) => console.error('Logged to telemetry:', error, info.componentStack)}
-          >
-            <RevenueChart currency={selectedCurrency} />
-          </ErrorBoundary>
-        </section>
+      <ErrorBoundary
+        key={reportId}
+        onError={(error, info) => {
+          console.error("reportId", reportId, error, info.componentStack);
+        }}
+        fallback={({ reset }) => (
+          <section role="alert">
+            <p>Chart unavailable. Check the report and try again.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setReportId(`${reportId}-retry`);
+                reset();
+              }}
+            >
+              Retry with a fresh report identity
+            </button>
+          </section>
+        )}
+      >
+        <RevenuePanel />
+      </ErrorBoundary>
 
-        {/* Stable Section: Remains 100% operational even if the chart crashes */}
-        <section style={{ background: '#f0fdf4', border: '1px solid #86efac', padding: '16px', borderRadius: '6px' }}>
-          <h3 style={{ margin: '0 0 8px 0' }}>Recent Transactions</h3>
-          <ul>
-            <li>Payment from Acme Corp: +$12,450.00</li>
-            <li>Subscription renewal: +$99.00</li>
-          </ul>
-        </section>
-      </div>
-    </div>
+      <aside>Recent transactions remain available.</aside>
+    </main>
   );
 }
 ```
 
-### Bridging Asynchronous Errors into an Error Boundary
-
-Because Error Boundaries do not catch async exceptions by default, we can use a custom hook or state bridge that re-throws the error during the next render cycle:
+**Example 3 — intentionally bridge an async error.** This runnable example defines the wrapper and usage site in the same TSX block. It uses ordinary state to make an async failure visible to render; the boundary catches the `throw` on the next render. For routine request failures, prefer a query or form state model; use this when the feature should enter the same fatal fallback as a render bug.
 
 ```tsx
-import { useState, useCallback } from 'react';
+import React, { useState } from "react";
 
-// Custom hook to bridge async errors into the nearest Error Boundary
-export function useAsyncError() {
-  const [, setError] = useState();
+function normalizeError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
 
-  return useCallback(
-    (error: Error) => {
-      setError(() => {
-        // Throwing inside a state updater causes React to re-render
-        // and catch the error in the nearest ancestor Error Boundary
-        throw error;
-      });
-    },
-    []
+type ErrorBoundaryProps = {
+  children: React.ReactNode;
+  fallback: (error: Error) => React.ReactNode;
+};
+
+class ErrorBoundary extends React.Component<
+  ErrorBoundaryProps,
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown): { error: Error } {
+    return { error: normalizeError(error) };
+  }
+
+  render(): React.ReactNode {
+    return this.state.error
+      ? this.props.fallback(this.state.error)
+      : this.props.children;
+  }
+}
+
+export function ReportDownload({ userId }: { userId: string }) {
+  const [asyncError, setAsyncError] = useState<Error | null>(null);
+
+  if (asyncError) {
+    throw asyncError;
+  }
+
+  async function download(): Promise<void> {
+    try {
+      const response = await fetch(`/api/users/${userId}/report`);
+      if (!response.ok) {
+        throw new Error(`Report request failed: HTTP ${response.status}`);
+      }
+      await response.blob();
+    } catch (error) {
+      setAsyncError(normalizeError(error));
+    }
+  }
+
+  return (
+    <button type="button" onClick={() => void download()}>
+      Download report
+    </button>
   );
 }
 
-// Usage inside an async component
-export function UserProfileCard({ userId }: { userId: string }) {
-  const throwAsyncError = useAsyncError();
-
-  const handleDownloadReport = async () => {
-    try {
-      const res = await fetch(`/api/users/${userId}/report`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to generate report`);
-      const data = await res.json();
-      console.log('Report ready:', data);
-    } catch (err) {
-      // Forward the async network error to the nearest Error Boundary
-      throwAsyncError(err instanceof Error ? err : new Error(String(err)));
-    }
-  };
-
+export function App() {
   return (
-    <div>
-      <h4>User Profile</h4>
-      <button onClick={handleDownloadReport}>Download Statement</button>
-    </div>
+    <ErrorBoundary
+      fallback={(error) => (
+        <p role="alert">Download failed: {error.message}</p>
+      )}
+    >
+      <ReportDownload userId="42" />
+    </ErrorBoundary>
   );
 }
 ```
+
+In production, do not expose stack traces or sensitive request data in the fallback. Add a request ID or safe error code for support, report the original error with release and route metadata, and decide whether retry invalidates data before resetting. A boundary protects rendering; it does not validate API schemas, cancel requests, or make a broken dependency healthy.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
-**Q: What is a React Error Boundary, and what exact problem does it solve?**
+**Q: What is an Error Boundary?**
 
-An Error Boundary is a React component that intercepts JavaScript runtime errors thrown anywhere within its child component tree during rendering, lifecycle methods, and constructors. Instead of allowing an unhandled exception to crash and unmount the entire application into a blank white screen, the Error Boundary catches the error, logs diagnostic details (such as the component stack trace) to an observability service, and renders a localized fallback UI. It introduces declarative fault containment zones into the React Fiber tree.
+An Error Boundary is a class component that catches errors thrown by descendants during React-managed rendering and relevant lifecycle/commit work, records a fallback state, and renders replacement UI for that subtree. It is a fault-containment mechanism, not a replacement for all JavaScript error handling.
 
-**Q: What categories of errors do Error Boundaries catch, and what categories do they miss? Why?**
+**Q: Why does React need a boundary when JavaScript has `try...catch`?**
 
-Error Boundaries catch errors that occur synchronously during React's internal execution phases:
-1. Component function bodies and class `render()` methods during JSX evaluation.
-2. Component constructors.
-3. Lifecycle methods like `componentDidMount`, `componentDidUpdate`, and `componentWillUnmount`.
-4. Standard and custom hooks during render (`useMemo`, `useCallback`, `useLayoutEffect`, and `useEffect` callbacks during commit).
+`try...catch` only covers the synchronous call stack inside its block. JSX creates an element description; React later executes descendants during reconciliation. A boundary participates in that tree traversal and gives React a recovery ancestor.
 
-They do NOT catch:
-1. **Event handlers (`onClick`, `onChange`):** These run in the browser event loop outside of React's render/commit cycle.
-2. **Asynchronous callbacks (`setTimeout`, `Promise.catch`, `fetch`):** These execute on the event loop queues after the current render pass has finished.
-3. **Server-Side Rendering (SSR):** SSR errors happen on the server stream before client-side hydration.
-4. **Errors within the boundary itself:** A boundary cannot catch exceptions thrown inside its own `render()` or `getDerivedStateFromError()`.
+**Q: What is the difference between the two boundary methods?**
 
-The reason for this distinction is architectural: Error Boundaries are wired into React's Fiber work loop (`throwException`). When code runs outside that work loop (like a user click or a resolved `setTimeout`), React is not executing its reconciliation pipeline, so the error does not pass through the Fiber tree walker.
+`static getDerivedStateFromError` runs during render and returns state for fallback selection, so it must be pure. `componentDidCatch` runs after React has handled the failure during commit and is the place for telemetry or other side effects. The first decides what to render; the second records what happened.
 
-**Q: Why are Error Boundaries still implemented as Class Components rather than Function Components with Hooks?**
+**Q: Why are boundaries class-based?**
 
-React requires two specific lifecycle methods for error containment: `static getDerivedStateFromError` (which must run synchronously during the render phase to compute fallback state without causing side effects) and `componentDidCatch` (which runs during the commit phase for telemetry side effects). 
+React’s built-in boundary contract is expressed through class lifecycle methods. Function components can be used for the fallback and for a wrapper API, and libraries can hide the class implementation, but a normal function component with Hooks does not itself become an Error Boundary merely by using state.
 
-In React's internal architecture, hook state is stored as a linked list attached to the fiber. When a component throws an error during rendering, its hook list execution is aborted mid-flight, making it unsafe to rely on subsequent hook calls within that same failing fiber. While the React core team has explored a potential `useErrorBoundary` hook, coordinating clean phase separation and fallback rendering within functional fibers without breaking pure render invariants remains challenging. Therefore, Class Components remain the official core primitive, though libraries like `react-error-boundary` wrap this class in convenient functional wrappers.
+**Q: Do boundaries catch event-handler and `fetch` errors?**
 
-**Q: What is the difference between `static getDerivedStateFromError` and `componentDidCatch`? Why do both exist?**
+Not automatically. The handler or promise continuation runs outside the render traversal. Catch those errors where the imperative work is initiated, model them as local/server state, or store an error and throw it during a later render to intentionally bridge it.
 
-They exist to separate pure state calculation from impure side effects across React's two-phase lifecycle:
+**Q: How do you reset one?**
 
-- `static getDerivedStateFromError(error)` runs during the **Render Phase**. It is a pure, static method with no access to `this`. It receives the thrown error and returns a state update (`{ hasError: true }`). React calls this immediately upon catching the crash so it can schedule a re-render with the fallback UI. Because the render phase may be aborted or restarted by React (especially in Concurrent Mode), side effects here are strictly prohibited.
-- `componentDidCatch(error, errorInfo)` runs during the **Commit Phase**. It runs after React has successfully mounted the fallback UI to the real DOM. It receives the error and an `errorInfo` object containing the `componentStack`. This method has access to `this` and is the designated place to trigger side effects, such as sending log payloads to monitoring platforms or triggering external alerts.
+Expose a retry callback that clears the boundary state only after the cause may have changed. For route or entity changes, give the boundary a changing `key`; React then creates a new identity. A retry that renders the same corrupt input will fail again.
 
-**Q: How do you capture and route asynchronous errors (like failed `fetch` calls or `setTimeout`) into an Error Boundary?**
+**Q: Where should boundaries be placed?**
 
-Because async operations run outside the Fiber work loop, you must bridge them back into React's render phase. The standard pattern is to use a state updater function that throws inside the React dispatch loop:
+Use a root boundary as a last resort, route boundaries around independently navigable pages, and feature boundaries around high-risk widgets such as charts, editors, media players, plugin content, or user-generated renderers. Choose the smallest subtree whose replacement still gives the user a useful experience.
 
-```tsx
-function useAsyncError() {
-  const [, setError] = useState();
-  return useCallback((err: Error) => {
-    setError(() => {
-      throw err; // Throws during React's state transition, routing it to the boundary
-    });
-  }, []);
-}
-```
+**Q: How do boundaries relate to Suspense?**
 
-Alternatively, when using the popular `react-error-boundary` library, you can invoke the `useErrorBoundary` hook's `showBoundary(error)` method, which executes this exact mechanism internally.
+Suspense handles a pending thenable by showing its loading fallback. An Error Boundary handles an error. A rejected promise used by Suspense becomes an error that an enclosing boundary can handle, so a common shape is `ErrorBoundary` outside `Suspense`: error fallback outside, loading fallback inside.
 
-**Q: How do you design an Error Boundary reset strategy so users can recover without refreshing the whole page?**
+**Q: What happens on the server?**
 
-A robust recovery strategy utilizes three coordinated mechanisms:
-1. **Interactive Reset:** Expose a `resetErrorBoundary` function to the fallback UI that clears the boundary's error state (`{ hasError: false, error: null }`), allowing the user to click a "Try Again" button.
-2. **Prop Dependency Reset (`resetKeys`):** Pass an array of values (like the current URL pathname, search query, or active entity ID) into the boundary. When `componentDidUpdate` detects that any `resetKey` has changed via shallow comparison, it automatically invokes `resetErrorBoundary()`.
-3. **Key Remounting:** In routing setups, assign the route path as the boundary's `key` (`<ErrorBoundary key={location.pathname}>`). Navigating to a new route destroys the old boundary fiber and mounts a brand-new instance with initial clean state.
+A client Error Boundary cannot render a server fallback during SSR. The server renderer or framework must catch the request/stream error. Client boundaries still help after hydration or during later browser renders.
 
-**Q: How should you structure Error Boundaries in a large-scale production application?**
+**Q: What should telemetry contain?**
 
-Apply a multi-tiered containment strategy:
-- **Tier 1 (Root Level):** Wrap the entire app at the root provider level. Shows a global disaster recovery screen if critical layout/root context crashes.
-- **Tier 2 (Route / Layout Level):** Wrap each major page view inside your router layout (e.g., in Next.js `error.tsx` or React Router `errorElement`). If the `/settings` page crashes, the navigation sidebar, header, and active session remain interactive.
-- **Tier 3 (Widget / Feature Level):** Wrap complex, high-risk, or third-party components (e.g., analytics charts, rich-text editors, video players, ad slots, comment feeds). If a chart fails to render due to unexpected data format, only that 300px card renders a fallback placeholder while the rest of the page remains 100% usable.
-
-**Q: How do Error Boundaries interact with React Suspense and Server Components?**
-
-Error Boundaries and Suspense are designed to be complementary structural wrappers in the Fiber tree:
-- `<Suspense>` catches **Promises** thrown by child components during rendering to display temporary loading spinners.
-- `<ErrorBoundary>` catches **Errors** thrown by child components during rendering to display fallback error views.
-
-When using React Suspense for data fetching (or React 19's `use()` hook), if the fetched promise rejects, Suspense does not handle the rejection; instead, it bubbles the rejected error up to the nearest enclosing `<ErrorBoundary>`. The standard production pattern is nesting Suspense inside an Error Boundary:
-```tsx
-<ErrorBoundary fallback={<ErrorCard />}>
-  <Suspense fallback={<LoadingSkeleton />}>
-    <AsyncDataWidget />
-  </Suspense>
-</ErrorBoundary>
-```
+Send the original error, `errorInfo.componentStack`, route or feature name, application version, and a correlation/request ID when safe. Redact user data and deduplicate noisy retries. Keep the fallback useful even when telemetry is unavailable.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Expecting Error Boundaries to Catch `onClick` and Form Submission Errors
-- **The Mistake:** Wrapping a form in an Error Boundary and assuming that an uncaught exception inside `handleSubmit` or `button.onClick` will display the boundary's fallback UI.
-- **Why It Fails:** Event handlers execute in the browser's JavaScript event loop after React has already completed its render and commit phases. React is not reconciling the virtual DOM when you click a button.
-- **What Happens:** The error logs to the browser console as an `Uncaught Error`, but the Error Boundary does not trigger, and no fallback UI is displayed.
-- **The Fix:** Handle event errors with traditional `try...catch` blocks to display inline validation messages, or use `showBoundary(error)` to intentionally route it to the boundary.
+**Trap 1: saying “boundaries catch all errors.”** They do not catch ordinary event callbacks, later timer/promise work, server-rendering failures, or errors in the boundary itself. State the execution context, not just a memorized list.
 
-### Trap 2: Relying Solely on a Single Root-Level Error Boundary
-- **The Mistake:** Adding one Error Boundary around the `<App />` component in `index.tsx` and calling error handling complete.
-- **Why It Fails:** An error in a non-critical component (such as an optional footer banner or avatar badge) bubbles all the way to the top. The root boundary catches it and unmounts the *entire* application.
-- **What Happens:** The user experiences a full-page crash over a trivial widget failure, destroying active form state and blocking navigation.
-- **The Fix:** Implement granular boundaries around independent widgets and page-level routes so failures are contained to their smallest possible blast radius.
+**Trap 2: logging in `getDerivedStateFromError`.** Render can restart or be abandoned. Put telemetry in `componentDidCatch`, and make the logger tolerant of duplicate development reports and failed network delivery.
 
-### Trap 3: Crashing Inside the Fallback UI or the Boundary's Own Methods
-- **The Mistake:** Writing complex rendering logic or accessing nullable properties inside the Error Boundary's own `render()` method or fallback component without defensive safeguards.
-- **Why It Fails:** An Error Boundary only catches errors in its *children*. It cannot catch errors thrown within its own `render()` function or `getDerivedStateFromError()`.
-- **What Happens:** The secondary error bubbles to the next ancestor boundary. If none exists, the entire application unmounts.
-- **The Fix:** Keep fallback components minimal, statically styled, and defensive. Avoid complex data transformations or risky hooks inside fallback UI.
+**Trap 3: wrapping only the root.** A root boundary prevents an empty root, but it gives a small widget a full-page blast radius. Add boundaries where users can continue meaningful work.
 
-### Trap 4: Conflating API Business Errors with Render Crashes
-- **The Mistake:** Using Error Boundaries as the primary mechanism to display expected HTTP states (such as a 404 Not Found, 401 Unauthorized, or 422 Form Validation error).
-- **Why It Fails:** Expected API responses are normal data-fetching states, not software bugs. Forcing them through Error Boundaries conflates operational telemetry (logging actual code crashes to Sentry) with standard user interface states.
-- **What Happens:** Sentry gets flooded with thousands of benign 404/validation errors, and you lose fine-grained control over contextual UI feedback (like displaying red text under an input field).
-- **The Fix:** Model expected API responses using server-state tools (TanStack Query, RTK Query) with standard `isError` / `error` properties. Reserve Error Boundaries for unexpected exceptions and rendering crashes.
+**Trap 4: treating a 404 or validation response as a render crash.** Expected server outcomes belong in query, route, or form state. Sending every expected response to crash telemetry obscures real defects and produces worse contextual UI.
 
-### Trap 5: Triggering an Infinite Reset Loop on Retry
-- **The Mistake:** Rendering a "Try Again" button that calls `resetErrorBoundary()` without fixing or changing the underlying data or props that caused the crash.
-- **Why It Fails:** When the boundary resets `hasError: false`, React immediately re-renders the exact same child component with the exact same corrupt props or state.
-- **What Happens:** The child throws immediately during the retry render. The boundary catches it and shows the fallback again within milliseconds. If automated, this can lock the main thread in an infinite render loop.
-- **The Fix:** Combine reset buttons with state invalidation (e.g., refetching clean data, clearing cached inputs) or use `resetKeys` so retries only execute when input parameters change.
+**Trap 5: retrying without changing the cause.** Clearing `hasError` immediately reruns the same child with the same props. Refetch, invalidate, change the input, or show a reload/support action; otherwise the fallback will reappear.
+
+**Trap 6: assuming a key is a harmless prop.** Changing a key remounts the identity and discards descendant state, focus, subscriptions, and unsaved local input. Use it deliberately and place it at the scope that should actually reset.
+
+**Trap 7: making fallback UI fragile.** A fallback that dereferences optional data, imports a broken feature, or depends on the failed provider can throw too. Keep it static and defensive, and put an outer last-resort boundary around it when the product needs one.
+
+**Trap 8: overclaiming effect coverage.** React may route an error thrown during a descendant’s client commit work to a boundary, but a promise or timer started by that effect is not automatically covered. Track the async operation explicitly and decide who owns its error state.
+
+**Trap 9: confusing an Error Boundary with a security boundary.** It contains rendering failure, not privileges, network access, or untrusted code. Validate data, authorize requests, sanitize content, and isolate third-party execution separately.
 
 ## 7. Compare With Related Concepts
 
-### Error Boundary vs JavaScript `try...catch`
-- **The Difference:** `try...catch` is an imperative JavaScript construct that catches synchronous exceptions occurring within its immediate execution block on the active call stack. An Error Boundary is a declarative React component that catches exceptions occurring anywhere in its descendant component tree during React's asynchronous reconciliation and commit phases.
-- **When to Use Which:** Use `try...catch` for imperative code: event handlers, asynchronous utilities, `JSON.parse` operations, and data transformation scripts. Use Error Boundaries for declarative UI trees to prevent rendering exceptions from unmounting parent components.
+| Concept | Owns | Does not replace |
+| --- | --- | --- |
+| Error Boundary | Unexpected descendant render/lifecycle failure and subtree fallback | Event `try...catch`, API state, SSR request handling |
+| JavaScript `try...catch` | Synchronous imperative code in its call stack | Declarative descendant tree recovery |
+| Query/form error state | Expected HTTP, validation, loading, retry, and empty states | Unexpected component bugs |
+| Suspense | Pending thenables and loading fallback | Rejected errors; pair with an Error Boundary |
+| `window.onerror` / `unhandledrejection` | Global browser-level observability | Replacing a React subtree with fallback UI |
+| Router error boundary | Route-level loader/render/action failure, depending on router | Feature-level containment inside a route |
 
-### Error Boundary vs API Error State (`isLoading` / `isError`)
-- **The Difference:** API error states manage *expected* operational responses from the network (e.g., invalid passwords, empty search results, HTTP 500 server downtime) as standard reactive state. Error Boundaries handle *unexpected* software bugs and syntax/null errors (e.g., `TypeError: Cannot read property of undefined`) that interrupt React rendering.
-- **When to Use Which:** Use API error state to render user-friendly guidance for expected network outcomes. Use Error Boundaries as a defensive net for unhandled bugs and corrupt data structures.
+**Boundary versus `try...catch`.** Use a boundary when React should replace a descendant subtree. Use `try...catch` when code is imperative: parse a payload, submit a form, process a file, or await a request. They can cooperate: catch an event error, update local state for ordinary feedback, or deliberately bridge it to a boundary.
 
-### Error Boundary vs React Suspense (`<Suspense fallback={...}>`)
-- **The Difference:** Both use the same Fiber tree unwinding mechanic, but Suspense intercepts thrown **Promises** to manage asynchronous loading states, whereas Error Boundaries intercept thrown **Exceptions (Errors)** to manage failure states.
-- **When to Use Which:** Use Suspense to coordinate pending asynchronous operations (code-splitting, React 19 `use()`, server component streaming). Wrap Suspense boundaries inside Error Boundaries to catch rejected promises and render failures.
+**Boundary versus API error state.** A server returning `401`, `404`, `422`, or `503` is a product state with context and often a retry policy. A `TypeError` because a component assumed the wrong shape is a programming/data-integrity failure. Keep those channels separate so users get the right message and telemetry remains actionable.
 
-### Error Boundary vs Global Window Handlers (`window.onerror` / `window.onunhandledrejection`)
-- **The Difference:** `window.onerror` is a browser-level global event listener that captures unhandled runtime errors across all scripts on the page for raw telemetry. It cannot alter React's Fiber tree or render replacement DOM elements. An Error Boundary operates directly on React's Fiber reconciliation loop and can substitute a broken subtree with fallback React components.
-- **When to Use Which:** Use `window.onerror` and `window.onunhandledrejection` as the ultimate observability safety net to ship uncaught global crashes to your monitoring platform. Use Error Boundaries inside React to keep your user interface alive and interactive.
+**Boundary versus Suspense.** Suspense answers “is this subtree still pending?” A boundary answers “did this subtree fail?” Put the error boundary outside the Suspense boundary when both a loading fallback and an error fallback are needed.
 
-## 8. 🧠 The Memory Hook
+**Boundary versus global handlers.** Global handlers are valuable last-resort telemetry for failures that escape React, but they have no component-tree ownership and cannot decide which React subtree to replace. A boundary has local ownership and user-facing recovery; global handlers provide broader visibility.
 
-Think of an Error Boundary as a submarine's watertight bulkhead door: when an unhandled render error punctures a child component, the bulkhead slams shut instantly to isolate the flood to that single room, keeping the rest of the ship powered, interactive, and afloat instead of dragging the entire app to the bottom of the ocean.
+**Boundary versus a router’s route error UI.** A router can own route loaders, actions, and route rendering. A feature boundary remains useful inside the route for a chart or editor whose failure should not discard the route shell. Use the owner closest to the work that can recover it.
 
+## 8. 🧠 The Memory Hook — What Sticks
+
+Remember **BULKHEAD**: **B**ound descendants, **U**nderstand the render context, **L**og after commit, **K**ey-remount for a clean identity, **H**andle events and async work explicitly, **E**nclose the smallest useful feature, **A**void fragile fallbacks, and **D**o not confuse bugs with normal API states.
+
+An Error Boundary is a watertight door in the React tree: it contains a child render failure, records the damage after commit, and gives that compartment a safe way to recover while the rest of the application stays afloat.
