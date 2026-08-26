@@ -1,128 +1,419 @@
-# Custom Exception Handlers
+# Custom Exception Handlers in FastAPI: `HTTPException`, Domain Exceptions, and Standard Error Envelopes
 
-## Detailed explanation
+## 1. Why This Exists — The Problem First
 
-Custom exception handlers turn application exceptions into consistent API error responses. In interviews, connect the framework feature to request lifecycle, validation, dependency management, database safety, testing, and production behavior.
+When engineering teams scale a FastAPI backend, a messy pattern quickly emerges: developers start sprinkling `raise HTTPException(status_code=404, detail="User not found")` and `raise HTTPException(status_code=400, detail="Insufficient funds")` deep inside database repositories, business logic classes, and payment services.
 
-## 1. One-line mental model
+This creates severe architectural coupling. Your core domain logic now depends directly on the HTTP transport layer. If you later invoke that payment logic from a background Celery worker, a CLI script, or a Kafka event consumer, you are stuck dealing with HTTP status codes in non-HTTP environments.
 
-Exception handlers standardize failures.
+Worse, when unhandled exceptions occur—like an unexpected database constraint failure or a third-party gateway timeout—FastAPI defaults to returning an unformatted `500 Internal Server Error` or leaking raw database schema details in debug mode. Meanwhile, frontend applications have to parse three completely different error formats: Pydantic validation errors (`{"detail": [...]}`), raw `HTTPException` responses (`{"detail": "..."}`), and unhandled server crashes.
 
-## 2. Problem it solves
+Custom exception handlers solve this by creating a clean boundary at the edge of your API. Business services raise pure, transport-agnostic Python domain exceptions, and centralized handlers translate them into predictable, machine-readable JSON error envelopes with tracking IDs.
 
-It keeps FastAPI applications predictable by making contracts, shared logic, validation, or runtime behavior explicit instead of scattering framework code across handlers.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
+Think of your backend as an international manufacturing warehouse:
 
-- Use Python type hints as API contracts.
-- Keep route handlers thin and delegate business logic to services.
-- Use dependencies for shared request-time behavior.
-- Return explicit response models and status codes.
-- Test behavior through HTTP calls and dependency overrides.
+- **The Assembly Floor (Domain & Service Layer):** The factory workers only care about internal mechanics: "Part out of stock", "Machine calibration failed", "Material defective". They do not speak foreign languages or deal with customs laws. If something breaks, they attach an internal red incident tag (`DomainException`) describing the exact component and issue.
+- **The Factory Gate & Customs Office (`FastAPI Exception Handlers`):** Located at the perimeter of the factory. The customs officer intercepts any incident tag leaving the floor, determines the appropriate international trade code (`HTTP 404`, `HTTP 402`, `HTTP 409`), and seals it inside a standardized shipping container (`Unified JSON Error Envelope`) complete with a stamped customs tracking number (`Request ID`).
+- **The Outside Courier (The Client / Frontend):** The courier never sees internal factory jargon or raw hazardous spill debris (`Internal Tracebacks`). Every package received at the gate adheres to the exact same standardized label format regardless of which factory machine failed.
 
-## 4. Visual / analogy
+If a vendor's external forklift breaks inside the plant (a third-party library error like SQLAlchemy `IntegrityError`), the customs officer intercepts the mechanical failure, files an internal incident report for the engineering team, and hands the courier a polite, sanitized delivery delay notification.
 
-```txt
-Request -> dependency resolution -> validation -> endpoint -> service/database -> response model -> response
-```
+## 3. How It Actually Works — The Full Explanation
 
-## 5. Minimal example
+FastAPI's error handling infrastructure runs on top of Starlette's exception middleware. When an exception occurs during the lifecycle of a request—whether inside a route handler, a dependency, or payload validation—the framework catches it and traverses the registered exception handlers using Python's method resolution order (MRO) to find the most specific match.
+
+The Decoupling Pattern: Domain Exceptions
+
+Instead of importing `fastapi.HTTPException` into your service layers, define pure Python exceptions that represent business rules:
 
 ```python
-from fastapi import FastAPI
-from pydantic import BaseModel
+class DomainError(Exception):
+    """Base exception for all domain business errors."""
+    def __init__(self, message: str, code: str = "DOMAIN_ERROR", details: dict | None = None):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.details = details or {}
 
-app = FastAPI()
-
-class Item(BaseModel):
-    name: str
-
-@app.post("/items")
-def create_item(item: Item):
-    return {"data": item}
+class PaymentDeclinedError(DomainError):
+    def __init__(self, reason: str, card_last4: str):
+        super().__init__(
+            message=f"Payment declined: {reason}",
+            code="PAYMENT_DECLINED",
+            details={"reason": reason, "card_last4": card_last4},
+        )
 ```
 
-## 6. Real-world example
+Your service functions raise `PaymentDeclinedError` without knowing whether the request originated from an HTTP POST route, a GraphQL query, or a queue worker. A dedicated FastAPI exception handler registered at the application level catches `DomainError` and translates it into an HTTP response.
 
-A production FastAPI service uses routers per domain, Pydantic schemas for input/output, dependencies for auth and DB sessions, exception handlers for consistent errors, and tests with dependency overrides.
+`fastapi.HTTPException` vs `starlette.exceptions.HTTPException`
 
-## 7. Common interview questions
+FastAPI provides its own `HTTPException` class (`from fastapi import HTTPException`), which is a direct subclass of Starlette's `HTTPException` (`from starlette.exceptions import HTTPException`).
 
-#### What are custom exception handlers in FastAPI?
-- **The Engine Mechanism (Why it behaves this way):** Custom exception handlers are functions registered with `@app.exception_handler(ExceptionType)` that catch specific exceptions and return custom HTTP responses. When an exception of the registered type is raised anywhere in the application (endpoint, dependency, middleware), FastAPI calls the handler instead of returning a default 500 error. The handler receives the request and exception, and must return a Response object (typically JSONResponse). This enables consistent error response formats across the entire application.
-- **The Unforgettable Mental Model:** The **Emergency Response Team**. When a specific type of emergency happens (exception), the specialized response team (handler) takes over — they know exactly what to do, what to say (error message), and how to document it (logging).
-- **The Trap:** Registering handlers for too many exception types. Handle specific exceptions you expect (ValueError, NotFoundError) and let a catch-all handler deal with everything else. Don't register handlers for every possible exception.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Custom exception handlers catch specific exceptions and return consistent error responses. I register them with @app.exception_handler(ExceptionType). They receive the request and exception, and return a JSONResponse. I handle specific expected exceptions and use a catch-all for everything else."
+The critical difference lies in headers and default handling:
+- `starlette.exceptions.HTTPException` takes only `status_code` and `detail`.
+- `fastapi.HTTPException` extends Starlette's class by adding an optional `headers` dictionary argument. This is essential for HTTP specifications that require custom response headers on failure, such as returning `WWW-Authenticate` on `401 Unauthorized` or `Retry-After` on `429 Too Many Requests`.
+- FastAPI registers a default exception handler specifically for its own `fastapi.HTTPException` that ensures those custom headers are attached to the outgoing `JSONResponse`. If you raise Starlette's raw `HTTPException` without headers, it still works, but you bypass FastAPI's header injection.
 
-#### How do you register an exception handler?
-- **The Engine Mechanism (Why it behaves this way):** Use the `@app.exception_handler()` decorator with the exception class: `@app.exception_handler(UserNotFoundError) async def user_not_found_handler(request: Request, exc: UserNotFoundError): return JSONResponse(status_code=404, content={"error": "User not found", "detail": str(exc)})`. The handler function must accept `request` and `exc` parameters and return a Response. You can register handlers for built-in exceptions (ValueError, KeyError), HTTPException, or custom exception classes. Handlers are matched by exception type hierarchy — the most specific handler wins.
-- **The Unforgettable Mental Model:** The **911 Dispatcher**. You tell the dispatcher what type of emergency (exception class), and they assign the right response team (handler). The team knows the protocol (response format) for that emergency type.
-- **The Trap:** Forgetting that handlers must return a Response object. Returning a dict or string causes a server error. Always return JSONResponse or Response.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I register handlers with @app.exception_handler(ExceptionType). The handler receives request and exc, and returns a JSONResponse with the appropriate status code and error body. Handlers match by exception type — the most specific handler wins. I always return a Response object, never a raw dict."
+Standard Error Envelopes
 
-#### How do you create custom exception classes?
-- **The Engine Mechanism (Why it behaves this way):** Define a custom exception class that inherits from Exception or a more specific base: `class ResourceNotFoundError(Exception): def __init__(self, resource: str, id: str): self.resource = resource; self.id = id; super().__init__(f"{resource} with id {id} not found")`. Custom exceptions carry structured data (resource name, ID) that the exception handler can use to build detailed error responses. Raise them in services or repositories: `raise ResourceNotFoundError("User", user_id)`. The handler catches them and formats the response.
-- **The Unforgettable Mental Model:** The **Incident Report**. Instead of just saying "error," a custom exception is a structured incident report — what happened, where, and what was involved. The handler uses this report to write the public statement.
-- **The Trap:** Putting HTTP status codes in exception classes. Exceptions should be domain-level (ResourceNotFoundError), not HTTP-level (NotFoundException). The handler maps domain exceptions to HTTP status codes.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I create custom exception classes that carry structured data — resource name, ID, error details. They're domain-level, not HTTP-level. The exception handler maps them to HTTP status codes. This keeps business logic decoupled from HTTP concerns."
+In production APIs, every failure response should follow a predictable schema so client applications can handle errors systematically without defensive parsing. A standard error envelope contains:
 
-#### How does exception handler priority work?
-- **The Engine Mechanism (Why it behaves this way):** FastAPI matches exception handlers by type hierarchy — the most specific handler wins. If you have handlers for both `Exception` and `ValueError`, a `ValueError` is caught by the `ValueError` handler, not the `Exception` handler. Built-in handlers (for `RequestValidationError`, `HTTPException`) have higher priority than custom handlers for the same types unless you explicitly override them. Handlers registered later override earlier handlers for the same exception type.
-- **The Unforgettable Mental Model:** The **Specialist vs. Generalist Doctor**. A heart specialist (ValueError handler) treats heart issues before the general practitioner (Exception handler). The most specific expert always gets first priority.
-- **The Trap:** Registering a catch-all Exception handler that shadows more specific handlers. Register specific handlers first, then the catch-all. Or rely on type hierarchy — specific types are matched before general types.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: FastAPI matches handlers by type hierarchy — the most specific handler wins. ValueError is caught by a ValueError handler before an Exception handler. I register specific handlers for expected exceptions and a catch-all Exception handler for everything else. The catch-all logs the error and returns a generic 500 response."
+1. `code`: A machine-readable string identifier (e.g., `ORDER_ALREADY_PAID`, `VALIDATION_FAILED`) allowing frontend code to trigger localized UI states.
+2. `message`: A human-readable description explaining what went wrong.
+3. `details`: Structured context such as invalid field paths or resource IDs.
+4. `timestamp`: ISO-8601 UTC timestamp of when the failure occurred.
+5. `request_id`: A unique correlation ID matching the server logs for end-to-end tracing.
 
-#### How do you override FastAPI's default exception handlers?
-- **The Engine Mechanism (Why it behaves this way):** FastAPI has built-in handlers for `RequestValidationError` (422 responses) and `HTTPException` (custom status codes with detail). To override them, register your own handler for the same exception type: `@app.exception_handler(RequestValidationError) async def validation_error_handler(request: Request, exc: RequestValidationError): return JSONResponse(status_code=400, content={"error": "Invalid request", "details": exc.errors()})`. This replaces FastAPI's default 422 format with your custom format. Be careful — overriding default handlers changes behavior for all endpoints.
-- **The Unforgettable Mental Model:** The **Company Policy Override**. The default policy (FastAPI's handler) applies everywhere. But the company can issue a new policy (custom handler) that replaces the default for everyone.
-- **The Trap:** Overriding RequestValidationError and losing the structured error format. FastAPI's default 422 format is frontend-friendly. If you override it, replicate the structure or frontend forms will break.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I override default handlers by registering my own for the same exception type. But I'm careful with RequestValidationError — FastAPI's default 422 format is frontend-friendly. If I override it, I replicate the loc/msg/type structure so frontend error handling still works."
+```json
+{
+  "error": {
+    "code": "PAYMENT_DECLINED",
+    "message": "Payment declined: Card expired",
+    "details": {
+      "reason": "Card expired",
+      "card_last4": "4242"
+    },
+    "timestamp": "2026-08-26T16:35:00Z",
+    "request_id": "req_01j6k8m2p9v4b7n1"
+  }
+}
+```
 
-#### How do exception handlers improve production reliability?
-- **The Engine Mechanism (Why it behaves this way):** Exception handlers prevent raw stack traces from reaching clients (security risk), ensure consistent error response formats (frontend reliability), log errors with context (debugging), and map domain exceptions to appropriate HTTP status codes (API correctness). Without handlers, uncaught exceptions return generic 500 errors with no useful information. With handlers, every error type gets a structured, informative response that clients can handle programmatically.
-- **The Unforgettable Mental Model:** The **Customer Service Desk**. Without a desk, angry customers (errors) storm the kitchen (stack traces). With a desk, trained staff (handlers) calm customers, explain the issue, and offer solutions (structured errors).
-- **The Trap:** Swallowing exceptions without logging. Handlers should always log the exception before returning a response. Silent failures are the hardest to debug in production.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Exception handlers prevent stack trace leaks, ensure consistent error formats, log errors with context, and map domain exceptions to HTTP status codes. Every handler logs the exception before returning a response. This gives clients structured errors they can handle and gives engineers the context they need to debug."
+Intercepting Third-Party & Infrastructure Exceptions
 
-## 8. Active recall test
+Exceptions from database drivers (e.g., SQLAlchemy's `IntegrityError`), external SDKs, or cloud services must never leak unformatted to clients. Registering exception handlers for these external exception classes allows you to map database constraint violations directly to `409 Conflict` status codes while preventing database schema details from leaking.
 
-1. **What does @app.exception_handler do?**
-   - **Explanation:** Registers a function to catch a specific exception type and return a custom HTTP response. The handler receives the request and exception, and must return a Response object.
+Catch-All Exception Fallback
 
-2. **How does handler priority work?**
-   - **Explanation:** Most specific handler wins by type hierarchy. ValueError is caught by a ValueError handler before an Exception handler. Later registrations override earlier ones for the same type.
+A top-level handler for Python's base `Exception` ensures that unexpected crashes (e.g., `ZeroDivisionError`, `AttributeError`) are logged with full stack traces internally alongside the `request_id`, while the client receives a clean, non-leaking `500 Internal Server Error` envelope.
 
-3. **Why create custom exception classes instead of using HTTPException?**
-   - **Explanation:** Custom exceptions carry domain-level structured data (resource name, ID) and keep business logic decoupled from HTTP. The handler maps domain exceptions to HTTP status codes.
+## 4. Real Code — See It Working
 
-4. **What must an exception handler return?**
-   - **Explanation:** A Response object (typically JSONResponse). Returning a dict or string causes a server error.
+Here is a complete, production-grade implementation showing domain exception decoupling, custom error envelopes, validation overrides, and third-party error mapping.
 
-5. **Should you override FastAPI's default RequestValidationError handler?**
-   - **Explanation:** Only if necessary, and replicate the loc/msg/type structure. The default 422 format is frontend-friendly — changing it breaks frontend error handling.
+```python
+from datetime import datetime, timezone
+from typing import Any
+import uuid
+import logging
 
-6. **What should every exception handler do before returning a response?**
-   - **Explanation:** Log the exception with context. Silent failures are the hardest to debug in production.
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
-## 9. Mistakes / traps
+logger = logging.getLogger("api.errors")
 
-- Putting business logic directly in route handlers.
-- Mixing request schemas, database models, and response models.
-- Forgetting cleanup for request-scoped dependencies.
-- Blocking the event loop with sync I/O inside async routes.
-- Returning raw internal errors to clients.
+# ---------------------------------------------------------
+# 1. Standard Error Envelope Response Builder
+# ---------------------------------------------------------
+def create_error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    request: Request,
+    details: Any | None = None,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    """Builds a consistent, structured JSON error response across all routes."""
+    # Retrieve request correlation ID attached by middleware
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
 
-## 10. Compare with related concepts
+    envelope = {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "request_id": request_id,
+        }
+    }
+    return JSONResponse(
+        status_code=status_code,
+        content=envelope,
+        headers=headers,
+    )
 
-Custom Exception Handlers should be compared with neighboring FastAPI concepts by asking whether it belongs to routing, validation, dependency injection, serialization, lifecycle management, database access, or testing.
 
-## 11. Summary from memory
+# ---------------------------------------------------------
+# 2. Pure Domain Exceptions (No HTTP knowledge)
+# ---------------------------------------------------------
+class DomainError(Exception):
+    """Base domain exception raised inside business logic services."""
+    def __init__(self, message: str, code: str = "DOMAIN_ERROR", details: Any | None = None):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.details = details
 
-Explain Custom Exception Handlers, why FastAPI uses it, and how it changes production API behavior.
 
-## 12. Spaced revision prompts
+class EntityNotFoundError(DomainError):
+    def __init__(self, entity_name: str, entity_id: str):
+        super().__init__(
+            message=f"{entity_name} with id '{entity_id}' was not found.",
+            code=f"{entity_name.upper()}_NOT_FOUND",
+            details={"entity": entity_name, "id": entity_id},
+        )
 
-- Day 1: Define Custom Exception Handlers.
-- Day 3: Write a small route using the idea.
-- Day 7: Add validation or testing detail.
-- Day 14: Explain the production failure it prevents.
+
+class PaymentDeclinedError(DomainError):
+    def __init__(self, reason: str, card_last4: str):
+        super().__init__(
+            message=f"Payment declined: {reason}",
+            code="PAYMENT_DECLINED",
+            details={"reason": reason, "card_last4": card_last4},
+        )
+
+
+class DuplicateResourceError(DomainError):
+    def __init__(self, resource: str, field: str, value: str):
+        super().__init__(
+            message=f"{resource} with {field} '{value}' already exists.",
+            code="DUPLICATE_RESOURCE",
+            details={"resource": resource, "field": field, "value": value},
+        )
+
+
+# Simulated third-party exception (e.g. from an ORM or external SDK)
+class MockDatabaseIntegrityError(Exception):
+    def __init__(self, raw_db_error: str):
+        super().__init__(raw_db_error)
+        self.raw_db_error = raw_db_error
+
+
+# ---------------------------------------------------------
+# 3. FastAPI App & Exception Handler Registrations
+# ---------------------------------------------------------
+app = FastAPI(title="Checkout API")
+
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    """Ensures every incoming request has a traceable correlation ID."""
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+# Handler 1: Translate all Domain Exceptions to appropriate HTTP codes
+@app.exception_handler(DomainError)
+async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+    # Map domain subclasses to standard HTTP status codes
+    status_mapping = {
+        EntityNotFoundError: status.HTTP_404_NOT_FOUND,
+        PaymentDeclinedError: status.HTTP_402_PAYMENT_REQUIRED,
+        DuplicateResourceError: status.HTTP_409_CONFLICT,
+    }
+    http_status = status_mapping.get(type(exc), status.HTTP_400_BAD_REQUEST)
+
+    return create_error_response(
+        status_code=http_status,
+        code=exc.code,
+        message=exc.message,
+        request=request,
+        details=exc.details,
+    )
+
+
+# Handler 2: Override FastAPI's RequestValidationError (Pydantic 422 errors)
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # Transform raw Pydantic error list into clean, client-friendly error items
+    formatted_errors = [
+        {
+            "field": ".".join(str(loc) for loc in err["loc"] if loc != "body"),
+            "issue": err["msg"],
+            "type": err["type"],
+        }
+        for err in exc.errors()
+    ]
+    return create_error_response(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        code="VALIDATION_FAILED",
+        message="The request payload failed validation.",
+        request=request,
+        details=formatted_errors,
+    )
+
+
+# Handler 3: Intercept Third-Party Database Errors (Sanitize internal schema)
+@app.exception_handler(MockDatabaseIntegrityError)
+async def database_integrity_handler(
+    request: Request, exc: MockDatabaseIntegrityError
+) -> JSONResponse:
+    # Log raw database constraint details internally for engineers
+    logger.warning("DB Constraint violation on request %s: %s", request.state.request_id, exc)
+
+    # Return a safe, sanitized conflict response without exposing table/column names
+    return create_error_response(
+        status_code=status.HTTP_409_CONFLICT,
+        code="RESOURCE_CONFLICT",
+        message="A resource with the provided unique identifier already exists.",
+        request=request,
+    )
+
+
+# Handler 4: Catch-All for Unhandled Server Errors (500)
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Capture complete traceback internally with the request correlation ID
+    logger.error("Unhandled crash on request %s: %s", request.state.request_id, exc, exc_info=True)
+
+    return create_error_response(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="INTERNAL_SERVER_ERROR",
+        message="An unexpected server error occurred. Please contact support.",
+        request=request,
+    )
+
+
+# ---------------------------------------------------------
+# 4. Service Layer & Router Implementation
+# ---------------------------------------------------------
+class CheckoutPayload(BaseModel):
+    order_id: str = Field(min_length=3)
+    amount: float = Field(gt=0)
+    card_number: str = Field(min_length=16, max_length=16)
+
+
+class PaymentProcessingService:
+    """Pure domain service: completely decoupled from web frameworks."""
+
+    def execute_payment(self, order_id: str, amount: float, card_number: str) -> dict:
+        if order_id == "ord_missing":
+            raise EntityNotFoundError(entity_name="Order", entity_id=order_id)
+
+        if card_number.endswith("0000"):
+            raise PaymentDeclinedError(reason="Card expired", card_last4="0000")
+
+        if order_id == "ord_duplicate":
+            # Simulate a database unique constraint collision
+            raise MockDatabaseIntegrityError("unique_order_key violation on table 'orders'")
+
+        return {"transaction_id": "txn_987123", "status": "COMPLETED", "amount": amount}
+
+
+payment_service = PaymentProcessingService()
+
+
+@app.post("/orders/checkout", status_code=status.HTTP_200_OK)
+async def checkout_endpoint(payload: CheckoutPayload):
+    # Route handler remains thin: simply forwards to the domain service
+    result = payment_service.execute_payment(
+        order_id=payload.order_id,
+        amount=payload.amount,
+        card_number=payload.card_number,
+    )
+    return {"data": result}
+```
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is the technical difference between `fastapi.HTTPException` and `starlette.exceptions.HTTPException`?**
+
+`fastapi.HTTPException` is a direct subclass of `starlette.exceptions.HTTPException`. The primary difference is that FastAPI's subclass accepts an optional `headers: dict[str, str] | None = None` argument in its constructor, whereas Starlette's version only accepts `status_code` and `detail`.
+
+FastAPI registers a default exception handler for `fastapi.HTTPException` that extracts `exc.headers` and applies them to the outgoing `JSONResponse`. This is essential for HTTP status codes that require specific response headers by RFC specifications, such as providing `WWW-Authenticate: Bearer` on a `401 Unauthorized` response or `Retry-After: 60` on a `429 Too Many Requests` response. If you raise Starlette's `HTTPException` instead, those custom headers cannot be passed through the exception constructor.
+
+**Q: Why should service layers raise Domain Exceptions instead of `HTTPException`?**
+
+Raising `HTTPException` directly inside business logic couples your domain layer to HTTP transport semantics. This violates clean architecture and hexagonal architecture principles.
+
+When your service layer raises pure domain exceptions (such as `OrderNotFoundError` or `InsufficientBalanceError`):
+1. **Transport Agnostic:** The exact same service function can be invoked by HTTP route handlers, background worker queues (Celery/ARQ), CLI commands, WebSockets, or gRPC endpoints without handling irrelevant HTTP concepts.
+2. **Simplified Testing:** Unit tests for business logic do not need to inspect HTTP status codes or parse JSON response payloads—they assert domain exception types and attributes directly.
+3. **Centralized Protocol Translation:** The web boundary (FastAPI exception handlers) maintains sole responsibility for deciding whether an `InsufficientBalanceError` maps to HTTP `402 Payment Required` or `400 Bad Request`.
+
+**Q: How does FastAPI determine handler precedence when multiple exception handlers match an exception class hierarchy?**
+
+FastAPI relies on Python's class inheritance hierarchy and Method Resolution Order (MRO) when routing caught exceptions to registered handlers.
+
+When an exception occurs, FastAPI checks the registered handlers in order from most specific to least specific:
+1. Exact match on the raised exception class (e.g., `@app.exception_handler(PaymentDeclinedError)`).
+2. Direct parent class matches in the inheritance chain (e.g., `@app.exception_handler(DomainError)`).
+3. Base classes higher in the hierarchy (e.g., `@app.exception_handler(Exception)`).
+
+The most specific registered handler always wins. If an exception matches both a registered `DomainError` handler and a registered catch-all `Exception` handler, FastAPI executes the `DomainError` handler.
+
+**Q: How do you handle unhandled 500 errors and database exceptions without leaking sensitive infrastructure details?**
+
+By registering a global fallback handler for Python's base `Exception` and specific handlers for database driver errors (like SQLAlchemy `IntegrityError` or `DBAPIError`).
+
+To prevent security leaks while maintaining observability:
+1. Generate or extract a unique correlation ID (`request_id`) for every request via middleware.
+2. Inside the exception handler, log the full exception stack trace, request parameters, and `request_id` to an internal logging aggregator (e.g., Datadog, Sentry, CloudWatch).
+3. Return a generic, sanitized JSON envelope to the client containing only the `request_id`, a high-level error code (`INTERNAL_SERVER_ERROR`), and a generic message. Never pass raw `str(exc)` from database or system errors to the client response, as this exposes table schemas, foreign key names, and SQL queries.
+
+**Q: How do you override FastAPI's default 422 `RequestValidationError` handler to enforce a company-wide error envelope?**
+
+FastAPI automatically raises `fastapi.exceptions.RequestValidationError` whenever request bodies, query params, path variables, or headers fail Pydantic validation. By default, it returns a 422 status code with a raw `{"detail": [...]}` list.
+
+To standardize this into your team's error envelope, register a custom handler for `RequestValidationError`:
+```python
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    errors = [
+        {
+            "field": ".".join(str(loc) for loc in err["loc"] if loc != "body"),
+            "message": err["msg"],
+            "type": err["type"],
+        }
+        for err in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "Invalid request payload",
+                "details": errors,
+                "request_id": getattr(request.state, "request_id", "unknown"),
+            }
+        },
+    )
+```
+
+## 6. The Traps — What Goes Wrong
+
+### Trap 1: Returning a raw dictionary or string instead of a `Response` object
+- **Wrong Assumption:** Developers assume exception handlers work like route functions, where FastAPI automatically serializes returned dicts into JSON.
+- **What Actually Happens:** FastAPI's exception middleware requires exception handlers to return an actual Starlette `Response` instance (such as `JSONResponse` or `Response`). Returning a raw dict `return {"error": "failed"}` causes Starlette to raise an internal server error or fail ASGI protocol compliance.
+- **The Fix:** Always return an explicit `JSONResponse(status_code=..., content=...)`.
+
+### Trap 2: Catching `Exception` inside service methods and swallowing domain errors
+- **Wrong Assumption:** Wrapping entire service functions in `try ... except Exception:` blocks to prevent crashes.
+- **What Actually Happens:** Blanket exception blocks catch custom domain exceptions before they can bubble up to registered FastAPI exception handlers. If the service catches a `PaymentDeclinedError` and re-raises a generic `HTTPException(500)` or returns `None`, the application loses granular error codes, breaks database transaction rollbacks, and destroys debugging context.
+- **The Fix:** Let domain exceptions bubble up untouched to the API boundary. Use `try...except` in services only when performing specific recovery actions or translating low-level driver errors into domain exceptions.
+
+### Trap 3: Exposing internal driver details in error responses
+- **Wrong Assumption:** Passing `str(exc)` into the error envelope `message` field makes frontend debugging easier.
+- **What Actually Happens:** When a database constraint fails, `str(exc)` contains table names, column constraints, and SQL statements. Exposing this information in production creates a security vulnerability by giving attackers a direct blueprint of your database schema.
+- **The Fix:** Log raw error details internally with the `request_id`, and send a clean, generalized message (e.g., `A record with this email already exists`) to the client.
+
+### Trap 4: Assuming exception handlers catch errors inside custom ASGI middleware
+- **Wrong Assumption:** Registering `@app.exception_handler(Exception)` will catch every possible crash in the entire application stack.
+- **What Actually Happens:** Starlette's `ExceptionMiddleware` sits *inside* the middleware stack, directly wrapping the routing and endpoint pipeline. If a custom ASGI middleware executed before `ExceptionMiddleware` raises an unhandled exception, it bypasses your FastAPI exception handlers completely and causes Uvicorn to return an unformatted 500 error.
+- **The Fix:** Wrap critical custom middleware code in internal `try...except` blocks and construct a direct `JSONResponse` if an error occurs at the outer middleware layer.
+
+## 7. Compare With Related Concepts
+
+### FastAPI Exception Handlers vs. Global HTTP Middleware
+- **The Difference:** Exception handlers are declarative functions triggered when specific exception types bubble up through the request lifecycle, using class inheritance (MRO) to match the handler. Middleware is a pipeline layer that wraps every incoming HTTP request and outgoing response uniformly (for headers, CORS, timing, and session management) before routing takes place.
+- **When to Use Which:** Use Exception Handlers for mapping business errors, domain exceptions, and validation failures into structured HTTP responses. Use Middleware for cross-cutting transport operations like correlation ID injection, security headers, and request logging.
+
+### `fastapi.HTTPException` vs. Domain Exceptions + Exception Handlers
+- **The Difference:** `HTTPException` is an HTTP-aware shortcut raised directly in route functions or FastAPI dependencies to abort request processing with a specific status code. Domain Exceptions are transport-agnostic Python classes (`class UserInactiveError(Exception)`) raised inside service layers with zero knowledge of HTTP.
+- **When to Use Which:** Use `HTTPException` only for shallow, transport-specific edge checks (e.g., verifying an API key in a route dependency). Use Domain Exceptions + registered handlers for all core business logic, database transactions, and multi-step workflows.
+
+### `RequestValidationError` vs. Pydantic `ValidationError`
+- **The Difference:** `RequestValidationError` is a FastAPI-specific wrapper exception raised when incoming client data (query parameters, path variables, request bodies) violates Pydantic schema validation during request parsing. Pydantic's standard `ValidationError` is raised when validating models internally within Python code (e.g., response serialization or domain model instantiation).
+- **When to Use Which:** FastAPI automatically catches `RequestValidationError` and routes it to 422 handlers. An uncaught internal `ValidationError` represents a server-side bug (such as an endpoint returning data that fails its own response model) and correctly triggers a 500 handler.
+
+## 8. 🧠 The Memory Hook
+
+**Raise pure domain errors in the engine room; let registered customs officers at the API gate stamp them into standardized, traceable HTTP envelopes.**
