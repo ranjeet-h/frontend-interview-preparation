@@ -2,503 +2,350 @@
 
 ## 1. Why This Exists — The Problem First
 
-JavaScript functions are stateless and ephemeral by design. When a function executes, its local variables live on the stack frame; the moment the return statement finishes, that execution context is destroyed and its local memory is wiped clean.
+A function component runs, returns JSX, and finishes. Its local variables belong to that one execution. If a component uses `let count = 0`, a click can change that variable, but React does not know that the screen should be rendered again. If a parent update causes the component to run again, the declaration starts over at `0`.
 
-Before hooks arrived in React 16.8, if a component needed to remember user input, a toggled modal state, or an active tab between renders, you were forced to write an ES6 Class component. That meant dealing with `this` binding gymnastics, boilerplate constructors, fragmented lifecycle methods (`componentDidMount`, `componentDidUpdate`, `componentWillUnmount`), and bloated higher-order components just to share simple stateful logic.
+Moving the variable to module scope is not a solution: every mounted copy would share one value, and changing it still would not tell React which component should update. React needs a value that is both persistent for one component instance and connected to rendering.
 
-When developers wrote standard function components, they were strictly pure rendering pipelines: input props came in, JSX came out. If you tried to add an interactive counter using a local variable like `let count = 0;`, you ran into two immediate brick walls:
+`useState` provides that connection. It returns the state value for the current render and a setter that queues a state update. React can then render the component again with the resulting value. The important mental correction is that the setter is not a synchronous assignment to the variable already in the current function call. It is a request for a future render.
 
-1. Modifying `count++` inside a click handler does not inform React that the screen needs an update. The internal variable changes, but the virtual DOM never reconciles and the browser screen stays frozen.
-2. Even if a re-render is triggered by a parent component, the function component executes again from line 1. The line `let count = 0;` runs a second time, immediately resetting your counter back to zero and erasing whatever progress the user made.
+```tsx
+import { useState } from "react";
 
-`useState` exists to solve this exact problem: it gives stateless function components persistent memory across renders while notifying React's scheduler that the user interface must be repainted with the new value.
+export function Counter() {
+  const [count, setCount] = useState(0);
+
+  function increment() {
+    setCount(count + 1);
+    // `count` here is still this render's value.
+  }
+
+  return <button onClick={increment}>Clicked {count} times</button>;
+}
+```
+
+The component instance owns this state. Two `<Counter />` elements get two independent state slots because React tracks them as two mounted instances. When an instance is removed, its state is removed with its identity; when a new instance mounts, its initial state is used again.
 
 ## 2. The Analogy — Make It Obvious
 
-Imagine an actor filming a movie scene over multiple takes.
+Imagine an actor filming a scene in separate takes. In every take, the actor receives a fresh script and performs it from the beginning. The local variable `count` is a line on that script: it is fixed for the duration of that take. Event handlers created in that take remember the same value because they close over that particular script.
 
-Every time the director calls "Action!", the actor performs the scene from the top of the script. The actor is completely focused on the current line and has no memory of previous takes. When the director yells "Cut!", the actor's working memory is cleared.
+React is the continuity supervisor. It keeps a private numbered ledger for each component instance. The first `useState` call is slot 1, the second is slot 2, and so on. On the first take, React fills a slot with the initial value. On later takes, it gives the component the value produced by the queued updates for that slot.
 
-To keep track of what happened earlier in the movie, a **Continuity Supervisor** sits just off-camera holding an indexed binder.
+Calling a setter is handing the supervisor an instruction for a later take. `setCount(count + 1)` says, “using this take's `count`, queue the value `count + 1`.” It does not edit the script currently in the actor's hands. `setCount(previous => previous + 1)` says, “when the queued instructions are processed, transform the value that comes immediately before this instruction.”
 
-1. **Take 1 (Mount):** The actor walks onto the set and asks: "Page 1, Slot 1: What prop am I holding?" The supervisor looks at their empty binder, writes down the initial script direction ("Coffee cup with 0 sips taken"), and hands the actor a full cup. During the scene, the actor wants to take a sip. They cannot magically repaint the finished film frame while performing; instead, they hand a sticky note to the supervisor: "For the next take, set Slot 1 to 1 sip taken."
-2. **Take 2 (Re-render):** The director yells "Action!" again. The actor starts reading the script from the very first line. When they reach Slot 1, they ask again: "What prop am I holding?" The supervisor does not read the initial script default anymore. They read their updated binder, hand the actor the cup with 1 sip taken, and the scene continues.
+This analogy explains the major rules:
 
-Here is how every moving part connects:
-- **The Actor running the script** is your function component executing from top to bottom.
-- **The Continuity Binder with ordered slots** is the Fiber node's `memoizedState` singly-linked list of hooks.
-- **The Sticky Note request** is calling the state setter `setCount()`, which appends an update to the queue and requests a new take.
-- **Each Take** is a distinct render snapshot where props and state values are fixed, immutable constants for the entire duration of that execution.
+- A render is a snapshot, not a live mutable view.
+- A setter schedules state work; it does not synchronously rewrite the current render.
+- Hook calls need stable order so ledger slot 1 is always matched with slot 1.
+- A component's position and `key` determine which instance owns the ledger.
+- React may start, pause, retry, or discard a render, so render code must be pure.
 
 ## 3. How It Actually Works — The Full Explanation
 
-### Where State Actually Lives: The Fiber Node Hook List
+When React renders a function component, it calls the function from top to bottom. The function's locals disappear when that call ends. React stores hook state outside that call, associated with the component instance's internal Fiber data. A useful conceptual model is an ordered list of hook records, each with a current value and a queue of pending actions. The exact Fiber fields are implementation details, not an application API.
 
-A function component does not store state inside its own closure. When React mounts a component, it creates an internal data structure called a **Fiber Node**.
+**Hook order is identity.** On mount, the first `useState` call receives the first state record, the next call receives the second, and so on. On update, React walks the records in the same order. React does not match hooks by variable names. Therefore hooks must be called unconditionally at the top level of a component or custom hook, never inside a condition, loop, or nested function.
 
-Attached to this Fiber node is a property called `memoizedState`. For a function component, `memoizedState` is not a primitive value or a plain object; it is the head of a **singly-linked list of Hook objects**. Each Hook object has this shape:
+**State is a render snapshot.** If a render reads `count` as `0`, all handlers returned by that render close over `0`. After `setCount(1)`, code later in that same handler still reads `0`. A later render creates a new `count` binding and new handlers. This is why logging immediately after a setter shows the old value without implying that React failed to queue the update.
 
-```typescript
-type Hook = {
-  memoizedState: any, // The current state value rendered to the screen
-  baseState: any,     // The baseline state used for queued calculations
-  baseQueue: Update | null,
-  queue: UpdateQueue | null, // Linked list of pending state updates
-  next: Hook | null   // Pointer to the next hook in this component
-};
+**Direct values and functional updates are different queue actions.** In `setCount(count + 1)`, JavaScript evaluates `count + 1` immediately using the current snapshot, then React queues the resulting value. In `setCount(previous => previous + 1)`, React queues a function and applies it to the pending state when the queue is processed. If the next state depends on previous state, use the functional form. It composes correctly when updates are queued from one handler, several handlers, or an asynchronous callback.
+
+For example, if the snapshot is `0`:
+
+```tsx
+import { useState } from "react";
+
+export function QueueExample() {
+  const [count, setCount] = useState(0);
+
+  function directTwice() {
+    setCount(count + 1);
+    setCount(count + 1);
+  }
+
+  function functionalTwice() {
+    setCount((previous) => previous + 1);
+    setCount((previous) => previous + 1);
+  }
+
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button type="button" onClick={directTwice}>
+        Direct value twice
+      </button>
+      <button type="button" onClick={functionalTwice}>
+        Functional update twice
+      </button>
+    </div>
+  );
+}
 ```
 
-When your component renders for the first time (`mountState` phase inside React):
-1. The first `useState(0)` call creates a new `Hook` object, assigns `memoizedState: 0`, and points the Fiber's `memoizedState` to it.
-2. The second `useState("idle")` call creates another `Hook` object, sets `memoizedState: "idle"`, and links the first hook's `.next` pointer to this second hook.
-3. React returns a tuple: `[hook.memoizedState, dispatchSetState.bind(null, fiber, queue)]`.
+The first handler normally queues `1` and `1`, so the next state is `1`. The second queues two transformations, so the next state is `2` higher. The word “normally” matters: React may optimize scheduling, but correctness should come from the action semantics, not from counting renders.
 
-When the component re-renders (`updateState` phase inside React):
-React resets an internal pointer (`workInProgressHook`) to the Fiber's head hook. Every time `useState` is called in the function body, React reads `workInProgressHook.memoizedState`, advances `workInProgressHook = workInProgressHook.next`, and returns the stored value.
+**Batching reduces render work, not snapshot rules.** React can process multiple state updates together and commit fewer intermediate results. React 18's `createRoot` enables automatic batching for updates from React events and common asynchronous callbacks such as timers, promise continuations, and native event callbacks. Exact boundaries depend on the root and scheduling context; updates separated by different turns or an `await` boundary should not be described as universally one batch. Batching does not make a current callback read newly queued state. `flushSync` is a narrow escape hatch for code that must force a synchronous DOM commit, such as a carefully justified layout measurement.
 
-This explains the foundational **Rule of Hooks**: React relies exclusively on the **exact call order** of hooks to match each `useState` call to its corresponding slot in the linked list. If you put `useState` inside an `if` condition or loop, the call order changes between renders, the pointers shift, and React assigns the wrong state data to the wrong variables.
+**Lazy initialization avoids repeated setup work.** `useState(expensive())` evaluates `expensive()` every time the component function runs because JavaScript evaluates arguments before calling `useState`. React uses the resulting value only for initialization on a mount. `useState(() => expensive())` passes an initializer function; React calls it during initial state setup and stores its result. It is not rerun for ordinary updates, but it can run again for a genuine remount and may be invoked more than once by development Strict Mode checks. Keep it pure and synchronous.
 
-### State Snapshots: State Is a Constant per Render
+**State objects and arrays need new identities.** React compares state values using `Object.is` semantics when deciding whether a state transition is observably different. In-place mutation such as `items.push(item); setItems(items)` changes data while retaining the same array reference. React may treat the next state as unchanged, and older renders can also observe data changed underneath them. Return a new array or object, and copy each nested level that changes. `useState` replaces the state value; it does not shallow-merge object fields like class `setState` did.
 
-State in React does not behave like a mutable object or a live observable. Inside any single render execution, state is a plain constant.
+**Identity, keys, and ownership determine continuity.** State belongs to a component at a particular identity in the rendered tree. A stable `key` lets React associate an item with the same component instance when list order changes. Changing a key intentionally gives that subtree a new identity and fresh state. Keep state in the narrowest owner that needs it. Lift it to the lowest common parent when siblings must coordinate, and use context or an external store only when the sharing boundary justifies the wider update fan-out.
 
-When React calls your component function, it passes the state value calculated for that specific render pass. Any event handlers, timers, or promises created during that render capture that exact constant value in their closure.
+**Effects are the boundary for external systems.** An Effect is not a second way to calculate render data. Use it to synchronize a committed render with something React does not own: a subscription, timer, network connection, media element, or imperative widget. Setup belongs in the Effect and cleanup must undo the exact resource. Filtered arrays, totals, formatted labels, and other pure derivations belong during render, with `useMemo` only as a measured performance optimization.
 
-Calling `setCount(count + 1)` does not modify the `count` variable in the currently executing stack frame. Instead, it creates an `Update` object, attaches it to the hook's update queue, and notifies the scheduler that a new render is required. Until React actually invokes your function component again for the next render, `count` remains the exact snapshot value it was when the function started.
+**Strict Mode and concurrent rendering require purity.** In development, Strict Mode may call render logic, lazy initializers, or updater functions more than once to expose mutation and side effects. Concurrent rendering may begin a render, pause it, retry it, or discard it before commit. A discarded render has no committed UI and must not have caused observable work. Do not mutate state, increment external counters, write storage, start requests, or touch the DOM while calculating JSX or inside a state updater. Event handlers and Effects are the appropriate boundaries for those actions.
 
-### The Update Queue and Functional Updates
+**SSR adds an environment boundary.** A lazy initializer still executes while the component is rendered on the server. `window`, `document`, and `localStorage` are not guaranteed to exist there. Guarding access prevents a crash, but a browser-only initial value can still differ from the server HTML and cause hydration problems. Prefer a deterministic server-safe initial value, then synchronize a browser preference after hydration when that is the intended design.
 
-Every hook maintains an `UpdateQueue`. When you invoke a state setter, React appends an update node to this queue:
+**TypeScript describes the state contract.** Type inference works well for literals and initial values, but annotate empty collections and nullable values when the intended domain is broader:
 
-```typescript
-type Update = {
-  action: any | ((prevState: any) => any),
-  next: Update | null
-};
+```tsx
+import { useState } from "react";
+
+type User = { id: string; name: string };
+
+export function UserEditor() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
+
+  function selectFirstUser() {
+    setSelectedUser(users[0] ?? null);
+  }
+
+  return (
+    <div>
+      <p>Status: {status}</p>
+      <p>Selected: {selectedUser?.name ?? "none"}</p>
+      <button type="button" onClick={selectFirstUser}>
+        Select first user
+      </button>
+      <button type="button" onClick={() => setStatus("saving")}>
+        Mark saving
+      </button>
+      <button
+        type="button"
+        onClick={() => setUsers((previous) => [...previous, { id: "1", name: "Asha" }])}
+      >
+        Add user
+      </button>
+    </div>
+  );
+}
 ```
 
-When you pass a raw value like `setCount(count + 1)`, the action stored in the queue is the evaluated value (e.g. `1`). If you call `setCount(count + 1)` three times synchronously in one click handler:
-- Call 1 queues: `action = 0 + 1 = 1`
-- Call 2 queues: `action = 0 + 1 = 1`
-- Call 3 queues: `action = 0 + 1 = 1`
-
-When React processes the queue on the next render, it overwrites the state with `1`, ignoring the previous two calls.
-
-When you pass an updater function `setCount(prev => prev + 1)`, the action stored in the queue is the function itself. During the next render phase, React loops through the update queue and chains them sequentially:
-- Update 1: receives `0` -> returns `1`
-- Update 2: receives `1` -> returns `2`
-- Update 3: receives `2` -> returns `3`
-
-The final `memoizedState` becomes `3`.
-
-### Automatic Batching (React 18)
-
-React combines multiple state update calls into a single re-render to avoid unnecessary repaints and layout thrashing.
-
-In React 17 and earlier, batching only occurred inside synthetic React event handlers (like `onClick` or `onChange`). Updates triggered inside `setTimeout`, native `addEventListener`, or after an `await` in a Promise ran outside the batching context, causing multiple separate renders.
-
-In React 18+, **Automatic Batching** is enabled by default across all contexts via `createRoot`. Whether state updates happen inside a click listener, a `fetch()` promise resolution, a `setTimeout`, or a WebSocket callback, React groups them into a single microtask render cycle. If you ever need to force an immediate synchronous render (e.g. reading layout measurements from the DOM right after an update), React provides `flushSync()`.
-
-### Lazy Initial State
-
-Passing an expression directly to `useState` causes that expression to run on **every single render**:
-
-```javascript
-// BAD: localStorage.getItem runs on initial mount AND every subsequent re-render
-const [token, setToken] = useState(localStorage.getItem("auth_token"));
-```
-
-JavaScript must evaluate function arguments before calling `useState`. React only uses the initial value on the first render and discards it on all future renders, but your CPU still pays the full cost of running `localStorage.getItem()` or complex JSON parsing on every render.
-
-Passing a function—known as **lazy initialization**—solves this:
-
-```javascript
-// GOOD: The function executes ONLY once during mountState
-const [token, setToken] = useState(() => localStorage.getItem("auth_token"));
-```
-
-During `mountState`, React sees that the initial argument is a function, executes it, and stores the return value in `memoizedState`. During `updateState`, React skips the argument completely and immediately returns the existing `memoizedState`.
-
-### `Object.is` Bailout Optimization
-
-Whenever you invoke a setter function, React checks if the new value is actually different from the current value using `Object.is(prevState, nextState)`.
-
-If the new value is identical to the current value according to `Object.is`:
-1. **Eager bailout:** If there are no other pending updates on the Fiber, React bails out immediately without even scheduling a component render.
-2. **Render-phase bailout:** If React is already rendering, it skips rendering the component's children and bypasses DOM mutation.
-
-This is why mutating an array or object in place (`stateArray.push(newItem)`) fails to update the UI: the memory reference remains identical, `Object.is(oldArr, newArr)` returns `true`, and React bails out of rendering entirely.
+The setter accepts either a value of the state type or a function from the previous state to the next state. `setSelectedUser(null)` is valid because the state type includes `null`; `useState([])` without a useful contextual type can infer an unusably narrow empty-array type. TypeScript checks the state contract, but it does not make mutation safe or change React's runtime snapshot model.
 
 ## 4. Real Code — See It Working
 
-### Example 1: Snapshot Behavior vs Functional Updater Queue
+The examples below are complete TSX components. They assume a normal React + TypeScript application and can be rendered from that application's entry point.
 
-This example demonstrates how state closures capture snapshots and why functional updaters are required for sequential operations.
+**Immutable object and array updates**
 
 ```tsx
-import React, { useState } from "react";
+import { useState } from "react";
 
-export function CounterDemo() {
-  const [count, setCount] = useState(0);
+type Profile = {
+  name: string;
+  preferences: { theme: "light" | "dark"; emailUpdates: boolean };
+  tags: string[];
+};
 
-  // Demonstrates stale closure snapshot issue
-  const handleStaleIncrementTriple = () => {
-    // In this render frame, `count` is fixed (e.g., 0).
-    // React receives three instructions: set to (0 + 1), set to (0 + 1), set to (0 + 1).
-    setCount(count + 1);
-    setCount(count + 1);
-    setCount(count + 1);
-    // Result on next render: 1
-  };
+export function ProfileEditor() {
+  const [profile, setProfile] = useState<Profile>({
+    name: "Asha",
+    preferences: { theme: "light", emailUpdates: true },
+    tags: ["react"],
+  });
 
-  // Demonstrates the functional update queue
-  const handleCorrectIncrementTriple = () => {
-    // React queues three functions and passes the resolved result of each to the next.
-    setCount((prev) => prev + 1);
-    setCount((prev) => prev + 1);
-    setCount((prev) => prev + 1);
-    // Result on next render: 3
-  };
+  function toggleTheme() {
+    setProfile((previous) => ({
+      ...previous,
+      preferences: {
+        ...previous.preferences,
+        theme: previous.preferences.theme === "light" ? "dark" : "light",
+      },
+    }));
+  }
 
-  // Demonstrates asynchronous closure capture in timers
-  const handleDelayedAlert = () => {
-    // Captures the exact snapshot of `count` at the moment the button was clicked
-    setTimeout(() => {
-      alert(`Count snapshot captured when timer started: ${count}`);
-    }, 3000);
-  };
+  function addTag() {
+    setProfile((previous) => ({ ...previous, tags: [...previous.tags, "typescript"] }));
+  }
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
-      <h2>Count: {count}</h2>
-      <button onClick={handleStaleIncrementTriple} style={{ marginRight: "8px" }}>
-        +3 (Stale Snapshot: adds 1)
-      </button>
-      <button onClick={handleCorrectIncrementTriple} style={{ marginRight: "8px" }}>
-        +3 (Functional Queue: adds 3)
-      </button>
-      <button onClick={handleDelayedAlert}>
-        Alert Count in 3s
-      </button>
-    </div>
+    <section>
+      <p>{profile.name}'s theme: {profile.preferences.theme}</p>
+      <p>Tags: {profile.tags.join(", ")}</p>
+      <button type="button" onClick={toggleTheme}>Toggle theme</button>
+      <button type="button" onClick={addTag}>Add tag</button>
+    </section>
   );
 }
 ```
 
-### Example 2: Immutable Complex State Updates
+Only the changed nested object is copied. Unchanged values may retain their identity. A shallow copy is enough at each level that changes; a deep clone on every update is usually unnecessary and can make identity-based optimizations less useful.
 
-This example shows how to correctly update nested objects and dynamic arrays without triggering `Object.is` reference bailouts.
+**Lazy initialization and derived data**
 
 ```tsx
-import React, { useState } from "react";
+import { useState } from "react";
 
-interface UserProfile {
-  name: string;
-  preferences: {
-    theme: "light" | "dark";
-    notifications: boolean;
-  };
-  tags: string[];
+type Task = { id: number; title: string; done: boolean };
+
+function readInitialTasks(): Task[] {
+  if (typeof window === "undefined") return [];
+  const raw = window.localStorage.getItem("tasks");
+  if (!raw) return [];
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as Task[]) : [];
+  } catch {
+    return [];
+  }
 }
 
-export function ProfileEditor() {
-  const [profile, setProfile] = useState<UserProfile>({
-    name: "Alex",
-    preferences: { theme: "light", notifications: true },
-    tags: ["react", "typescript"]
-  });
+export function TaskBoard() {
+  const [tasks, setTasks] = useState<Task[]>(() => readInitialTasks());
+  const [query, setQuery] = useState("");
 
-  // Updating nested object property immutably
-  const toggleTheme = () => {
-    setProfile((prev) => ({
-      ...prev, // Shallow copy top level
-      preferences: {
-        ...prev.preferences, // Shallow copy nested level
-        theme: prev.preferences.theme === "light" ? "dark" : "light"
-      }
-    }));
-  };
+  const visibleTasks = tasks.filter((task) =>
+    task.title.toLowerCase().includes(query.toLowerCase()),
+  );
 
-  // Appending to an array immutably
-  const addTag = (newTag: string) => {
-    if (!newTag.trim()) return;
-    setProfile((prev) => ({
-      ...prev,
-      tags: [...prev.tags, newTag.trim()] // Creates a fresh array reference
-    }));
-  };
-
-  // Removing from an array immutably
-  const removeTag = (tagToRemove: string) => {
-    setProfile((prev) => ({
-      ...prev,
-      tags: prev.tags.filter((tag) => tag !== tagToRemove) // Returns a new array
-    }));
-  };
+  function toggleTask(id: number) {
+    setTasks((previous) =>
+      previous.map((task) =>
+        task.id === id ? { ...task, done: !task.done } : task,
+      ),
+    );
+  }
 
   return (
-    <div style={{ padding: "20px" }}>
-      <h3>User: {profile.name}</h3>
-      <p>Theme: {profile.preferences.theme}</p>
-      <button onClick={toggleTheme}>Toggle Theme</button>
-
-      <h4>Tags:</h4>
+    <section>
+      <input
+        value={query}
+        placeholder="Filter tasks"
+        onChange={(event) => setQuery(event.target.value)}
+      />
       <ul>
-        {profile.tags.map((tag) => (
-          <li key={tag}>
-            {tag}{" "}
-            <button onClick={() => removeTag(tag)}>x</button>
+        {visibleTasks.map((task) => (
+          <li key={task.id}>
+            <button type="button" onClick={() => toggleTask(task.id)}>
+              {task.done ? "Done" : "Open"}: {task.title}
+            </button>
           </li>
         ))}
       </ul>
-      <button onClick={() => addTag(prompt("Enter tag:") || "")}>Add Tag</button>
-    </div>
+    </section>
   );
 }
 ```
 
-### Example 3: Expensive Lazy Initial State
+The saved tasks are initial state, so the read is lazy and does not repeat when `query` changes. `visibleTasks` is derived during render, so it cannot become out of sync with `tasks` and `query`. A real application should validate persisted data more strictly than this compact teaching example.
 
-This example demonstrates how to avoid executing expensive disk/storage reads or complex data transforms on every re-render.
+**Effects synchronize external resources**
 
 ```tsx
-import React, { useState } from "react";
+import { useEffect, useState } from "react";
 
-function parseInitialSettings() {
-  // Heavy synchronous I/O or large data calculation
-  const rawData = localStorage.getItem("app_settings");
-  if (!rawData) {
-    return { fontSize: 14, autoSave: true };
-  }
-  try {
-    return JSON.parse(rawData);
-  } catch {
-    return { fontSize: 14, autoSave: true };
-  }
-}
+export function WindowWidth() {
+  const [width, setWidth] = useState<number | null>(null);
 
-export function SettingsPanel() {
-  // By passing a callback function `() => parseInitialSettings()`,
-  // React invokes this ONLY once during component mount.
-  const [settings, setSettings] = useState(() => parseInitialSettings());
-  const [renderCount, setRenderCount] = useState(0);
+  useEffect(() => {
+    const updateWidth = () => setWidth(window.innerWidth);
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
 
-  const toggleAutoSave = () => {
-    setSettings((prev: typeof settings) => {
-      const next = { ...prev, autoSave: !prev.autoSave };
-      localStorage.setItem("app_settings", JSON.stringify(next));
-      return next;
-    });
-  };
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
 
-  return (
-    <div style={{ padding: "20px", border: "1px solid #ccc" }}>
-      <h4>Settings (Lazy Initialized)</h4>
-      <p>Auto-Save: {settings.autoSave ? "Enabled" : "Disabled"}</p>
-      <button onClick={toggleAutoSave}>Toggle Auto-Save</button>
-
-      <hr />
-      <p>Dummy Re-renders: {renderCount}</p>
-      <button onClick={() => setRenderCount((c) => c + 1)}>
-        Trigger Re-render (Settings won't re-parse)
-      </button>
-    </div>
-  );
+  return <p>Width: {width === null ? "measuring" : String(width) + "px"}</p>;
 }
 ```
+
+The state is the value displayed by React; the resize subscription is owned by the browser and therefore belongs in an Effect. The cleanup makes the setup safe under unmounting and Strict Mode's development setup-cleanup-setup probe. The initial `null` is also safe for SSR because the browser global is read only after commit.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
-**Q: What does `useState` return, and what happens under the hood when you call the setter function?**
+**What does `useState` return?** It returns a pair: the value for the current render and a setter function. Array destructuring permits any local names. The setter returns `undefined`; it does not return the next state.
 
-`useState(initialValue)` returns a two-element array: `[stateValue, dispatchFunction]`. Returning an array allows the caller to assign arbitrary local names via array destructuring (`const [count, setCount] = useState(0)`).
+**Where does state live between function calls?** React associates hook records and their pending update queues with the component instance, conceptually in ordered hook slots on its internal Fiber data. The function's local variables are recreated; React's stored hook state is not.
 
-When you invoke the setter function:
-1. React creates a state `Update` record containing the action (the new value or updater callback) and lane priority.
-2. React appends this record to the hook's update queue on the corresponding Fiber node.
-3. React performs an eager check with `Object.is(currentValue, newValue)` if no work is pending. If unchanged, it skips scheduling.
-4. If changed, React's scheduler marks the Fiber node as dirty and requests a render pass at the update's priority level.
-5. During the next reconciliation pass, React re-executes the component function, reduces all queued updates into a new `memoizedState`, and returns the updated value to the component. The setter itself always returns `undefined`.
+**Why does `console.log(count)` after `setCount(count + 1)` show the old value?** The handler belongs to the current render and closes over that render's `count` binding. The setter queues work for a later render; it does not mutate the binding in the already-running function. To use the intended value immediately, calculate `const next = count + 1` and use `next` locally as well as passing it to the setter.
 
-**Q: Why does `console.log(state)` immediately after `setState(newValue)` print the old value?**
+**When should I use a functional updater?** Use it whenever the next value depends on the previous value: counters, toggles based on current state, accumulated results, or updates that may be queued by callbacks holding old snapshots. It is especially important for multiple dependent updates. It is not a magic refresh for other captured props or state values.
 
-Because state updates are not synchronous in-place mutations; they are requests for a future render.
+**What is the result of calling a setter three times?** It depends on the actions. Three `setCount(count + 1)` calls from a `0` snapshot queue the value `1` three times, so the result is normally `1`. Three `setCount(previous => previous + 1)` calls queue transformations and produce `3`. Batching may reduce render passes, but the queue still applies actions in order.
 
-When your component renders, `state` is a local `const` variable bound to that specific execution's snapshot. When you call `setState(5)`, React queues the update for the *next* render. The current JavaScript function continues running synchronously within its existing execution context, where `state` remains bound to its original snapshot value. The new value does not exist in your local variable scope until React invokes your component function a second time to produce a fresh stack frame.
+**What does batching mean?** React groups compatible updates so it can render and commit less often. It is a scheduling optimization, not an immediate-assignment guarantee and not a promise that every update anywhere becomes one render. Do not use a render count as application correctness logic.
 
-**Q: What is a functional state update, and when is it strictly necessary?**
+**Does `useState` merge objects?** No. The setter replaces the whole state value. For object state, return the fields you want to keep: `setUser(previous => ({ ...previous, name: "Mina" }))`. For nested changes, copy every changed level.
 
-A functional state update passes a callback to the setter: `setCount(prevCount => prevCount + 1)` instead of a raw value: `setCount(count + 1)`.
+**Why is mutation unsafe?** Mutation keeps the same reference and can make `Object.is(previous, next)` true even though a property was changed. It also changes data that an older render may still be reading. New identities make the state transition explicit and preserve snapshot reasoning.
 
-It is strictly necessary in two scenarios:
-1. **Multiple updates batched in the same event tick:** When several state updates happen in the same handler, direct values all reference the same starting snapshot. Passing an updater function guarantees that each update receives the intermediate result of the previous update from the queue.
-2. **Closures over stale renders:** If an event listener, timer (`setInterval`), or asynchronous Promise resolves long after a component has rendered, a direct state reference (`count`) is trapped in the old closure. A functional updater receives the live, up-to-date state directly from React's internal Fiber node at the moment the queue is processed.
+**What is lazy initialization?** `useState(() => createInitialValue())` gives React an initializer to call during initial state setup. It avoids running the setup expression on every component execution. It runs again for a new mount and may be checked more than once in development Strict Mode, so it must be pure.
 
-**Q: Why does mutating an object or array in place fail to trigger a re-render in React?**
+**Is lazy initialization the same as `useMemo`?** No. Lazy initialization supplies the starting value of state; later changes happen through the setter. `useMemo` caches a derived calculation and may recompute it when dependencies change. Neither is a license for render-time side effects.
 
-React relies on reference equality checks via `Object.is()` for performance optimization (bailout).
+**How can state itself be a function?** React interprets a function passed as the initial argument or setter argument as code to call. To store a function as the initial value, use `useState(() => handler)`. To store a new function value through a setter, use `setHandler(() => nextHandler)`. This wrapper distinguishes a function value from an updater function.
 
-When you mutate an array in place using `items.push(newItem)` or an object via `user.name = "Bob"`, the memory address of that object or array remains unchanged. When you subsequently pass that same variable to `setItems(items)` or `setUser(user)`, React compares the previous state reference with the next state reference:
+**How do keys affect state?** A stable key lets React preserve a child's identity when its position in a list changes. Changing the key tells React that it is a different component instance, so its state initializes again. Do not use an array index as a key when insertion, deletion, or reordering can associate a row's state with the wrong item.
 
-```javascript
-Object.is(prevItems, nextItems) // returns true! Same memory pointer
-```
+**Where should state live?** Put it in the smallest owner that needs to change and render it. Lift it to the lowest common parent for coordinating siblings. Props are a delivery mechanism, context is a delivery mechanism across a subtree, and an external store is a broader ownership choice; none replaces the need to identify the actual owner.
 
-Because the references are identical, React assumes no state transition occurred, bails out of reconciliation, and skips re-rendering the component and its children. To trigger an update, you must create a new memory reference using array/object spreading (`[...items, newItem]`, `{ ...user, name: "Bob" }`), `map()`, or `filter()`.
+**When should I avoid `useState`?** Avoid it for values that can be derived during render, values that must not trigger a render (often `useRef`), complex action-driven transitions (often `useReducer`), and server cache data (a query/cache library may be more appropriate). These are design choices, not absolute prohibitions.
 
-**Q: What is lazy initialization in `useState` and how does it prevent performance bottlenecks?**
+**Can I fetch data in a lazy initializer or state updater?** No. Both execute during render-time state calculation and must be pure. Start asynchronous work from an event handler or an Effect, with cancellation or stale-result protection when needed. Prefer a server-state library for caching and request lifecycle concerns.
 
-Lazy initialization means passing a function to `useState` instead of a direct expression:
+**What changes with SSR?** State initialization runs while rendering on the server, so browser-only APIs can crash. Even guarded browser reads can produce different server and client markup. Use a deterministic initial value and reconcile browser-only data after hydration when necessary.
 
-```javascript
-const [data, setData] = useState(() => computeExpensiveData());
-```
-
-When you pass an expression like `useState(computeExpensiveData())`, JavaScript evaluates `computeExpensiveData()` synchronously on **every single render** before calling `useState`. React ignores the return value on every render after the initial mount, but the expensive computation still blocks the main thread on every render.
-
-When you pass a function reference `() => computeExpensiveData()`, React calls the function only once during the Fiber's initial mount phase (`mountState`). On all subsequent update renders (`updateState`), React sees the hook already exists, bypasses the argument entirely, and reads the existing value from `memoizedState`.
-
-**Q: How does React know which `useState` call corresponds to which state variable across re-renders?**
-
-React tracks hooks using an internal **singly-linked list** attached to the component's Fiber node (`fiber.memoizedState`).
-
-React does not know or care about variable names like `count` or `user`. Instead, it maintains an internal pointer (`workInProgressHook`).
-- On the initial render, each hook call allocates a new node and appends it to the tail of the list.
-- On subsequent renders, React resets the pointer to the head of the list. As the function component executes line by line, each hook call reads the state of the current node and moves the pointer to `hook.next`.
-
-Because identification is purely index-based and sequential, hooks cannot be placed inside `if` statements, loops, or nested functions. Altering the order or number of hook calls causes the pointer to point to the wrong hook node, corrupting the component's internal state.
-
-**Q: When should you avoid using `useState`?**
-
-You should avoid `useState` in four primary cases:
-1. **Derived State:** If a value can be computed directly from existing props or state during render (e.g. `const fullName = `${firstName} ${lastName}`;` or `const filtered = items.filter(...)`), never store it in state. Storing derived state introduces synchronization bugs and extra render cycles.
-2. **Values that do not affect the visual UI:** If you need to store timer IDs, DOM node references, previous values for comparison, or mutable WebSocket instances, use `useRef`. Modifying a ref does not trigger an unnecessary re-render.
-3. **Complex, interdependent state transitions:** When 3+ state variables update together based on specific actions (like multi-step wizards or state machines), `useReducer` provides clearer separation of logic and predictable updates.
-4. **Server cache state:** For data fetched over the network, reach for specialized tools like TanStack Query or SWR instead of manually managing loading, error, and caching flags with `useState` and `useEffect`.
-
-**Q: How does React 18 automatic batching handle asynchronous boundaries like `setTimeout` and Promises?**
-
-In React 18, all state updates are automatically batched inside a single microtask queue regardless of where they are invoked.
-
-In React 17, batching was limited to synthetic React event handlers. If you wrote:
-
-```javascript
-setTimeout(() => {
-  setCount(c => c + 1);
-  setFlag(f => !f);
-}, 1000);
-```
-
-React 17 would trigger two separate re-renders and repaint the browser twice.
-
-In React 18, the `createRoot` API wraps all update dispatchers in a shared scheduling lane. When `setCount` and `setFlag` are called inside the timer callback, React queues both updates and yields to the microtask queue before triggering a single, consolidated reconciliation pass and DOM commit.
+**What does Strict Mode prove?** It helps reveal impure rendering by replaying selected work in development. It does not mean production renders exactly once, and it does not mean an event happened twice. Code should be correct if a render or updater is started and discarded without commit.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Stale Closure in Asynchronous Callbacks
-**The Mistake:** Accessing state directly inside a timer, event listener, or async function and expecting it to reflect updates made after the callback was scheduled.
+**Trap: treating a setter like assignment.** `setOpen(true); if (open) ...` still sees the old snapshot. Decide the immediate branch from a local `nextOpen` value, or let the next render decide from state.
 
-```tsx
-function TimerBug() {
-  const [count, setCount] = useState(0);
+**Trap: using a stale direct value in a repeated update.** `setCount(count + 1)` twice uses the same snapshot twice. Use `setCount(previous => previous + 1)` when both operations are meant to accumulate.
 
-  const startTimer = () => {
-    setInterval(() => {
-      // TRAP: `count` is captured as 0 from the render frame when `startTimer` ran!
-      // This will repeatedly calculate 0 + 1 and set state to 1 forever.
-      setCount(count + 1);
-    }, 1000);
-  };
-  // ...
-}
-```
+**Trap: assuming a functional updater refreshes every closure.** It receives the latest pending value for that one state slot. It does not make captured props, another state variable, or a local variable current. Fix the surrounding data flow, dependencies, or ownership separately.
 
-**Why it happens:** The function passed to `setInterval` forms a closure over the specific render frame in which it was created. It never sees new values because it is holding a reference to the old constant.
-**The Fix:** Use a functional update `setCount(prev => prev + 1)` which reads directly from React's live update queue, or manage the timer lifecycle cleanly with an effect and ref.
+**Trap: mutating before calling the setter.** `profile.preferences.theme = "dark"; setProfile(profile)` mutates an existing snapshot and returns the same top-level identity. Copy the changed path with spread syntax or a carefully chosen immutable helper.
 
-### Trap 2: In-Place Mutation Causing Render Bailout
-**The Mistake:** Modifying an array or object in state directly and calling the setter with the same variable.
+**Trap: forgetting that object state is replaced.** `setForm({ email })` removes other fields unless they are copied. Use `setForm(previous => ({ ...previous, email }))`, or use separate state values or a reducer when fields have complex transitions.
 
-```tsx
-const [todos, setTodos] = useState(["Buy milk"]);
+**Trap: using an unstable list key.** Index keys can preserve the wrong row's local state after insertion or reorder. Use a stable identifier from the data. A key is not a prop delivered to the child; pass the identifier separately if the child needs it.
 
-const addTodo = (item: string) => {
-  todos.push(item); // Mutates existing array in place
-  setTodos(todos);  // Passes the exact same array reference
-};
-```
+**Trap: mirroring props into state without a policy.** `useState(props.value)` reads the prop only for initial state setup. Later prop changes do not reset that state. Use the prop directly if it is not independently editable, or intentionally reset by changing the child's key when the component identity changes.
 
-**Why it happens:** React compares the old state and new state using `Object.is(oldState, newState)`. Because `todos` points to the exact same array in memory, `Object.is` returns `true`, and React bails out without re-rendering the UI.
-**The Fix:** Always create a brand-new reference: `setTodos([...todos, item])`.
+**Trap: storing derived state through an Effect.** Keeping `filteredItems` in state and synchronizing it from `items` and `query` creates a stale interval and an extra update path. Derive it during render; memoize only if profiling shows the pure calculation is expensive.
 
-### Trap 3: Accidental Eager Execution of Initial State
-**The Mistake:** Invoking a heavy function directly in the `useState` call.
+**Trap: putting side effects in render, an initializer, or an updater.** A render can be retried or abandoned, and Strict Mode can replay it. Do not write storage, mutate a module cache, send analytics, start a request, or modify the DOM there. Use an event handler or an Effect with cleanup.
 
-```tsx
-// TRAP: parseHugeData() executes on EVERY single render!
-const [data, setData] = useState(parseHugeData(props.raw));
-```
+**Trap: claiming that React 18 always produces exactly one render.** Batching usually reduces compatible updates, but render counts vary with update boundaries, priorities, bailouts, Strict Mode, and the root/API in use. Explain the state result and scheduling semantics separately.
 
-**Why it happens:** JavaScript evaluates function arguments before passing them to `useState`. Even though React only uses the argument on initial mount, the heavy parser runs on every subsequent re-render.
-**The Fix:** Pass a function reference (lazy initializer) so React only invokes it on mount: `useState(() => parseHugeData(props.raw))`.
-
-### Trap 4: Storing Redundant Derived State
-**The Mistake:** Creating dedicated state variables for values that can be computed during render.
-
-```tsx
-// TRAP: Redundant state variables that can get out of sync
-const [items, setItems] = useState<Item[]>([]);
-const [totalPrice, setTotalPrice] = useState(0);
-
-const addItem = (item: Item) => {
-  setItems([...items, item]);
-  setTotalPrice(totalPrice + item.price); // Must remember to sync everywhere
-};
-```
-
-**Why it happens:** Developers treat state like database tables. When state is duplicated, developers forget to update one of the setters in some code paths, causing UI desynchronization.
-**The Fix:** Compute the derived value on the fly during render:
-```tsx
-const [items, setItems] = useState<Item[]>([]);
-// Computed synchronously on every render with zero state synchronization bugs
-const totalPrice = items.reduce((sum, item) => sum + item.price, 0);
-```
-
-### Trap 5: Prop-to-State Mirroring Without Synchronization
-**The Mistake:** Initializing state from a prop and expecting the state to automatically update when the parent passes a new prop value.
-
-```tsx
-function UserDetail({ userId }: { userId: string }) {
-  // TRAP: `useState` initial value is only evaluated on mount!
-  // When `userId` prop changes from "1" to "2", `currentId` remains "1".
-  const [currentId, setCurrentId] = useState(userId);
-  return <div>Viewing user: {currentId}</div>;
-}
-```
-
-**Why it happens:** `useState` ignores the initial value argument during update renders (`updateState`).
-**The Fix:** Either use the prop directly (if read-only) or reset the component's state by giving the component a `key` prop at the parent call site (`<UserDetail key={userId} userId={userId} />`), which forces a clean unmount and remount.
+**Trap: reading `window` during SSR initialization.** A browser-only lazy initializer can throw on the server or disagree with server HTML. Use a server-safe initial value and a post-hydration synchronization plan.
 
 ## 7. Compare With Related Concepts
 
-### `useState` vs `useReducer`
-- **The Core Difference:** `useState` is built directly on top of the same underlying hook primitives as `useReducer`. `useState` is designed for simple, independent values where the setter directly provides the next value. `useReducer` decouples state updates into dispatched actions and a centralized reducer function.
-- **Rule of Thumb:** Use `useState` for primitive values, flags, and independent form inputs. Use `useReducer` when 2 or more state variables depend on each other, when state transitions are complex (e.g. state machines), or when state logic needs to be unit tested outside of React components.
+| Concept | Difference from `useState` | Good default |
+|---|---|---|
+| Props | Inputs owned by the parent; the child reads them and asks the parent to change them through callbacks. | Use props for parent-controlled data and configuration. |
+| `useRef` | A persistent mutable box whose `.current` changes do not schedule a render. | Use it for DOM nodes, timer IDs, or latest imperative values that do not paint. |
+| `useReducer` | Centralizes transitions as actions and a reducer instead of exposing several direct setters. | Use it when state transitions are interdependent, numerous, or action-oriented. |
+| Derived value | Recomputed from current props/state rather than stored as an independent source of truth. | Derive totals, filters, and labels during render. |
+| `useMemo` | Caches a calculation and may recalculate when dependencies change; it is not state ownership. | Use only for an expensive pure calculation supported by measurement. |
+| Context | Delivers a value through a subtree; it is not itself a replacement for state ownership. | Use when prop passing across many layers is the real problem. |
+| External store | Owns state outside one component tree and can coordinate many consumers. | Use when the domain genuinely outgrows local ownership. |
+| Module variable | Shared JavaScript memory with no per-instance lifecycle or automatic render notification. | Use for constants or infrastructure, not per-instance UI state. |
+| Effect | Synchronizes a committed render with an external system. | Do not use it to calculate values already derivable from render inputs. |
 
-### `useState` vs `useRef`
-- **The Core Difference:** Updating `useState` notifies React's scheduler to reconcile and re-render the component. Updating `useRef` (via `ref.current = newValue`) modifies a plain JavaScript object property silently without triggering a re-render.
-- **Rule of Thumb:** Use `useState` if the value is rendered in JSX or affects the visual output. Use `useRef` if the value is purely used behind the scenes (timer IDs, abort controllers, previous values, DOM nodes) and should not trigger a re-render when changed.
+## 8. 🧠 The Memory Hook — What Sticks
 
-### `useState` vs Plain Component Local Variables (`let x = 0`)
-- **The Core Difference:** Plain local variables inside a function component are destroyed when the function returns and re-initialized to their default values every time the component renders. `useState` persists values across multiple render cycles in the Fiber's hook linked list.
-- **Rule of Thumb:** Use plain local variables for temporary calculations inside a single render frame. Use `useState` for any data that must survive across user clicks and re-renders.
+Every render is a photograph. The `count` in that photograph never changes, and every handler from that render remembers that photograph. A setter does not edit it; it queues an instruction for React's private, ordered state ledger. React applies queued actions, renders a new photograph, and commits it if that render is still the one it wants.
 
-### `useState` vs Props
-- **The Core Difference:** State is private, internal data owned and controlled entirely by the component itself. Props are external configuration passed down from the parent component, which the child component cannot mutate (props are strictly read-only).
-- **Rule of Thumb:** If a component needs to change its own data over time, use `useState`. If a parent component needs to control or configure a child, pass `props`.
+Remember the compact rule:
 
-## 8. 🧠 The Memory Hook
-
-A function component is an actor performing a scene from a static script; `useState` is the continuity binder held by React off-stage. Every render is a fixed snapshot with immutable constants, and calling `setState` never changes the current take—it queues updates on the Fiber's linked list and orders a fresh take with updated props.
-
-
+> Store minimal changing facts. Read state as a snapshot. Use functional updaters for previous-state logic. Return new identities for changed objects and arrays. Keep side effects outside render. Let keys and ownership define continuity.
