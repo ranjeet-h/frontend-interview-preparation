@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (373 pages complete)
+## Completed Sections Summary (448 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -20,8 +20,10 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
 | **SQLAlchemy Core Concepts** (`src/full-stack/backend/sqlalchemy/`) | 30 / 30 | Complete |
+| **SQL Core Concepts** (`src/full-stack/databases/sql/`) | 40 / 40 | Complete |
+| **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
-| **Total Completed Concept Pages** | **373** | **100% Done** |
+| **Total Completed Concept Pages** | **448** | **100% Done** |
 
 ---
 
@@ -73,14 +75,14 @@ Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `E
 | **SQL** | **40** | **40** | **0** | **0** |
 | **PostgreSQL** | **35** | **35** | **0** | **0** |
 | **MySQL** | **30** | **30** | **0** | **0** |
-| SQL query practice | 30 | 0 | 0 | 30 |
-| **Total Database** | **135** | **105** | **0** | **30** |
+| SQL query practice | 30 | 8 | 8 | 14 |
+| **Total Database** | **135** | **113** | **8** | **14** |
 
 ---
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **373**
+- **Total Completed Concept/System Pages:** **448**
 - **Total Completed Output Question Puzzles:** **15**
-- **Database Remaining:** **30** (SQL query practice)
+- **Database Remaining:** **22** (8 in flight + 14 not started)
 - **Backend Remaining:** **416** (408 not started + 8 in flight)
