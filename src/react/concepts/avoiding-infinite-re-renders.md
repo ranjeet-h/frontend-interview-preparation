@@ -1,126 +1,284 @@
 # Avoiding Infinite Re-renders
 
-## Detailed explanation
-Infinite re-renders happen when rendering or effect logic updates state in a way that immediately triggers the same logic again. The app gets stuck in a loop: render, update state, render again, update state again.
+## 1. Why This Exists — The Problem First
 
-Common causes include calling setters during render, effects that update their own dependencies every run, unstable object/function dependencies, and derived state stored unnecessarily.
+A checkout form opens, and the browser immediately throws `Too many re-renders`. A dashboard does not crash, but its effect keeps refetching because an options object is recreated on every render. Another screen shows a filtered list one render late because an effect copies a value that could have been calculated directly. These bugs feel different in the UI, but they share one failure: work that should finish causes the same render path to start again without a stable stopping point.
 
-## 1. One-line mental model
-An infinite re-render is a feedback loop where rendering keeps scheduling itself again.
+The practical cost is larger than an error message. A render loop can freeze the tab; an effect loop can hammer an API, reconnect a WebSocket, or repeatedly write to storage; and a needless derived-state update can produce flicker and stale intermediate UI even when it eventually settles. The fix is not “never update state.” The fix is to make every state update have a clear owner and a clear reason it will stop.
 
-## 2. Problem it solves
-Understanding the loop helps debug "Too many re-renders" errors and runaway effects.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Do not call state setters during render.
-- Effects should not update dependencies without a guard.
-- Avoid unnecessary derived state.
-- Stabilize dependencies only when the design needs it.
-- Move user-triggered updates to event handlers.
+Imagine a receptionist managing a meeting room. The room has a whiteboard showing the current meeting status. When a person clicks “Start,” the receptionist changes the status to `running`. That is a sensible external event: the person’s action causes one state transition, and the room can render again.
 
-## 4. Visual / analogy
-It is like a microphone too close to a speaker: output feeds input until it screams.
+Now imagine the receptionist changes the whiteboard every time they look at it: “The status is `running`, so I will write `running` again.” Looking at the board triggers another inspection, which triggers another write, forever. That is a state update during render or an unguarded effect update.
 
-```mermaid
-flowchart LR
-  Render --> SetState["setState"]
-  SetState --> Render
+The meeting room also has an equipment controller. It should reconnect only when the room number or meeting ID changes. If the receptionist prints a brand-new, visually identical room card every time they look at the board, the controller thinks it has been given a new room and reconnects on every inspection. In React, the room card is an object or function reference, and the controller is an effect whose dependencies are compared by identity.
+
+The safe workflow is: inspect the current snapshot, commit the visible room, synchronize external equipment only when its real inputs changed, and stop writing when the desired state is already true. React’s render phase is the inspection; state setters are writes; dependency arrays describe the inputs that justify repeating synchronization.
+
+## 3. How It Actually Works — The Full Explanation
+
+React calls a component to calculate a UI snapshot. During that call, props, state values, local variables, and functions belong to that particular render. The render phase should be pure: given the same inputs, it calculates the same result and does not perform a state transition. React may start, pause, retry, or discard render work, so a setter called in the component body is not a safe way to “initialize” something.
+
+Consider this sequence:
+
+```text
+render component
+  -> setState during render
+     -> schedule another render
+        -> setState during render
+           -> ...
 ```
 
-## 5. Minimal example
+React detects repeated render-phase updates and throws `Too many re-renders` rather than allowing the browser to stay trapped in that cycle. The precise internal threshold is an implementation detail; production code should not depend on it.
+
+An event handler is a different boundary. A click handler runs because the user acted, calls a setter, and then React renders the next snapshot. The render itself does not cause the update, so the cycle has a meaningful trigger and can finish.
+
+Effects run after React commits the render. Their job is to synchronize with something outside React: a network request, timer, browser event listener, DOM API, WebSocket, or imperative library. An effect can legitimately set state, such as changing `isLoading` when a request starts. The danger is a feedback loop:
+
+```text
+render with value A
+  -> effect runs
+     -> set value B
+        -> render with value B
+           -> effect runs because B changed
+              -> set value C
+                 -> ...
+```
+
+That loop is infinite only when the effect keeps producing a changed state value. If an effect calls `setStatus("ready")` while `status` is already `"ready"`, React can bail out because the next value is `Object.is`-equal to the current value. But relying on a no-op update is weaker than expressing the real design. If `status` is derived from props or state, calculate it during render. If it represents an external synchronization, make setup and cleanup correct and make the dependency list describe the synchronization inputs.
+
+React compares dependency-array entries with `Object.is`, one position at a time. Primitives such as strings and numbers usually remain equal when their value is unchanged. Objects, arrays, and functions are compared by reference. This creates a common loop:
 
 ```tsx
-// Wrong
-function Bad() {
-  const [count, setCount] = React.useState(0);
-  setCount(count + 1);
-  return <p>{count}</p>;
+const options = { query, limit: 20 };
+
+useEffect(() => {
+  setResults(loadResults(options));
+}, [options]);
+```
+
+`options` is a new object on every render. The effect sets `results`, that causes a render, the new object looks different, and the effect runs again. `useMemo` can stabilize the object, but first ask whether the effect should depend on the whole object at all. Often the more direct design is to depend on `[query]` and create the request options inside the effect.
+
+Derived state is another feedback-loop factory. If `filteredItems` is fully determined by `items` and `searchTerm`, storing it in state creates two sources of truth and requires an effect to copy one into the other. The first render has old derived data, then the effect updates it, then another render happens. Computing the filter directly gives the current result in the same render and removes the loop surface. Use `useMemo` only when the calculation is expensive or the resulting reference must be stable for a specific consumer; it is not required for correctness.
+
+Strict Mode in development may mount, run effects, clean them up, and mount again to expose missing cleanup and non-idempotent setup. It does not create a legitimate production feedback loop, and it is not evidence that effects should be silenced. If a subscription, timer, or request cannot tolerate setup followed by cleanup followed by setup, its lifecycle is incomplete. Also distinguish an infinite loop from repeated but finite renders caused by a parent, a context provider, a state update that settles, or a development-only Strict Mode check.
+
+## 4. Real Code — See It Working
+
+The following is a complete component for a Vite React TypeScript app. Its fake request is intentionally delayed so the example runs without a backend. A new `customerId` aborts the old request, and the effect depends on the primitive ID rather than an object made during render.
+
+```tsx
+import { StrictMode, useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+
+type Customer = { id: string; name: string; plan: "Starter" | "Pro" };
+
+const customers: Record<string, Customer> = {
+  "c-42": { id: "c-42", name: "Maya Chen", plan: "Pro" },
+  "c-73": { id: "c-73", name: "Arun Das", plan: "Starter" },
+};
+
+function getCustomer(id: string, signal: AbortSignal): Promise<Customer> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      const customer = customers[id];
+      customer ? resolve(customer) : reject(new Error("Customer not found"));
+    }, id === "c-42" ? 500 : 80);
+
+    signal.addEventListener(
+      "abort",
+      () => {
+        window.clearTimeout(timer);
+        reject(new DOMException("Request cancelled", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+function CustomerPanel({ customerId }: { customerId: string }) {
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCustomer(null);
+    setError(null);
+
+    getCustomer(customerId, controller.signal)
+      .then(setCustomer)
+      .catch((reason: unknown) => {
+        // Aborting is expected cleanup, not a user-visible request failure.
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setError(reason instanceof Error ? reason.message : "Request failed");
+      });
+
+    // The request belongs to this customerId. Invalidate it on change or unmount.
+    return () => controller.abort();
+  }, [customerId]);
+
+  if (error) return <p role="alert">{error}</p>;
+  if (!customer) return <p aria-busy="true">Loading {customerId}…</p>;
+  return <p>{customer.name} — {customer.plan}</p>;
+}
+
+function App() {
+  const [customerId, setCustomerId] = useState("c-42");
+
+  return (
+    <main>
+      <label>
+        Customer
+        <select
+          value={customerId}
+          onChange={(event) => setCustomerId(event.target.value)}
+        >
+          <option value="c-42">c-42</option>
+          <option value="c-73">c-73</option>
+        </select>
+      </label>
+      <CustomerPanel customerId={customerId} />
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+```
+
+The reset calls inside the effect are safe here because the effect runs only when `customerId` changes. They do cause a loading render, but they do not update `customerId`, so they cannot retrigger the same effect by themselves. In a real application, a data-fetching library may own this loading, caching, cancellation, and race handling instead.
+
+Here is the derived-value version. It has no effect because `visibleItems` is not independent state; it is a direct consequence of the current inputs.
+
+```tsx
+type Item = { id: string; name: string };
+
+function ItemList({ items, searchTerm }: { items: Item[]; searchTerm: string }) {
+  const normalizedTerm = searchTerm.trim().toLowerCase();
+  const visibleItems = items.filter((item) =>
+    item.name.toLowerCase().includes(normalizedTerm),
+  );
+
+  return (
+    <ul>
+      {visibleItems.map((item) => <li key={item.id}>{item.name}</li>)}
+    </ul>
+  );
 }
 ```
 
-## 6. Real-world example
+For an expensive calculation, `useMemo` may reduce repeated work, but it does not turn a state loop into a correct design. This complete component keeps the inputs concrete and defines the filtering work locally. The dependency list must still include the values used by the calculation:
 
 ```tsx
-React.useEffect(() => {
-  if (status !== "ready") setStatus("ready");
-}, [status]);
+import { useMemo, useState } from "react";
+
+type Item = { id: string; name: string };
+
+const items: Item[] = [
+  { id: "1", name: "Keyboard" },
+  { id: "2", name: "Monitor" },
+  { id: "3", name: "Webcam" },
+];
+
+function expensiveFilter(items: Item[], searchTerm: string): Item[] {
+  const normalizedTerm = searchTerm.trim().toLowerCase();
+  return items.filter((item) =>
+    item.name.toLowerCase().includes(normalizedTerm),
+  );
+}
+
+export function SearchableItemList() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const visibleItems = useMemo(
+    () => expensiveFilter(items, searchTerm),
+    [searchTerm],
+  );
+
+  return (
+    <section>
+      <label>
+        Search items
+        <input
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+        />
+      </label>
+      <ul>
+        {visibleItems.map((item) => <li key={item.id}>{item.name}</li>)}
+      </ul>
+    </section>
+  );
+}
 ```
 
-Guarding prevents repeated updates.
+## 5. The Interview Questions — All of Them, Done Properly
 
-## 7. Common interview questions
-#### What causes infinite re-renders?
-- **The Engine Mechanism (Why it behaves this way):** React's rendering cycle is triggered by state updates. When a state update occurs during the render phase or inside an effect that runs without a guard, React schedules another render. If that render triggers the same state update again, the Fiber scheduler enters an infinite loop. React detects this after a threshold and throws the "Too many re-renders" error to prevent the browser from freezing.
-- **The Unforgettable Mental Model:** The **Domino Circle**. Each domino (render) knocks over the next one (state update), which sets up the first domino again. Without breaking the chain, the dominos fall forever until someone stops the game.
-- **The Trap:** Thinking only `setState` in render causes loops. Effects with unconditional state updates, unstable dependency objects, and derived state stored in `useState` are equally common culprits.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Infinite re-renders happen when a render or effect triggers a state update that causes the same render or effect to run again. Common causes include calling setters during render, effects that unconditionally update their own dependencies, creating new object references on every render and using them as dependencies, or storing derived values in state instead of computing them directly."
+**Q: What causes an infinite re-render in React?**
 
-#### Why can't you call setState during render?
-- **The Engine Mechanism (Why it behaves this way):** The render phase in React's Fiber architecture must be pure and idempotent. React may call component functions multiple times during rendering (especially in StrictMode and Concurrent Mode) to compute the new Virtual DOM tree. If `setState` is called during render, it schedules a new render while the current one is still in progress, creating a recursive loop. React's scheduler detects synchronous re-renders and throws an error to prevent stack overflow.
-- **The Unforgettable Mental Model:** The **Painter Who Repaints Mid-Stroke**. Imagine a painter who, while painting a wall, decides the wall needs a different color and starts over — forever. The painting never finishes because each attempt triggers a new attempt.
-- **The Trap:** Accidentally calling a setter by invoking it in JSX instead of passing it as a callback: `onClick={setCount(0)}` instead of `onClick={() => setCount(0)}`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The render phase must be pure because React may invoke component functions multiple times to compute the Virtual DOM. Calling `setState` during render schedules another render before the current one completes, creating an infinite loop. React detects this and throws an error. State updates should happen in event handlers or guarded effects, not during the render phase itself."
+Usually, a render or an effect schedules a state update that causes the same path to run again and produce another update. Directly calling a setter in the component body is the simplest case. An effect can do the same when it updates a dependency on every run, or when an unstable object/function dependency makes the effect run after every render. The diagnostic question is: “What update causes the next render, and why will that update eventually stop?”
 
-#### How can effects create loops?
-- **The Engine Mechanism (Why it behaves this way):** Effects run after the commit phase. If an effect updates a value that's listed in its own dependency array, React schedules a re-render, which triggers the effect again. Without a conditional guard, this creates a render → effect → state update → render cycle. The Fiber scheduler tracks effect dependencies, and any change to a dependency triggers the effect to re-run after the next commit.
-- **The Unforgettable Mental Model:** The **Echo Chamber**. You speak (effect runs), the echo comes back (state updates), you hear the echo and speak again (effect re-runs), creating an endless loop of your own voice bouncing back.
-- **The Trap:** Adding a state update to an effect "just to initialize" something without checking whether it's already initialized. The fix is usually a conditional guard or moving the initialization to lazy state.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Effects create loops when they update a value that's in their own dependency array without a conditional guard. For example, an effect that depends on `status` and unconditionally calls `setStatus('ready')` will re-run forever. The fix is to add a conditional check — only update if the value isn't already what you need — or to move the logic to lazy state initialization."
+**Q: Why is calling a state setter during render a bug?**
 
-#### How do unstable dependencies cause loops?
-- **The Engine Mechanism (Why it behaves this way):** React compares dependency array values using `Object.is` (referential equality for objects/functions). If you create an object or function inline during render — like `useEffect(() => {...}, [{ id: 1 }])` — a brand-new reference is created every render. React sees a "changed" dependency every time, re-runs the effect, and if that effect triggers a state update, you get an infinite loop.
-- **The Unforgettable Mental Model:** The **Shape-Shifting Key**. Every time you try to unlock a door (run the effect), the key (dependency) changes shape slightly. The lock thinks it's a new key every time, so it keeps opening the door, which forges a new key, forever.
-- **The Trap:** Memoizing everything to "fix" unstable dependencies. Often the real fix is to extract the primitive value you actually need from the dependency array, or restructure the logic.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Unstable dependencies cause loops because React compares references, not content. An inline object like `{ id: 1 }` creates a new reference every render, so the effect sees a 'changed' dependency each time. If the effect updates state, this triggers another render, creating a loop. The fix is to stabilize the reference with `useMemo` or extract the primitive values you actually depend on."
+Rendering should calculate the next UI snapshot, not cause a new state transition. Calling a setter while React is still evaluating that snapshot schedules more render work before the current calculation has a stable result. If the setter runs on every invocation, the component never reaches a settled render and React throws. Put user-driven updates in event handlers; use an effect only when the update is genuinely synchronizing with an external system or a carefully guarded transition is required.
 
-#### How do you fix derived-state loops?
-- **The Engine Mechanism (Why it behaves this way):** Derived state happens when you store a value in `useState` that could be computed from existing props or state. If an effect syncs props into this derived state, and the derived state is used in rendering, you create a render → effect → setState → render loop. The engine keeps cycling because the effect always sees a "new" prop value (or the derived state triggers a re-render that re-runs the effect).
-- **The Unforgettable Mental Model:** The **Photocopier Loop**. You photocopy a document (derive state), then photocopy the photocopy (effect syncs again), and keep making copies of copies instead of just reading the original.
-- **The Trap:** Thinking you need an effect to sync props to state. Most derived state should be computed directly during render: `const filtered = items.filter(...)` instead of storing `filtered` in state.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Derived-state loops happen when you store a computed value in `useState` and use an effect to sync it from props. The fix is usually to eliminate the derived state entirely and compute the value directly during render. If you must store it, use a conditional guard in the effect that only updates when the source value actually changed, not on every render."
+**Q: Can an effect update state without causing an infinite loop?**
 
-#### How does StrictMode affect debugging?
-- **The Engine Mechanism (Why it behaves this way):** StrictMode double-invokes component functions and effects in development. For infinite re-render bugs, this means the loop runs twice as fast and the error surfaces immediately. However, StrictMode can also mask certain bugs by making effects run twice — if your effect has a side effect that's idempotent, the double-run hides the problem. Conversely, if your effect has non-idempotent side effects (like appending to an array), StrictMode makes the bug obvious.
-- **The Unforgettable Mental Model:** The **Stress Test Machine**. StrictMode puts your code through double the workload to see if it breaks under pressure. If it survives double-mounting, it'll handle Concurrent Mode's unpredictable scheduling.
-- **The Trap:** Blaming StrictMode for bugs it didn't cause. StrictMode reveals existing bugs — it doesn't create them. Disabling it hides problems that will surface in production under Concurrent Mode.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: StrictMode double-invokes renders and effects in development, which makes infinite re-render loops surface faster and more reliably. It also exposes non-idempotent side effects and missing cleanup. Rather than disabling it, I use StrictMode as an early warning system — if my code works correctly under double-invocation, it's robust enough for Concurrent Mode's interruptible rendering."
+Yes. For example, an effect can set `isLoading` when a request starts and set it back when the request finishes. It will not loop if the effect is triggered by a stable request key and does not change that key on every run. An effect that depends on `status` and unconditionally changes `status` is different: it forms a feedback edge. Analyze the dependency graph, not just the fact that `setState` appears inside an effect.
 
-#### What does "Too many re-renders" mean?
-- **The Engine Mechanism (Why it behaves this way):** React has an internal safety mechanism that counts synchronous re-renders within a single event loop tick. When this count exceeds a threshold (typically 50), React throws the "Too many re-renders" error. This prevents the JavaScript event loop from being monopolized by an infinite render cycle, which would freeze the entire browser tab. The error includes a stack trace pointing to the component and line where the loop originates.
-- **The Unforgettable Mental Model:** The **Circuit Breaker**. Like an electrical circuit breaker that trips when current overloads, React's re-render limit trips when the render cycle overloads, preventing a total system freeze.
-- **The Trap:** Assuming the error message points to the exact line. It points to the component, but the actual cause might be a dependency object created several lines above, or a parent component passing unstable props.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The 'Too many re-renders' error is React's circuit breaker — it detects when a component has rendered more than 50 times synchronously and throws to prevent the browser from freezing. The root cause is always a state update that triggers another render, which triggers another state update. I debug by checking for setters called during render, unguarded effect state updates, and unstable dependency references."
+**Q: Why do inline objects and functions sometimes create effect loops?**
 
-## 8. Active recall test
-1. **What is the simplest infinite render bug?**
-   - **Explanation:** Calling a state setter directly during the render phase — like `setCount(count + 1)` at the top of a component function. This schedules a re-render before the current render completes, creating an immediate loop that React detects and throws.
-2. **Why do effects loop?**
-   - **Explanation:** When an effect updates a value that's in its own dependency array without a conditional guard, it creates a cycle: render → effect runs → state updates → re-render → effect runs again. The effect must have a condition that prevents unnecessary updates.
-3. **How can object dependencies be unstable?**
-   - **Explanation:** Objects and functions created inline during render get a new memory reference each time. React's dependency comparison uses `Object.is`, which returns `false` for two separate objects even with identical content. This makes the effect think the dependency changed every render.
-4. **Why should derived values stay in render?**
-   - **Explanation:** Derived values computed from existing state/props don't need their own state. Computing them during render (e.g., `const filtered = items.filter(...)`) avoids the render → effect → setState → render loop that occurs when you try to sync derived values with `useEffect` and `useState`.
-5. **Where should user-triggered state updates happen?**
-   - **Explanation:** In event handlers (`onClick`, `onChange`, `onSubmit`). Event handlers run outside React's render phase, so state updates inside them schedule a new render cleanly without creating loops. They're the boundary between user intent and React's rendering cycle.
+React compares dependency entries with `Object.is`. A literal object or a function declared in the component body gets a new reference on each render, even when its contents or implementation look identical. If an effect depends on that reference and sets state, the state update produces a new render, which creates another reference, which retriggers the effect. Depend on the primitive values the effect actually needs, move constant values outside the component, or use `useMemo`/`useCallback` when identity itself is part of the design.
 
-## 9. Mistakes / traps
-- Calling event handlers immediately in JSX.
-- Updating state unconditionally inside effects.
-- Creating new objects and using them as dependencies.
-- Storing derived state in effects.
-- Silencing dependencies instead of fixing logic.
+**Q: What is the best fix for derived-state loops?**
 
-## 10. Compare with related concepts
-- **Infinite render vs stale closure:** loop updates too often; stale closure reads old data.
-- **Render loop vs effect loop:** setter in render vs setter in effect.
-- **Derived value vs derived state:** calculation during render vs stored state.
+Remove the redundant state when the value can be calculated from props, state, or context. A filtered array, formatted name, subtotal, or permission flag usually belongs in render, possibly behind `useMemo` if the calculation is measurably expensive. If the value represents a separate user-editable draft or a snapshot intentionally captured at a boundary, it may deserve state, but then define when it is reset rather than blindly synchronizing it in an effect.
 
-## 11. Summary from memory
-Explain why `setState` inside render causes a loop and how to fix it.
+**Q: Why does `setCount(count + 1)` in a click handler not automatically loop?**
 
-## 12. Spaced revision prompts
-- After 1 day: Define infinite re-render.
-- After 3 days: Fix setter-in-render bug.
-- After 7 days: Fix effect dependency loop.
-- After 14 days: Explain derived-state loops.
+The handler runs only when the user clicks. It updates state once for that event, React renders the next snapshot, and the handler does not run again merely because rendering occurred. The same expression in the component body runs every time the component renders, so it creates a render-to-update feedback edge. The location and trigger of the update matter more than the setter syntax.
 
+**Q: How does Strict Mode affect infinite re-render debugging?**
+
+Development Strict Mode intentionally performs extra render/effect lifecycle checks, including an effect setup-cleanup-setup cycle on mount in current React development behavior. This can expose missing cleanup or non-idempotent side effects, but it is not a reason to remove Strict Mode. A genuine setter-during-render loop is still a bug without Strict Mode; Strict Mode may make lifecycle mistakes easier to see. Do not “fix” the symptom by adding a ref that suppresses the second setup unless the underlying setup/cleanup contract is correct.
+
+**Q: What does `Too many re-renders` tell you, and how do you debug it?**
+
+It tells you React hit its safety guard while trying to render, but the message is not necessarily the exact root-cause line. First search the component and recently changed children for setters invoked during render, including JSX mistakes such as `onClick={setOpen(true)}`. Then inspect effects that write state, their dependencies, object/function identity, and whether the state is merely derived. Add a render counter or log the specific state transition, use React DevTools to inspect the owner that is changing, and remove one feedback edge at a time.
+
+**Q: Is `useMemo` or `useCallback` the general solution to render loops?**
+
+No. They can stabilize an identity that genuinely belongs in a dependency comparison or prevent expensive recalculation, but they cannot repair an effect whose design updates its own trigger. Memoization also has its own dependency list, and a missing dependency can create a stale closure rather than a loop. First simplify the data flow and make the synchronization boundary correct; memoize only when the identity or computation cost justifies it.
+
+## 6. The Traps — What Goes Wrong
+
+**Calling a handler while rendering.** `onClick={setOpen(true)}` invokes the setter as JSX is evaluated; it does not register a handler. React then renders again and invokes it again. Use `onClick={() => setOpen(true)}` or pass a function whose signature already matches the event. The same mistake appears with `onChange={updateValue(value)}`.
+
+**Adding an unconditional “sync” effect.** An effect such as `useEffect(() => setFullName(first + " " + last), [first, last])` adds a second render for a value already determined by the inputs. It may settle because the string eventually compares equal, but it is still unnecessary and can produce stale UI between renders. Compute `const fullName = first + " " + last` directly unless the state is intentionally editable.
+
+**Fixing a loop by deleting dependencies.** An empty array can hide a loop while leaving the effect with the first render’s values. The result is often a stale token, old ID, or subscription that listens to the wrong room. Dependencies are a correctness contract, not a switch for silencing a linter. Restructure the effect or stabilize the real input instead.
+
+**Memoizing every object and callback.** Blanket memoization makes dependency graphs harder to read and can preserve a reference while its captured values are wrong. It also does nothing for a child that is not memoized or an effect that should not exist. Use primitive dependencies where possible, and add memoization for a measured cost or a real identity requirement.
+
+**Assuming every repeated render is infinite.** A parent update can render a child again; a state update can settle after one additional render; Strict Mode can intentionally repeat development work. The defining symptom is an unbounded feedback cycle or a safety error, not simply “the function ran twice.” Measure before optimizing.
+
+**Updating state from an effect without handling request ownership.** A fetch can finish after the user has selected a different record. Cancellation or an ignore guard prevents old work from writing into the new render’s state. This is not necessarily an infinite loop, but the same unclear effect ownership often causes both bugs: work is not tied to the render/input that made it valid.
+
+## 7. Compare With Related Concepts
+
+**Render loop vs effect loop.** A render loop has a setter invoked while the component function is calculating JSX. An effect loop has a post-commit effect that changes a value which causes that effect to run again. Use the call site to classify it: event handlers and external synchronization are valid update boundaries; render-time writes are not.
+
+**Infinite re-render vs stale closure.** An infinite loop runs new work too often because a feedback edge keeps firing. A stale closure runs old work with values captured by an earlier render, often because dependencies were omitted. Fix the first by breaking or guarding the feedback edge; fix the second by making ownership and dependencies honest.
+
+**Derived value vs derived state.** A derived value is calculated from current inputs during render and has one source of truth. Derived state stores a copy and needs a synchronization policy, reset policy, or user-editing reason. Calculate during render by default; store it only when it has independent lifetime or ownership.
+
+**Stable reference vs stable value.** `useMemo` and `useCallback` can keep an object or function reference stable, but that does not guarantee the logic is current. A stable callback with missing dependencies can still close over stale data. Stabilize identity only after deciding which values the operation must observe.
+
+**Effect synchronization vs event handling.** An effect reacts to committed renders to keep an external system aligned. An event handler reacts to an explicit user action. Submit a form, start a download, or delete an item in the handler; subscribe to a WebSocket or synchronize a browser API in an effect with cleanup.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Think of render as reading the whiteboard, not writing on it. Every state update must have a door that triggered it—usually a user event or an external synchronization—and every effect must stop when its real inputs stop changing; if the effect keeps changing its own trigger, you have built a microphone pointed at its speaker.
