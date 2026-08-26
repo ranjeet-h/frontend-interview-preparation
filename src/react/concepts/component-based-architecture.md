@@ -2,390 +2,358 @@
 
 ## 1. Why This Exists — The Problem First
 
-Before component-based architecture became the standard, web applications were built as giant, monolithic HTML templates paired with global stylesheets and scripts. A typical e-commerce checkout page could easily span 3,000 lines of template markup, with jQuery or vanilla JavaScript scripts querying the global DOM using selectors like `$('.btn-submit')` or `$('#shipping-form')`.
+Imagine an e-commerce checkout where one giant template owns the header, address form, cart rows, payment fields, validation, loading indicators, and every click handler. A small change to the payment button can accidentally depend on a selector used by the address form, while a second checkout page copies most of the same markup with slightly different rules. The page may work, but nobody can tell which code owns which behavior.
 
-This approach broke down disastrously in production for several reasons:
+Component-based architecture gives each meaningful piece of the interface a boundary. A component can own one responsibility, expose a small input/output contract, and be composed into a larger screen. That makes change local: a profile card can change its suspension behavior without forcing a generic button or the whole page to understand users.
 
-1. **Global collision and invisible coupling:** If an engineer changed a class name or markup structure inside a billing form, a completely unrelated script handling the promo-code modal would fail silently because its DOM selector no longer matched.
-2. **DOM as the single source of truth:** State was scattered across `data-*` attributes, hidden input tags, and arbitrary global variables. You could never look at a piece of code and know with certainty what the UI would look like given a specific set of data.
-3. **Zero real reusability:** When you needed the exact same user profile card on the dashboard, the checkout summary, and the admin panel, your only choice was to copy-paste the raw HTML and CSS across three template files. If the design changed, you had to hunt down every copy and manually update it—inevitably missing one and causing visual drift.
-4. **Impossible isolated testing:** You could not test a simple confirmation dialog without running the entire backend, seeding a database, and navigating through a multi-step checkout workflow.
-
-Component-based architecture was created to eliminate this chaos. Instead of treating a web page as a monolithic document with external scripts reaching in, React treats the UI as a tree of independent, self-contained, composable building blocks. Each block encapsulates its own structure, visual styling, internal logic, and state.
-
----
+The goal is not to split every few lines into a file. The goal is to make ownership visible: who supplies data, who owns state, who renders a visual boundary, and who coordinates the workflow.
 
 ## 2. The Analogy — Make It Obvious
 
-Think of component-based architecture like a **modular high-end Hi-Fi stereo system**.
+Think of a component tree as a modular hi-fi system. A turntable, preamplifier, amplifier, and speaker each has one job. Standard cables connect them, but one unit does not need to know the private mechanics of another. You can replace the speaker without rebuilding the turntable, or add a Bluetooth receiver through an available input.
 
-In an old all-in-one boombox, the cassette player, AM/FM radio tuner, amplifier, and speakers are all soldered into one molded plastic chassis. If the cassette motor burns out or you want to upgrade the speakers, you have to tear apart the whole device, risk snipping the radio antenna wire, or throw the entire unit in the trash.
+The mapping is direct:
 
-A modular Hi-Fi rack works completely differently:
+| Hi-fi system | React architecture | What the mapping means |
+| --- | --- | --- |
+| Turntable, amplifier, speaker | Components | Each unit owns a focused responsibility. |
+| Standard RCA cable | Props | The parent supplies read-only inputs through a known interface. |
+| Motor speed and needle counterweight | Local state and behavior | A component manages private details that callers should not control directly. |
+| Rack connections | Composition | Larger interfaces are assembled by placing components inside other components. |
+| Replacing a speaker | Local change and reuse | A component can be swapped or changed without rewriting unrelated parts. |
 
-- **Independent Units (Components):** You have a standalone Turntable, a DAC (Digital-to-Analog Converter), a Preamplifier, and a pair of Powered Speakers. Each unit has one specific job and performs it exceptionally well.
-- **Standardized Cables (Props):** The turntable connects to the preamplifier using standard RCA audio cables. The preamplifier doesn't care what brand of turntable you plug in, as long as it receives an audio signal through that standard port. Props are the cables: immutable inputs supplied from the outside.
-- **Internal Dials and Mechanics (Encapsulated State):** The turntable manages its own motor speed (33 vs. 45 RPM) and needle counterweight internally. The speakers do not know or care how the turntable motor spins—they only care about the audio stream coming through their input jack.
-- **Composition (The Rack):** You build a custom sound setup by plugging units into one another. Want to add Bluetooth streaming? You don't rebuild the amplifier; you simply plug a Bluetooth receiver module into an open input slot on the preamp.
-- **Portability and Replacement:** If a speaker blows out, you unplug two cables, swap in a new speaker, and the rest of the sound system keeps running without touching a single wire on the turntable.
-
-In React, your user interface is that audio rack. A `Button`, `Avatar`, `Modal`, or `UserProfileCard` is an independent module with a standardized input interface (`props`), private internal mechanics (`state`), and the ability to snap into any parent container (`composition`).
-
----
+In React, a `Button` does not need to know whether it submits an invoice or suspends a user. It receives visual options and an event handler. A domain component such as `UserProfileCard` supplies the business meaning and composes that button with other pieces.
 
 ## 3. How It Actually Works — The Full Explanation
 
-React's component architecture is built on five core principles that work together to produce scalable, maintainable interfaces.
+**Start with ownership.** A component is a unit of UI plus the data and behavior needed to make that unit work. A design-system primitive such as `Button` should know about keyboard behavior, disabled state, and visual variants. It should not know about invoices, permissions, or API endpoints. A feature component such as `UserProfileCard` can know about users and suspension rules, then pass generic instructions to the primitive.
 
-### 1. Single Responsibility Principle (SRP)
-Every component should have exactly one reason to change. A component generally falls into one of these distinct categories:
-- **Design System Primitive (Atom):** Pure visual building blocks (e.g., `Button`, `Input`, `Badge`, `Typography`). They have zero knowledge of business models or API endpoints.
-- **Compound / Layout Component:** Orchestrates spatial arrangement and structural slots (e.g., `Card`, `Modal`, `SidebarLayout`, `Grid`).
-- **Domain / Feature Component:** Encapsulates business logic, data presentation, and domain behaviors (e.g., `UserProfileCard`, `InvoiceRow`, `ShoppingCartItem`).
-- **Page / Route Container:** Orchestrates data fetching, top-level layout composition, URL state, and empty/error states.
+**Use a one-way data contract.** A parent renders a child with props. The child reads those props; it does not mutate the parent's object or state. When the child needs a change, the parent passes a callback such as `onStatusChange`. The callback is an output channel: the child reports an intent, and the owner decides how to update the source of truth.
 
-When a component tries to handle both low-level layout styling and high-level business data fetching, it violates SRP and becomes rigid and fragile.
+The useful mental equation is:
 
-### 2. Props as Pure, Read-Only Inputs
-In mathematical terms, a React component is a function mapping inputs to UI:
+```text
+rendered UI = f(props, state)
+```
 
-$$\text{UI} = f(\text{props}, \text{state})$$
+For the same props and state, the component should describe the same UI. Each render is a **snapshot**: React calls the component, gives that call its current props and state, and the returned JSX describes that moment. Event handlers created during that call close over that snapshot. If a user clicks a handler after a later render, the handler still sees the values from the render that created it; it does not reach backward and rewrite that old call's local variables. React schedules another render when state changes, producing a new snapshot and new handlers.
 
-Props flow strictly downward from parent to child (unidirectional data flow). A component must treat its `props` as immutable. If a child component needs to communicate a change to its parent, it does not mutate the parent's data directly; instead, it triggers an event callback function passed down as a prop.
+This is why render logic should be pure and why event logic belongs in the event handler. A render may be started, paused, or discarded by React, so it must only calculate the UI. A click, submit, or key press is an intentional event and can perform the corresponding action. Code that synchronizes with something outside React—such as the document title, a browser event target, or a WebSocket—belongs in `useEffect`, which runs after React commits the snapshot to the DOM.
 
-### 3. Encapsulation of State and Behavior
-A component owns its internal state and behavior. For example, a `DropdownMenu` component manages whether its popup menu is currently visible (`isOpen: boolean`) and handles keyboard navigation (Arrow Up/Down, Escape). The parent component that places the dropdown on the screen does not need to manually attach keyboard event listeners or toggle CSS visibility classes. The internal mechanics are completely encapsulated.
+`useEffect` is not a general “run this after every render” escape hatch. It is a post-commit synchronization contract: React commits the UI first, then runs the effect when its dependencies say the external synchronization is stale; cleanup disconnects the previous synchronization before the next one or on unmount. If the value can be derived during render, derive it there. If the work is caused directly by a user event, do it in the event handler instead of setting a flag and waiting for an effect to notice it.
 
-### 4. Composition Over Inheritance
-React never uses class inheritance hierarchies (such as `class ModalWithHeader extends BaseModal`) to share functionality or UI. Instead, it relies on composition. React components can accept other components as props—most notably through the special `children` prop, as well as named slot props (e.g., `header={<Avatar />}`, `footer={<ActionButtons />}`).
+Context is another explicit ownership boundary. `createContext` creates a channel with a default fallback, a Provider owns the current value and its updates, and `useContext` reads the nearest Provider above the consumer. The Provider should own the state or resource being shared; an intermediate layout does not need to accept and forward the value. A context value boundary is the value object supplied to one context, so split unrelated or differently changing values into separate contexts when their consumers should not share a rerender boundary. When the Provider's `value` changes by `Object.is`, every consumer of that context is scheduled to rerender, including a `memo`-wrapped consumer; consumers of a different context are not notified.
 
-Composition allows you to create flexible, open-ended containers without hardcoding what goes inside them.
+**Keep state close to where it matters.** A dropdown can own `isOpen` and keyboard navigation because those details matter only to the dropdown. A page can own selected filters when several sections need them. If two siblings need to coordinate, lift the shared state to their nearest useful parent. State ownership should follow the smallest set of components that need to read or change it.
 
-### 5. The Component Hierarchy and Fiber Tree
-When your application runs, React builds an in-memory tree of Fiber nodes representing every component instance. When a component's internal state changes:
-1. React schedules a render phase for that specific component and its subtree.
-2. React invokes the component function with its current props and state, producing a virtual tree of React Elements (plain JavaScript objects).
-3. React's reconciliation engine compares (diffs) the new element tree against the previous one.
-4. During the commit phase, React applies only the minimal necessary changes to the real browser DOM.
+**Prefer composition to inheritance.** React components are assembled with `children` and slot-like props such as `header` and `footer`. The container owns structure; the caller supplies the content. This keeps the container open to new combinations instead of creating a growing class hierarchy such as `ModalWithHeaderAndAdminActions`.
 
-Because components isolate state and rendering logic, React can reconcile and update isolated branches of the DOM tree without tearing down or recalculating the entire page.
+**Understand the render tree accurately.** React elements are descriptions: plain objects created by JSX. React stores work in an internal Fiber tree and uses that tree to schedule rendering. When state changes, React calls the affected component again and may render descendants to calculate the next element tree. Reconciliation compares the new description with the previous one, using element type and keys to decide what can be preserved. The commit phase then applies the necessary DOM mutations. A component boundary helps organize ownership and can limit work when the tree and memoization allow it, but it is not a promise that every sibling or descendant is never reconsidered.
 
----
+**Treat keys as identity.** In a list, a stable key tells React which rendered item is the same logical item across renders. Using an array index as a key is risky when items can be inserted, removed, or reordered: React may preserve a row's local state for the wrong record. Component architecture is therefore also about stable identity, not just file organization.
 
 ## 4. Real Code — See It Working
 
-Here is a practical, production-ready example showing how low-level primitives, compound layout containers, and domain feature components compose together cleanly.
-
-### Step 1: Low-Level UI Primitive (`Button`)
+The following is a self-contained TSX example for a Vite-style React app. It shows a domain-agnostic button, a structural card with explicit slots, and a domain component that owns the user action state. It uses inline styles so it does not depend on a CSS framework.
 
 ```tsx
-import React from 'react';
+import { useState, type ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'danger';
+type ButtonProps = {
+  children: ReactNode;
+  variant?: 'primary' | 'danger';
+  disabled?: boolean;
+  onClick?: () => void;
+};
 
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant;
-  isLoading?: boolean;
-}
-
-// Pure design system primitive: handles styling, accessibility, and disabled state.
-// Has zero knowledge of any business entity.
-export function Button({
-  variant = 'primary',
-  isLoading = false,
-  disabled,
+function Button({
   children,
-  className = '',
-  ...restProps
+  variant = 'primary',
+  disabled = false,
+  onClick,
 }: ButtonProps) {
-  const baseStyles = 'px-4 py-2 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2';
-
-  const variantStyles: Record<ButtonVariant, string> = {
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-400',
-    secondary: 'bg-gray-100 text-gray-800 hover:bg-gray-200 focus:ring-gray-300',
-    danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-400',
-  };
-
   return (
     <button
-      disabled={disabled || isLoading}
-      className={`${baseStyles} ${variantStyles[variant]} ${className}`}
-      {...restProps}
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        background: disabled ? '#9ca3af' : variant === 'danger' ? '#dc2626' : '#2563eb',
+        border: 0,
+        borderRadius: 6,
+        color: 'white',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        padding: '8px 12px',
+      }}
     >
-      {isLoading ? (
-        <span className="flex items-center gap-2">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-          <span>Loading...</span>
-        </span>
-      ) : (
-        children
-      )}
+      {children}
     </button>
   );
 }
-```
 
-### Step 2: Compound Layout Component (`Card` with Named Slots)
+type CardProps = {
+  children: ReactNode;
+  header: ReactNode;
+  footer: ReactNode;
+};
 
-```tsx
-import React from 'react';
-
-interface CardProps {
-  children: React.ReactNode;
-  className?: string;
-}
-
-// Structural container: provides visual bounding box and shadow
-export function Card({ children, className = '' }: CardProps) {
+function Card({ children, header, footer }: CardProps) {
   return (
-    <div className={`rounded-xl border border-gray-200 bg-white p-6 shadow-sm ${className}`}>
-      {children}
-    </div>
+    <article style={{ border: '1px solid #d1d5db', borderRadius: 10, padding: 16 }}>
+      <header style={{ borderBottom: '1px solid #e5e7eb', marginBottom: 12, paddingBottom: 12 }}>
+        {header}
+      </header>
+      <div>{children}</div>
+      <footer style={{ borderTop: '1px solid #e5e7eb', marginTop: 12, paddingTop: 12 }}>
+        {footer}
+      </footer>
+    </article>
   );
 }
 
-// Sub-components allow flexible slot-based composition without boolean flags
-Card.Header = function CardHeader({ children }: { children: React.ReactNode }) {
-  return <div className="mb-4 border-b border-gray-100 pb-3">{children}</div>;
-};
-
-Card.Body = function CardBody({ children }: { children: React.ReactNode }) {
-  return <div className="text-gray-700">{children}</div>;
-};
-
-Card.Footer = function CardFooter({ children }: { children: React.ReactNode }) {
-  return <div className="mt-6 flex items-center justify-end gap-3 border-t border-gray-100 pt-4">{children}</div>;
-};
-```
-
-### Step 3: Domain Component Composing Primitives (`UserProfileCard`)
-
-```tsx
-import React, { useState } from 'react';
-import { Card } from './Card';
-import { Button } from './Button';
-
-export interface User {
+type User = {
   id: string;
   name: string;
-  email: string;
   role: string;
-  avatarUrl: string;
   isSuspended: boolean;
-}
+};
 
-interface UserProfileCardProps {
+type UserProfileCardProps = {
   user: User;
   onStatusChange: (userId: string, shouldSuspend: boolean) => Promise<void>;
-}
+};
 
-// Domain component: encapsulates business rules, manages local action state,
-// and composes generic primitives into a cohesive feature UI.
-export function UserProfileCard({ user, onStatusChange }: UserProfileCardProps) {
+function UserProfileCard({ user, onStatusChange }: UserProfileCardProps) {
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const handleToggleSuspension = async () => {
+  async function handleToggleSuspension() {
     setIsUpdating(true);
     try {
+      // The feature component knows the domain rule; Button only reports the click.
       await onStatusChange(user.id, !user.isSuspended);
     } finally {
       setIsUpdating(false);
     }
-  };
+  }
 
   return (
-    <Card className="max-w-md">
-      <Card.Header>
-        <div className="flex items-center gap-4">
-          <img
-            src={user.avatarUrl}
-            alt={`${user.name}'s profile avatar`}
-            className="h-12 w-12 rounded-full object-cover ring-2 ring-gray-100"
-          />
-          <div>
-            <h3 className="text-lg font-bold text-gray-900">{user.name}</h3>
-            <p className="text-sm text-gray-500">{user.email}</p>
-          </div>
-        </div>
-      </Card.Header>
-
-      <Card.Body>
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Role:</span>
-            <span className="font-medium text-gray-800">{user.role}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-gray-500">Account Status:</span>
-            <span
-              className={`font-medium ${
-                user.isSuspended ? 'text-red-600' : 'text-green-600'
-              }`}
-            >
-              {user.isSuspended ? 'Suspended' : 'Active'}
-            </span>
-          </div>
-        </div>
-      </Card.Body>
-
-      <Card.Footer>
+    <Card
+      header={<strong>{user.name}</strong>}
+      footer={
         <Button
           variant={user.isSuspended ? 'primary' : 'danger'}
-          isLoading={isUpdating}
+          disabled={isUpdating}
           onClick={handleToggleSuspension}
         >
-          {user.isSuspended ? 'Reactivate Account' : 'Suspend Account'}
+          {isUpdating ? 'Saving…' : user.isSuspended ? 'Reactivate' : 'Suspend'}
         </Button>
-      </Card.Footer>
+      }
+    >
+      <p>Role: {user.role}</p>
+      <p>Status: {user.isSuspended ? 'Suspended' : 'Active'}</p>
     </Card>
   );
 }
+
+function App() {
+  const [user, setUser] = useState<User>({
+    id: 'u-1',
+    name: 'Asha',
+    role: 'Editor',
+    isSuspended: false,
+  });
+
+  async function saveStatus(userId: string, shouldSuspend: boolean) {
+    // A real app would call its API here. This delay makes the loading state visible.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    setUser((current) =>
+      current.id === userId ? { ...current, isSuspended: shouldSuspend } : current,
+    );
+  }
+
+  return <UserProfileCard user={user} onStatusChange={saveStatus} />;
+}
+
+createRoot(document.getElementById('root')!).render(<App />);
 ```
 
----
+The important boundary is not the number of files. `Button` owns generic button behavior, `Card` owns a visual frame and slots, `UserProfileCard` owns the user-specific action, and `App` owns the user record. The callback crosses those boundaries without leaking the record into the primitive.
+
+This small example makes the render-snapshot rule visible. Each click handler belongs to the render that created it, so it logs the `count` captured by that snapshot. The functional update is still the safe way to calculate the next state when several updates may be queued.
+
+```tsx
+import { useState } from 'react';
+
+export function SnapshotDemo() {
+  const [count, setCount] = useState(0);
+
+  function handleClick() {
+    // This handler captures count from the render that created it.
+    console.log('clicked snapshot:', count);
+    setCount((current) => current + 1);
+    setCount((current) => current + 1);
+  }
+
+  return <button onClick={handleClick}>Count: {count}</button>;
+}
+```
+
+The following examples show the two boundaries that are easy to confuse with render logic. The event handler performs the user-requested action immediately. The effect synchronizes the committed `title` value with the browser's document after the render that displays it.
+
+```tsx
+import { useEffect, useState } from 'react';
+
+export function DocumentTitleDemo() {
+  const [title, setTitle] = useState('Inbox');
+
+  useEffect(() => {
+    // React has committed the matching UI before this external sync runs.
+    const previousTitle = document.title;
+    document.title = `${title} · Mail`;
+
+    return () => {
+      // Restore the external system if this component leaves the tree.
+      document.title = previousTitle;
+    };
+  }, [title]);
+
+  function handleRename() {
+    // This is caused by the click, so it belongs in the event handler.
+    setTitle((current) => (current === 'Inbox' ? 'Starred' : 'Inbox'));
+  }
+
+  return <button onClick={handleRename}>Open {title}</button>;
+}
+```
+
+Context moves ownership to the Provider and makes the consumer's dependency explicit at the point of use. This focused example has separate state and dispatch contexts: a badge subscribes to the changing state, while the button subscribes only to the stable dispatch function. A state update rerenders the badge, but it does not notify the dispatch-only consumer because the dispatch context value remains the same reference.
+
+```tsx
+import {
+  createContext,
+  useContext,
+  useReducer,
+  type Dispatch,
+  type ReactNode,
+} from 'react';
+
+type Theme = 'light' | 'dark';
+type Action = { type: 'toggle' };
+
+const ThemeStateContext = createContext<Theme | null>(null);
+const ThemeDispatchContext = createContext<Dispatch<Action> | null>(null);
+
+function themeReducer(theme: Theme, action: Action): Theme {
+  return action.type === 'toggle' ? (theme === 'light' ? 'dark' : 'light') : theme;
+}
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [theme, dispatch] = useReducer(themeReducer, 'light');
+
+  // The Provider owns the state and defines the value boundaries.
+  return (
+    <ThemeDispatchContext.Provider value={dispatch}>
+      <ThemeStateContext.Provider value={theme}>
+        {children}
+      </ThemeStateContext.Provider>
+    </ThemeDispatchContext.Provider>
+  );
+}
+
+export function ThemeBadge() {
+  const theme = useContext(ThemeStateContext);
+  if (theme === null) throw new Error('ThemeBadge needs ThemeProvider');
+  return <span>Theme: {theme}</span>;
+}
+
+export function ToggleThemeButton() {
+  const dispatch = useContext(ThemeDispatchContext);
+  if (dispatch === null) throw new Error('ToggleThemeButton needs ThemeProvider');
+  return <button onClick={() => dispatch({ type: 'toggle' })}>Toggle theme</button>;
+}
+```
+
+`<ThemeProvider><ThemeBadge /><ToggleThemeButton /></ThemeProvider>` gives both consumers access without passing props through layouts. The Provider is the owner, `ThemeStateContext` is the changing value boundary, and `ThemeDispatchContext` is the stable action boundary. With one combined object such as `{ theme, dispatch }`, any new object reference would notify both kinds of consumers whenever the theme changed.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
-**Q: What is component-based architecture in React, and how does it fundamentally differ from traditional MVC web architectures?**
+**Q: What is component-based architecture in React, and how does it differ from traditional MVC?**
 
-In traditional MVC (Model-View-Controller) web architectures, code is divided along technical layers: Models hold raw data, Views define HTML templates, and Controllers contain event handling and business coordination. In practice, this creates tight, invisible coupling across three separate files every time you want to build or update a single UI feature.
+MVC commonly separates code into technical layers: model, view, and controller. A single feature may therefore require coordinated edits across a template, controller, and model. React components organize a UI unit around a responsibility and its boundary: JSX, local state, event handlers, and prop types can live together, while larger components compose smaller ones. React does not eliminate models or controllers; it changes the primary unit of UI organization from a page-wide layer to a tree of cooperating components.
 
-React's component-based architecture decomposes applications along **feature and domain boundaries** rather than technical layers. A component co-locates markup (JSX), styling logic, event listeners, and local state management into a single cohesive unit of responsibility. Instead of maintaining one giant controller that manipulates a giant view template, React applications are trees of small, self-contained components that pass data down via props and events up via callbacks.
+**Q: How do you choose a component boundary?**
 
----
+Look for a distinct responsibility, a state-ownership boundary, a repeated interaction, or a subtree that changes independently. A component should have a clear reason to change and a small contract. Do not extract solely because a file reached an arbitrary line count. If a fragment has no independent meaning, state, reuse, or test value, keeping it local may be clearer.
 
-**Q: How do you determine where to draw component boundaries when breaking down a complex screen?**
+**Q: What is the difference between a design-system primitive and a domain component?**
 
-Component boundaries should be drawn based on **single responsibility, state ownership, and change frequency**, not arbitrary line counts. Use these four practical criteria:
+A primitive accepts generic concerns such as `variant`, `disabled`, `children`, and `onClick`; it should not fetch users or check invoice permissions. A domain component understands a business entity or workflow, such as suspension or checkout, and composes primitives to express that behavior. The primitive is reusable because it knows little; the domain component is useful because it knows enough.
 
-1. **Responsibility Boundary:** Does this piece of UI represent a distinct concept (e.g., `NavigationHeader`, `ProductFilterSidebar`, `RatingStars`)?
-2. **State Co-location:** Does a piece of state only matter to a specific section of the UI? If a search input's text only matters to the autocomplete dropdown, isolate that input and dropdown into their own component so typing doesn't re-render the entire parent page.
-3. **Reusability Boundary:** Does this visual pattern or interaction appear in two or more places (e.g., `Modal`, `Button`, `StatusBadge`)?
-4. **Performance / Render Boundary:** If a specific sub-tree updates frequently (like a live countdown timer or animated canvas), isolating it in a child component prevents re-rendering the heavy, static sibling components around it.
+**Q: What makes a component truly reusable?**
 
----
+Reuse comes from a small, predictable API and composition. A component is falsely reusable when it collects unrelated flags such as `isInvoice`, `showAdminActions`, `compact`, and `withAvatar`, then branches through every combination. That API hides several components inside one conditional maze. Prefer generic props and slots when callers need to vary content; split the component when the behaviors genuinely diverge.
 
-**Q: What is the difference between shared design-system primitives and domain/feature components?**
+**Q: How does composition help with prop drilling?**
 
-The fundamental difference lies in their **knowledge of business entities**:
+Prop drilling is not every prop passed through a parent; it is usually an intermediate component carrying data it does not use merely to reach a descendant. If the page already knows the user, it can compose `<Sidebar><Avatar src={user.avatarUrl} /></Sidebar>` and pass that result through a layout's `children` or `sidebar` slot. The layout only arranges content. For genuinely shared state across distant branches, composition is not the only answer; context or an external store may be more appropriate.
 
-- **Shared Design-System Primitives (`Button`, `Modal`, `Tabs`, `Input`):**
-  - Completely domain-agnostic. They have no knowledge of `User`, `Invoice`, or API payloads.
-  - Their props define abstract visual and structural traits (`variant`, `size`, `isOpen`, `onClose`, `children`).
-  - Highly reusable across entirely different projects or business domains.
-  - Live in a shared library or `/components/ui` directory.
+**Q: Does making more components automatically improve performance?**
 
-- **Domain / Feature Components (`UserProfileCard`, `InvoiceTable`, `CheckoutPaymentForm`):**
-  - Tightly coupled to the application's domain models and business requirements.
-  - Accept domain-specific data types (e.g., `user: User`, `order: OrderSummary`).
-  - Compose design-system primitives to satisfy specific business workflows.
-  - Live within feature-specific directories (e.g., `/features/billing/components`).
+No. Components create useful ownership and testing boundaries, but a parent render can still cause child functions to run. Actual DOM work is determined during reconciliation, and render skipping requires appropriate techniques such as stable props, `memo`, or a better state boundary. First design clear ownership; measure before adding memoization, because unstable object and callback props can erase its benefit.
 
----
+**Q: What does it mean that a render is a snapshot, and how do closures fit in?**
 
-**Q: What makes a component truly reusable versus falsely reusable?**
+Each invocation of a function component receives one point-in-time set of props and state and returns the UI for that snapshot. Event handlers created during that invocation close over its variables, so an older handler can log an older state value even after a newer render has appeared. A state setter requests a new render; it does not mutate the local variable inside an already-created handler. Use functional state updates when the next value depends on the previous queued value.
 
-A truly reusable component has a **minimal, predictable API surface** that relies on composition rather than conditional branching. It does one thing well, accepts data via generic props or `children`, and does not make assumptions about its parent container or data source.
+**Q: When should you use `useEffect` in a component architecture?**
 
-A falsely reusable component tries to satisfy multiple divergent use cases by accumulating dozens of optional boolean props (e.g., `<Card isUserProfile hasBillingTable showAdminControls hideHeaderOnMobile />`). Inside, it becomes a tangle of nested ternary operators. The moment a new requirement arises for one use case, editing that component risks breaking all other use cases. True reusability is achieved by providing composable slots (`Card.Header`, `Card.Body`, `Card.Footer`) so callers can customize content without modifying the underlying component code.
+Use it to synchronize a committed render with an external system: subscribe to a browser or library event source, connect to a WebSocket, update `document.title`, or control an imperative widget. React runs the setup after commit and runs cleanup before resynchronizing or unmounting. Do not use it to calculate a value from props/state—that belongs in render—or to react to a click—that belongs in the event handler. The dependency list describes which external synchronization inputs changed; it is not a command to run arbitrary code after a render.
 
----
+**Q: How do `createContext` and `useContext` work, and what rerenders when the value changes?**
 
-**Q: How does component composition solve the prop-drilling problem?**
+`createContext(defaultValue)` creates the channel, a Provider owns and supplies its current `value`, and `useContext` reads the nearest matching Provider above the calling component. The default is used only when no Provider is present; it is not a shared mutable store. When the Provider's value changes by identity, React schedules all consumers of that context to read the new value, even if a consumer is wrapped in `memo`. Keep the value boundary focused—split state from stable dispatch or unrelated domains into separate contexts when their update frequencies and consumers differ. Context removes intermediate prop forwarding, but it does not remove the need for a deliberate owner.
 
-Prop drilling occurs when you pass a prop through intermediate components that don't need the data themselves, just to reach a deeply nested child (e.g., `Page -> Layout -> Sidebar -> UserMenu -> Avatar`).
+**Q: Why do keys matter to component architecture?**
 
-Composition solves this directly through component lifting using `children` or slot props:
-
-```tsx
-// Before: Layout and Sidebar must accept and pass user avatar props they don't care about
-<Page user={user}>
-  <Layout user={user}>
-    <Sidebar user={user} />
-  </Layout>
-</Page>
-
-// After: Page composes the components directly; Layout and Sidebar only render {children}
-<Page>
-  <Layout
-    sidebar={
-      <Sidebar>
-        <Avatar src={user.avatarUrl} />
-      </Sidebar>
-    }
-  >
-    <MainContent />
-  </Layout>
-</Page>
-```
-
-By assembling the nested components at the top level where the data already exists, the intermediate layout containers don't need to know anything about the user data.
-
----
+Keys describe identity among siblings. A stable record ID lets React preserve the right component instance when a list changes. An index key can make an input or local state appear to move to a different record after insertion or sorting. Keys should represent the business identity of the item, not merely its current position.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: The "God Component" (Config-Driven Everything)
-- **The Mistake:** Creating a single generic component that attempts to handle every possible screen variation using endless configuration flags:
-  ```tsx
-  // Bad: God component with 15 boolean flags and branching logic
-  <DataCard
-    type="invoice"
-    showActions
-    isAdminView={false}
-    condensedLayout
-    withAvatar={false}
-    highlightOverdue
-  />
-  ```
-- **Why It Fails:** Cyclomatic complexity explodes. Every time design tweaks one edge case for invoices, the component's internal `if/else` checks break for user profiles or order summaries.
-- **The Fix:** Break the component into composable primitives or compound components. Use composition to let the caller assemble the specific layout they need.
+**Trap: The “God Component.”** A single `DataCard` with fifteen booleans appears reusable, but its combinations create hidden coupling and rising cyclomatic complexity. An invoice change can break a profile variant because both share branches. Keep stable primitives small and compose feature-specific arrangements at the call site.
 
----
+**Trap: Premature extraction.** Extracting `TableWithSearchAndPagination` after the first table assumes future tables share its behavior. The second table may need infinite scrolling and the third expandable rows, forcing unrelated options into the abstraction. Duplicate local code is often cheaper than a wrong shared boundary; extract after repeated examples reveal a real common contract.
 
-### Trap 2: Premature Extraction and Over-Abstraction
-- **The Mistake:** Extracting a shared `<TableWithSearchAndPagination />` component the very first time you build a table, assuming all future tables will behave identically.
-- **Why It Fails:** Duplicate code is far cheaper than the wrong abstraction. When the second table needs infinite scrolling instead of numbered pages, and the third table needs expandable rows, the original "reusable" component gets corrupted with messy overrides.
-- **The Fix:** Follow the **Rule of Three**. Write components locally for specific features first. Only extract a shared abstraction once three distinct features demonstrate identical structural and behavioral requirements.
+**Trap: Business logic inside a primitive.** This is a misleading “reusable” button:
 
----
+```tsx
+// Wrong boundary: this generic-looking control knows auth, API, and item identity.
+function DeleteButton({ itemId }: { itemId: string }) {
+  const { user } = useAuth();
+  if (!user.permissions.includes('DELETE_ITEM')) return null;
+  return <button onClick={() => api.delete(itemId)}>Delete</button>;
+}
+```
 
-### Trap 3: Leaking Business Logic and Network Calls into UI Primitives
-- **The Mistake:** Embedding an API call, authentication check, or global state hook directly inside a low-level primitive:
-  ```tsx
-  // Bad: Button primitive checking domain permissions internally
-  function DeleteButton({ itemId }: { itemId: string }) {
-    const { user } = useAuth();
-    const canDelete = user.permissions.includes('DELETE_ITEM');
-    if (!canDelete) return null;
-    return <button onClick={() => api.delete(itemId)}>Delete</button>;
-  }
-  ```
-- **Why It Fails:** The button can no longer be used anywhere else in the application where deletion logic differs or permissions are calculated differently.
-- **The Fix:** Keep UI primitives purely presentational. Pass `disabled={!canDelete}` and `onClick={handleDelete}` as props from a domain-level parent component.
+The code is a contextual fragment: `useAuth` and `api` are intentionally not defined here. In a real feature, a domain parent should calculate permission and deletion behavior, then pass `disabled` and `onClick` to a generic `Button`. That keeps authorization policy and network behavior testable at the right boundary.
 
----
+**Trap: Mutating props.** A child must not write `user.isSuspended = true` or mutate an array received from its parent. Mutation bypasses the owner's state transition and can leave React with an unchanged reference, making updates difficult to reason about. Report intent through a callback; let the owner create the next object or array.
 
-### Trap 4: Micro-Fragmentation (Splitting Files for Line Count)
-- **The Mistake:** Splitting a 60-line component into 8 separate 5-line files (`<CardWrapper />`, `<CardTitleText />`, `<CardIconContainer />`) just to keep files artificially short.
-- **Why It Fails:** Adds excessive visual indirection. When reading or debugging the code, an engineer has to jump across 8 files to understand a single static piece of UI that has no independent state or logic.
-- **The Fix:** Keep tightly coupled sub-markup in the same file as standard JSX or local helper functions until there is a genuine reason (state isolation, reuse, or complex independent logic) to extract it.
+**Trap: Confusing component boundaries with render isolation.** Splitting a page into ten components does not guarantee ten isolated renders. React may call descendants again as it calculates a tree. Use state placement, stable keys, and measured memoization when performance requires it; do not use component count as a performance metric.
 
----
+**Trap: Micro-fragmentation.** Turning a five-line title wrapper into its own file can make a simple UI harder to read. Extract when the piece has independent state, meaningful reuse, complex logic, or a useful test boundary. Keep tightly coupled static markup together.
 
 ## 7. Compare With Related Concepts
 
-| Concept Pair | Core Difference | When to Use Which |
-| :--- | :--- | :--- |
-| **React Component vs. Plain JS Function** | A React component returns a React element tree (JSX) describing UI and participates in React's Fiber lifecycle. A plain function computes and returns arbitrary data or triggers side effects. | Use a **Component** to render UI with props and lifecycle hooks. Use a **Plain Function** for math, string formatting, data transformations, and business calculations. |
-| **Composition vs. Class Inheritance** | Composition builds complex systems by combining small, independent pieces via props and `children`. Inheritance extends a parent class to inherit its properties and methods. | Always use **Composition** in React. React's architecture does not support or recommend class inheritance for UI components. |
-| **UI Primitives vs. Domain Components** | UI Primitives (`Button`, `Modal`) are domain-agnostic design system tokens. Domain components (`UserProfileCard`, `OrderRow`) understand domain data structures and business logic. | Use **UI Primitives** to maintain consistent global design and accessibility. Use **Domain Components** to implement specific application features. |
-| **Presentational vs. Container Components** | Presentational components only care about how things look (purely prop-driven). Container components care about how things work (data fetching, store subscriptions, route handling). | Use **Presentational** components for modular, testable UI elements. Use **Container** components (or custom hooks) at route/page boundaries to feed data to presentational trees. |
-
----
+| Comparison | Key difference | One-line rule |
+| --- | --- | --- |
+| React component vs. plain JavaScript function | A component returns a UI description and participates in React rendering; a plain function computes data or performs a non-UI operation. | Use a component for UI ownership; use a function for transformations and domain calculations. |
+| Composition vs. inheritance | Composition assembles objects through `children`, slots, and props; inheritance extends a base class and couples behavior to that hierarchy. | Prefer composition when the UI needs flexible combinations. |
+| UI primitive vs. domain component | A primitive is domain-agnostic; a domain component understands entities, workflows, and business rules. | Keep policy in the domain layer and generic interaction in the primitive. |
+| Presentational vs. container component | A presentational component mainly renders supplied data; a container coordinates data fetching, stores, routes, and page states. | Put coordination at a route or feature boundary, then feed focused visual components. |
+| Props vs. context | Props make a direct dependency explicit; context avoids threading a value through every intermediate component. | Use props for local, visible relationships; use context for a genuinely shared ambient dependency. |
+| Component boundary vs. module boundary | A component boundary organizes runtime UI ownership; a module/file boundary organizes source code. | Choose the runtime responsibility first, then decide whether a separate file improves navigation. |
 
 ## 8. 🧠 The Memory Hook — What Sticks
 
-> **Think of components as Lego bricks, not Russian nesting dolls.**
->
-> A good component doesn't dictate what can be built around it or inside it; it provides a clean, standardized interface so you can snap it together with other blocks to build anything from a tiny cottage to a skyscraper.
+Think of React components as modular hi-fi units: each one has a focused job, a standard input cable called props, and private controls called state. Build the rack through composition, and let the component that owns the business decision send the signal; generic units should never guess what the song means.
