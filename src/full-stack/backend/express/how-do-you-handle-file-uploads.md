@@ -1,111 +1,327 @@
-# How do you handle file uploads
+# How Do You Handle File Uploads in Express?
 
-## Detailed explanation
+## 1. The Real-World Problem — When You Actually Hit This
 
-How do you handle file uploads is a core Express.js topic that interviewers use to check whether you can connect definitions to production backend behavior. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Your avatar upload works perfectly in development. One user, one 200KB JPEG, `req.file` shows up, done. Three weeks after launch the feature gets popular. People start uploading photos straight from their phones. Then one afternoon your service dies. You restart it. It dies again. Crash loop. The container logs say the process was killed for using too much memory, and the last requests before every death have one thing in common: a half-finished upload.
 
-## 1. One-line mental model
+Or the quieter version of the same pain: nothing crashes, but on the upload endpoint `req.body` is mysteriously empty and `req.file` doesn't exist at all — even though you definitely mounted `express.json()`. You spend an hour blaming the frontend.
 
-Understand how do you handle file uploads by linking what it is, why it exists, and how it fails in production.
+Both failures come from the same gap. An upload is not JSON. It travels in a completely different wire format called `multipart/form-data`, and Express intentionally ignores formats it has no parser for. It doesn't error. It just hands you an untouched request and lets you wonder. Interviewers love this question because your answer instantly reveals whether you know what actually moves over HTTP, or whether you've only ever stacked middleware that somebody else picked.
 
-## 2. Problem it solves
+## 2. The Analogy — Make the Mechanic Obvious
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+Think about a moving day.
 
-## 3. Core idea
+A truck pulls up packed with stuff. Taped inside the door is the manifest: it says what kind of shipment this is and lists the exact tape pattern used between items — a weird stripe pattern chosen precisely because it appears nowhere else on any box, so nobody ever confuses packing tape with an actual divider.
 
-- Define the concept in backend terms.
-- Explain the problem it solves.
-- Show where it appears in real services.
-- Call out security, performance, or reliability impact.
-- Compare it with nearby concepts.
+Everything inside is individually wrapped and tagged. Furniture has tags describing what it is. Small envelopes of paperwork sit between the furniture — those aren't cargo, they're notes that ride along.
 
-## 4. Visual / analogy
+The crew unloading doesn't wait for the truck to magically teleport its contents into the house. They unload piece by piece, in the order the pieces come off the pile, while the truck is still being emptied. As each piece comes up, the foreman looks at its tag and decides: this one comes in, this one goes back on the truck. A scale sits on the ramp — anything heavier than the limit gets cut off mid-carry, not weighed politely after it's already inside.
+
+And the crew stages items in one of two styles. Either they shelve each piece the moment it crosses the threshold, so the house never holds more than the piece currently in transit — or one strong mover simply carries everything in their arms and only puts it all down when the truck is empty. Arms work great for three lamps. Ask the same mover to carry an entire truckload of pianos and their back gives out.
+
+That's the whole mechanism. The truck is the request body. The manifest is the `Content-Type` header declaring `multipart/form-data` and naming the boundary. The tape pattern is the boundary string separating parts. Each wrapped, tagged item is one part with its own little headers. The paperwork envelopes are ordinary form fields. The crew is multer (running the busboy parser underneath). The foreman checking tags is `fileFilter`. The ramp scale is `limits.fileSize`. Shelving as you go is disk storage. Carrying everything in your arms until the end is memory storage.
+
+## 3. The Full Explanation — How It Actually Works
+
+**Why `express.json()` shrugs at uploads.** Express's body parsers are dispatchers keyed on the `Content-Type` header. `express.json()` only claims `application/json`. `express.urlencoded()` only claims `application/x-www-form-urlencoded`. A browser file upload sends `multipart/form-data; boundary=...`. Neither parser claims that type, so neither runs, so nothing ever populates `req.body` and nothing ever creates `req.file`. There's no error because skipping unmatched types is the parsers working correctly. This is the same dispatch idea as any [middleware](./how-does-express-middleware-work.md): each parser decides "is this mine?" and steps aside when it isn't.
+
+**What multipart/form-data actually looks like on the wire.** Once you see the raw bytes, everything multer does becomes obvious:
 
 ```txt
-Request/API/service -> concept applied -> safer production behavior
+POST /api/avatar HTTP/1.1
+Content-Type: multipart/form-data; boundary=----wkformXYZ
+
+------wkformXYZ
+Content-Disposition: form-data; name="caption"
+
+summer trip
+------wkformXYZ
+Content-Disposition: form-data; name="avatar"; filename="cat.jpg"
+Content-Type: image/jpeg
+
+<the raw bytes of cat.jpg, exactly as they are on disk>
+------wkformXYZ--
 ```
 
-## 5. Minimal example
+One body, several self-describing sections. The boundary value is generated by the client and guaranteed (by choosing an unlikely string) not to collide with real data. Every part starts with `--boundary`, carries its own headers — field name, and for files, the original filename and claimed MIME type — then a blank line, then the payload. The final boundary ends with `--`. Notice something important: the file's bytes are not encoded into text. The body is binary with separators, which is exactly why JSON tooling can't touch it.
 
-```txt
-Input  -> validate
-Work   -> apply Express.js rule
-Output -> success or structured error
+**What multer actually does.** Under the hood multer runs busboy, a streaming multipart parser. Busboy reads the incoming bytes chunk by chunk, splits on the boundary, and fires an event per part. For each part multer makes decisions: plain fields get collected onto `req.body`; file parts first pass through your `fileFilter` function (the foreman reading the tag), and if accepted, get piped into whichever storage engine you configured. Only after the last part is processed does multer call `next()`, which is why your route handler can treat `req.file` as fully staged — the crew has finished unloading before you walk in.
+
+**Disk storage vs memory storage — the decision the whole topic hangs on.**
+
+With `multer.diskStorage()`, each file part is streamed to a file on disk as its chunks arrive. By the time your handler runs, the bytes are safely on the filesystem and `req.file.path` points at them. The house never holds more than the piece in transit — one 2GB video upload costs you almost no RAM, just disk and a write stream.
+
+With `multer.memoryStorage()`, each arriving chunk is appended to an in-memory buffer instead. Your handler gets `req.file.buffer` — the entire file sitting in the Node process's memory. That's wonderfully convenient when your very next step is handing those bytes to S3, because there's no temp file to clean up and no disk I/O at all.
+
+Here's the senior-level nuance about the memory cost: Node `Buffer`s are allocated *outside* the V8 JavaScript heap. So a pile of uploaded buffers won't show up as JS heap pressure, and tuning `--max-old-space-size` won't save you. But they absolutely count toward the process's real resident memory — and resident memory is exactly what a container memory limit watches. Twenty users uploading 100MB photos concurrently is 2GB of buffers, your container blows past its limit, and the kernel kills the process. Restart, uploads resume, kill again. That is the crash loop from section 1, explained.
+
+So the rule of thumb: memory storage for small files (a few MB) destined for cloud storage; disk storage for anything bigger, or anything you keep locally; and for large or high-traffic uploads, skip your server entirely (more on that below).
+
+**Limits — the ramp scale.** The `limits` option enforces caps *while streaming*, not after:
+
+```js
+multer({
+  limits: {
+    fileSize: 5 * 1024 * 1024, // per file, in bytes — checked as chunks arrive
+    files: 3,                  // total file parts per request
+    fields: 10,                // total non-file parts
+  },
+})
 ```
 
-## 6. Real-world example
+When `fileSize` is exceeded, multer cuts the transfer mid-stream — it doesn't accept the file and then apologize. It aborts processing and calls `next(err)` with a `MulterError` whose `code` is `LIMIT_FILE_SIZE`. Other codes follow the same pattern: `LIMIT_FILE_COUNT`, `LIMIT_UNEXPECTED_FILE` (a file arrived under a field name you didn't ask for, or you got more than `maxCount`). Because every rejection arrives as `next(err)`, one [error-handling middleware](./what-is-error-handling-middleware.md) catches them all — if you don't write one, Express's default handler returns an ugly HTML 500 and your API consumers learn nothing.
 
-In a production full-stack app, how do you handle file uploads affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+**`fileFilter` — the foreman, and why his judgment is gossip.** `fileFilter(req, file, cb)` runs once per file part, before storage. Call `cb(null, true)` to accept, `cb(null, false)` to silently skip that one file, or `cb(error)` to fail the whole request. Here's the catch interviewers probe: everything `fileFilter` sees — `file.mimetype` and `file.originalname` — is just copied from headers the *client* typed. Renaming `malware.exe` to `cat.jpg` produces `mimetype: image/jpeg`. MIME-based filtering is a convenience gate, not a security control. Real validation sniffs magic bytes — the fixed signature bytes at the start of actual file content (a JPEG really starts with `FF D8 FF`) — after the file lands, using a library like `file-type`. Treat `fileFilter` as the queue sorter and magic-byte scanning as the actual inspection.
 
-## 7. Common interview questions
+**What breaks when uploads hit production scale.** Four classics, in rough order of how often they bite:
 
-#### How do you handle file uploads in Express?
-- **The Engine Mechanism (Why it behaves this way):** Express's built-in body parsers (`express.json()`, `express.urlencoded()`) cannot handle multipart/form-data, which is the encoding used for file uploads. You need a dedicated middleware like `multer`. Multer parses multipart form data, extracts files, and makes them available on `req.file` (single file) or `req.files` (multiple files). Each file object contains `fieldname`, `originalname`, `encoding`, `mimetype`, `size`, `destination`, `filename`, and `path`. Multer can store files to disk or memory (buffer). Configuration includes destination directory, filename generation, file size limits, and file type filtering.
-- **The Unforgettable Mental Model:** The **Package Receiving Dock**. Regular mail (JSON) goes through the standard mailroom (express.json()). But oversized packages (file uploads) need a special receiving dock (multer) with scales (size limits), inspectors (file type filters), and storage bins (destination).
-- **The Trap:** Using `express.json()` for file uploads — it silently ignores multipart data, leaving `req.body` empty and `req.file` undefined. Also, not setting file size limits, allowing users to upload gigabyte files and exhaust disk space.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Express can't handle multipart/form-data natively, so I use multer middleware. Multer parses the multipart request, extracts files, and makes them available on req.file or req.files. I configure it with file size limits, allowed file types, and a storage strategy — either disk storage with custom filenames or memory storage for direct upload to cloud storage. I always validate file types and sizes before accepting uploads."
+First, the memory-storage OOM described above — the default failure of every team that chose memory storage because it was convenient, then got popular.
 
-#### What is multer and how does it work?
-- **The Engine Mechanism (Why it behaves this way):** Multer is Express middleware that processes `multipart/form-data` requests. It uses the `busboy` library under the hood to parse multipart streams. Configuration options: `dest` (upload directory), `storage` (custom storage engine — `multer.diskStorage()` or `multer.memoryStorage()`), `limits` (fileSize, files, fields), `fileFilter` (function to accept/reject files). Usage: `const upload = multer({ dest: 'uploads/', limits: { fileSize: 5 * 1024 * 1024 } }); app.post('/upload', upload.single('avatar'), (req, res) => { console.log(req.file); })`.
-- **The Unforgettable Mental Model:** The **Customs Inspector**. Multer inspects every incoming package (file), checks its contents (file type), weighs it (file size), decides whether to accept it (fileFilter), and either stores it in a warehouse (diskStorage) or holds it temporarily in a processing area (memoryStorage).
-- **The Trap:** Using `dest` without a custom filename — multer generates random filenames with no extension. Use `diskStorage` with a `filename` function to control naming. Also, not cleaning up temporary files after processing.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Multer is the standard middleware for handling multipart file uploads in Express. It parses the multipart stream, applies file type and size filters, and stores files either to disk or memory. I prefer diskStorage with a custom filename function that generates unique names with proper extensions. For production, I usually combine multer's memoryStorage with direct upload to cloud storage like S3, avoiding local disk entirely."
+Second, orphaned disk files. Multer finishes writing the file, your handler starts, your database insert throws — and now a file sits in `uploads/` that nothing references, forever. Multiply by months of traffic and the disk quietly fills up. Fixing this means deleting staged files in your error path and running a reaper for anything older than your workflow allows.
 
-#### How do you limit file size and type?
-- **The Engine Mechanism (Why it behaves this way):** File size limits are set via `limits: { fileSize: 5 * 1024 * 1024 }` (5MB). When exceeded, multer emits a `LIMIT_FILE_SIZE` error. File type filtering uses the `fileFilter` function: `fileFilter: (req, file, cb) => { if (file.mimetype.startsWith('image/')) cb(null, true); else cb(new Error('Invalid file type'), false); }`. The callback `cb(null, true)` accepts the file, `cb(null, false)` rejects silently, `cb(error, false)` rejects with an error. Always validate both MIME type and file extension — MIME types can be spoofed.
-- **The Unforgettable Mental Model:** The **Weight and ID Check**. The bouncer (fileFilter) checks both the person's ID (MIME type) and their physical appearance (file extension/magic bytes). And the scale (limits) ensures nobody too heavy (large files) gets in.
-- **The Trap:** Only checking file extension without checking MIME type. A malicious user can rename `malware.exe` to `photo.jpg` — the extension passes but the MIME type reveals the truth. Also, not handling the `LIMIT_FILE_SIZE` error, causing unhandled exceptions.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I set file size limits via multer's limits option and file type filtering via the fileFilter function. The fileFilter checks both MIME type and, for extra security, I verify the file's magic bytes (header bytes that identify the actual file format). When limits are exceeded or file types don't match, multer throws an error that I catch in my error-handling middleware and return a 400 response. I never trust file extensions alone."
+Third, infrastructure caps you never hit locally. Nginx's default `client_max_body_size` is 1MB — meaning your beautifully tested 10MB upload starts returning `413` in production before the bytes ever reach Node. Load balancer request timeouts are the cousin of this problem: a slow mobile upload on a train can outlive the proxy's patience and get cut.
 
-#### How do you upload files to cloud storage (S3)?
-- **The Engine Mechanism (Why it behaves this way):** Two approaches: (1) **Server-mediated** — multer stores to memory (`memoryStorage()`), then your route handler uploads the buffer to S3 using the AWS SDK: `const s3 = new S3Client(); await s3.send(new PutObjectCommand({ Bucket, Key: req.file.originalname, Body: req.file.buffer }))`. (2) **Presigned URLs** — the backend generates a presigned S3 upload URL, the frontend uploads directly to S3, bypassing your server entirely. The server-mediated approach is simpler but uses server memory/bandwidth. Presigned URLs are more scalable but require more frontend complexity.
-- **The Unforgettable Mental Model:** The **Shipping Options**. Server-mediated is like receiving a package at your office and re-shipping it to the warehouse (uses your resources). Presigned URLs is like giving the sender the warehouse address directly (saves your resources but requires more coordination).
-- **The Trap:** Storing large files in server memory with `memoryStorage()` — this can cause out-of-memory crashes with concurrent uploads. For large files, use disk storage or presigned URLs.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use two approaches depending on the use case. For small files, I use multer's memoryStorage and upload the buffer to S3 via the AWS SDK in the route handler. For larger files or high-traffic apps, I generate presigned URLs that let the frontend upload directly to S3, bypassing my server entirely. This saves server bandwidth and memory. I always validate file type and size before generating presigned URLs."
+Fourth, the bandwidth double-hop. With server-mediated uploads, every byte travels client → your server → S3. Your server pays for both legs in bandwidth, latency, and cost, purely acting as a pipe. That's the argument for presigned URLs: your server authenticates the user and issues a short-lived, policy-constrained upload URL, then the browser PUTs the bytes directly to the bucket. Your server handles identity and authorization; S3 absorbs the bandwidth.
 
-#### How do you handle multiple file uploads?
-- **The Engine Mechanism (Why it behaves this way):** Use `upload.array('fieldName', maxCount)` for multiple files with the same field name, or `upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'photos', maxCount: 5 }])` for multiple field names. Files are available on `req.files` as an array. Each file object has the same properties as a single file. You can iterate over `req.files` to process each one. Set `maxCount` to limit the number of files — exceeding it triggers a `LIMIT_UNEXPECTED_FILE` error.
-- **The Unforgettable Mental Model:** The **Group Check-in**. Instead of processing one visitor at a time, you process the whole group together. But you still check each person's ID (file type) and enforce a group size limit (maxCount).
-- **The Trap:** Not setting maxCount — a malicious user could upload thousands of files in a single request, exhausting disk space or memory. Also, not handling the case where some files in a batch are invalid.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: For multiple files, I use upload.array() for same-field uploads or upload.fields() for different field names. I always set maxCount to prevent abuse. Each file in req.files is processed individually — I validate type and size, generate unique filenames, and upload to storage. If any file in the batch fails validation, I reject the entire batch to keep operations atomic."
+## 4. See It In Practice — Real Code or Queries
 
-## 8. Active recall test
+A production-shaped single-file upload: disk storage, generated names, limits, filtering, and one error handler covering every multer rejection.
 
-1. **Why can't express.json() handle file uploads?**
-   - **Explanation:** express.json() parses application/json content type. File uploads use multipart/form-data encoding, which requires a dedicated parser like multer that can handle the multipart stream format.
+```js
+// npm i express multer
+const path = require('node:path');
+const crypto = require('node:crypto');
+const express = require('express');
+const multer = require('multer');
 
-2. **What does multer make available on the request object?**
-   - **Explanation:** `req.file` for single file uploads or `req.files` for multiple. Each file object contains fieldname, originalname, mimetype, size, destination, filename, and path.
+const app = express();
 
-3. **How do you set a 5MB file size limit in multer?**
-   - **Explanation:** `multer({ limits: { fileSize: 5 * 1024 * 1024 } })`. When exceeded, multer emits a LIMIT_FILE_SIZE error that should be caught by error-handling middleware.
+const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
-4. **What's the difference between diskStorage and memoryStorage?**
-   - **Explanation:** diskStorage writes files to the filesystem. memoryStorage keeps files in memory as buffers. memoryStorage is useful for direct cloud uploads but risks OOM with large/concurrent files.
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: 'uploads/',
+    // We invent the name ourselves. originalname comes from the client, so
+    // building paths from it invites collisions and path tricks; keeping its
+    // extension is just a courtesy for humans browsing the folder.
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${crypto.randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: MAX_AVATAR_BYTES },
+  // Convenience gate only — mimetype is client-typed. Real content checks
+  // (magic bytes) happen after the file lands.
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_TYPES.has(file.mimetype)) return cb(null, true);
+    cb(new Error(`Unsupported file type: ${file.mimetype}`));
+  },
+});
 
-5. **What are presigned URLs and when should you use them?**
-   - **Explanation:** Time-limited S3 URLs that allow direct client-to-S3 uploads. Use them for large files or high-traffic apps to avoid routing file data through your server, saving bandwidth and memory.
+app.post('/api/avatar', upload.single('avatar'), (req, res) => {
+  // Reaching here means multer fully finished: the file is on disk, and any
+  // text fields that rode along (like caption) are parsed onto req.body.
+  res.status(201).json({
+    caption: req.body.caption ?? null,
+    file: {
+      storedAs: req.file.filename,
+      bytes: req.file.size,
+      declaredType: req.file.mimetype,
+    },
+  });
+});
 
-## 9. Mistakes / traps
+// Every multer rejection funnels through next(err) — size, count, unknown
+// field, filter error — so one middleware answers for all of them.
+app.use((err, _req, res, _next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: err.code }); // e.g. "LIMIT_FILE_SIZE"
+  }
+  res.status(400).json({ error: err.message });
+});
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+app.listen(3000);
+```
 
-## 10. Compare with related concepts
+Small files headed for S3: memory storage, buffer straight into the SDK, no temp file to sweep up.
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+```js
+// npm i express multer @aws-sdk/client-s3
+// Assumes AWS credentials arrive via the environment (an IAM role in prod).
+const crypto = require('node:crypto');
+const express = require('express');
+const multer = require('multer');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
-## 11. Summary from memory
+const app = express();
+const s3 = new S3Client({});
 
-Explain How do you handle file uploads in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  // Memory storage makes the size limit a survival constraint, not a nicety:
+  // every accepted byte lives in this process's RAM until we respond.
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
-## 12. Spaced revision prompts
+app.post('/api/documents', upload.single('document'), async (req, res, next) => {
+  try {
+    // Assume your auth middleware has already set req.user.
+    const key = `docs/${req.user.id}/${crypto.randomUUID()}`;
+    await s3.send(new PutObjectCommand({
+      Bucket: 'my-app-uploads',
+      Key: key,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype,
+    }));
+    res.status(201).json({ key });
+  } catch (err) {
+    next(err); // S3 hiccup → normal error pipeline, nothing leaked to disk
+  }
+});
+```
 
-- Day 1: Define How do you handle file uploads in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+Large or high-traffic uploads: get your server out of the byte path entirely with a presigned POST. The server still owns the decision — who may upload, where, how big — but S3 receives the bytes directly from the browser.
+
+```js
+// npm i @aws-sdk/client-s3 @aws-sdk/s3-presigned-post
+const crypto = require('node:crypto');
+const { createPresignedPost } = require('@aws-sdk/s3-presigned-post');
+
+app.get('/api/upload-url', async (req, res) => {
+  // Assume requireAuth ran before this and set req.user.
+  const key = `avatars/${req.user.id}/${crypto.randomUUID()}`;
+  const { url, fields } = await createPresignedPost(s3, {
+    Bucket: 'my-app-uploads',
+    Key: key,
+    // These constraints are enforced by S3 at upload time — a client that
+    // ignores our advice cannot exceed them, because the signature covers them.
+    Conditions: [
+      ['content-length-range', 1, 5 * 1024 * 1024],
+      ['starts-with', '$Content-Type', 'image/'],
+    ],
+    Expires: 600, // seconds until this offer expires
+  });
+  res.json({ url, fields, key });
+});
+```
+
+Multiple files in one request: `array` for many files under one field name, `fields` for named groups — always with a `maxCount`, because the alternative is trusting clients to bring reasonable numbers of files.
+
+```js
+app.post(
+  '/api/listings',
+  upload.fields([
+    { name: 'cover', maxCount: 1 },
+    { name: 'gallery', maxCount: 8 },
+  ]),
+  (req, res) => {
+    const cover = req.files.cover?.[0];       // grouped by field name
+    const gallery = req.files.gallery ?? [];
+    res.status(201).json({
+      cover: cover?.filename ?? null,
+      gallery: gallery.map((f) => f.filename),
+    });
+  },
+);
+```
+
+Cleaning up staged files when your handler fails after multer succeeded — the anti-orphan pattern:
+
+```js
+const fs = require('node:fs/promises');
+
+app.post('/api/photos', upload.single('photo'), async (req, res, next) => {
+  try {
+    if (!req.body.albumId) {
+      throw new Error('albumId is required');
+    }
+    // ...database insert, thumbnail generation, whatever the workflow is...
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    // Multer already wrote the file. If we bail without removing it,
+    // the disk keeps an unreferenced file forever. Best-effort unlink.
+    await fs.unlink(req.file.path).catch(() => {});
+    next(err);
+  }
+});
+```
+
+The React side of this contract — progress bars, FormData construction, aborted uploads — is covered in [How do you handle file upload from React](../full-stack-integration/how-do-you-handle-file-upload-from-react.md), and whether the resulting files belong in MongoDB or object storage in [Should files be stored in MongoDB or object storage](../mern/should-files-be-stored-in-mongodb-or-object-storage.md).
+
+## 5. Interview Questions — All of Them, Done Properly
+
+**Q: How do you handle file uploads in Express?**
+
+Start with the format mismatch, because that's the insight the question tests: browsers send uploads as `multipart/form-data`, and Express's built-in parsers only claim JSON and urlencoded types, so uploads need a dedicated multipart parser — typically multer. Multer streams the request through busboy, separates form fields onto `req.body`, routes file parts through your `fileFilter`, and stages each accepted file via a storage engine — disk for filesystem writes as bytes arrive, memory for buffers in RAM. Files land on `req.file` (or `req.files` for multiples). Then mention governance, because that's what separates experience from tutorial: size and count limits, generated filenames rather than client-supplied ones, magic-byte validation for anything security-relevant, a deliberate memory-vs-disk choice based on file sizes and destination, and an error handler for `MulterError` codes. If the follow-up conversation reaches cloud storage, describe the presigned-URL escape hatch that removes your server from the byte path.
+
+**Q: Why can't `express.json()` handle file uploads?**
+
+Because body parsers are content-type specialists, and multipart is outside their specialty. `express.json()` sees `Content-Type: application/json`, expects one JSON document, and parses accordingly. A multipart body is not one document — it's several labeled sections joined by boundary separators, containing raw binary. There's no JSON to parse. When the content type doesn't match, `express.json()` correctly skips the request without touching it, leaving `req.body` unpopulated and `req.file` nonexistent. No error fires — silence is the symptom. The general principle: HTTP bodies are just bytes; meaning comes entirely from whichever parser claims the content type.
+
+**Q: What's the difference between `diskStorage` and `memoryStorage`, and how do you choose?**
+
+Disk storage streams each file part to the filesystem chunk-by-chunk as it arrives, so a 2GB upload costs almost no RAM — the bytes land on disk incrementally, and your handler later gets `req.file.path`. Memory storage accumulates every chunk into a buffer, so your handler gets `req.file.buffer` holding the entire file in RAM. Choose memory when files are small and headed somewhere else immediately — most commonly a buffer-to-S3 PUT, where skipping temp files is pure win. Choose disk when files are large, when concurrency multiplies their cost, or when you want the OS to absorb the write load. The trap to articulate: buffers live outside the V8 heap, so they don't show up in JS heap metrics, but they fully count toward process RSS — which is what container memory limits kill on. Memory storage under concurrent load is the classic crash-loop generator.
+
+**Q: How do you limit file size and type? How trustworthy are those checks?**
+
+Size goes in `limits.fileSize` (bytes, per file) and is enforced mid-stream — the moment a file exceeds the cap, multer aborts and surfaces `LIMIT_FILE_SIZE` through `next(err)`, so the server never buffers the oversized file to completion. Counts go in `limits.files` and `maxCount` per field. Type goes through `fileFilter`, which runs per file part before storage. Then the honest caveat: `fileFilter` inspects the declared mimetype and original filename, both copied verbatim from client-controlled headers — renaming a malicious executable to `cat.jpg` sails through. So declare the layered reality: mimetype filtering blocks honest mistakes and raises the bar; magic-byte inspection of actual file content (via a library like `file-type`) is the real gate; and for genuinely sensitive pipelines, antivirus scanning happens asynchronously after acceptance.
+
+**Q: What actually happens when a client exceeds `limits.fileSize`? What does the client receive?**
+
+Multer stops consuming the part mid-stream and invokes `next()` with a `MulterError` whose `code` is `LIMIT_FILE_SIZE`. From there it flows exactly like any [async error in Express](./how-do-you-handle-async-errors-in-express.md): to your error-handling middleware, where you should translate it into a 400 or 413 with a machine-readable body. If you haven't written one, Express's built-in final handler returns an HTML stack-trace-flavored 500 — functional, but useless to the frontend trying to show "file too large". One production subtlety worth volunteering: the client may still be pushing bytes when you respond early; behind proxies this usually resolves cleanly, but aggressive setups can surface it as a connection reset instead of your tidy JSON, which is why some teams also cap request size at the reverse proxy (`client_max_body_size`) so oversized requests die at the door with a proper 413 before reaching Node.
+
+**Q: How do you handle multiple file uploads?**
+
+Three shapes. `upload.array('photos', 5)` accepts up to five files under one field name and delivers them as an array on `req.files`. `upload.fields([{ name: 'cover', maxCount: 1 }, { name: 'gallery', maxCount: 8 }])` accepts differently-named groups and delivers an object keyed by field name. `upload.any()` takes whatever file parts show up — useful sparingly, since it weakens the contract. Always set counts. Without `maxCount`, one request carrying ten thousand tiny files is legal by default and will hurt you — multer raises `LIMIT_UNEXPECTED_FILE` only when you've drawn a line. Per-file processing then proceeds like the single case: validate, stage, persist, and decide explicitly whether one bad file fails the batch or gets skipped, because "some succeeded, some didn't" is a state your database schema needs to survive.
+
+**Q: Server-mediated uploads versus presigned URLs — how do you decide?**
+
+Server-mediated means bytes flow client → your Express server → S3, with multer in the middle. It's simpler to build, keeps validation in one place before anything reaches storage, and works fine for small files and modest traffic. Its cost is structural: your server pays every byte twice (in and out), holds connections open for the full duration, and — with memory storage — holds whole files in RAM. Presigned uploads mean your server authenticates the user, decides the destination key, signs a time-limited upload grant with embedded constraints (`content-length-range`, content-type prefix), and the browser PUTs bytes straight to the bucket. Your infrastructure never touches file data; S3 enforces the signed constraints regardless of what the client attempts. The trade: more frontend complexity, and validation splits into two moments — strict identity/authorization checks before signing, content verification (magic bytes, virus scans) after the object lands, typically via bucket notifications. Rule of thumb: small files, server-mediated; large files or high volume, presigned.
+
+**Q: An upload endpoint passed every test but dies under real traffic. Walk me through what you'd check.**
+
+In priority order. First, storage engine versus load shape: memory storage plus concurrent uploads is the classic off-heap RSS balloon and container OOMKill loop — check memory graphs for sawtooth patterns correlated with upload traffic. Second, infrastructure caps that dev environments hide: nginx's default `client_max_body_size` of 1MB returns 413 before Node sees anything, and load balancer timeouts sever slow mobile uploads. Third, the disk: orphaned files accumulate whenever handlers fail after multer succeeded and nothing reaps them — chart free space over time. Fourth, missing limits: one abusive client streaming gigabytes, or one request with thousands of files, can degrade everyone. Fifth, error handling: if `MulterError`s fall through to the default 500, clients retry blindly and multiply the damage. Each check has a distinct fingerprint in metrics and logs, which is the point of listing them in order — you're triaging, not guessing.
+
+**Q: How do you keep failed uploads from littering your disk?**
+
+Accept that multer and your handler succeed independently, so every post-storage step needs an undo. Wrap post-upload logic in try/catch and unlink `req.file.path` on failure, best-effort. Prefer a dedicated uploads/tmp directory with a periodic reaper deleting files older than your longest legitimate workflow — this catches the cases code misses: process kills, deploys mid-request, panics. And if files ultimately belong in cloud storage, shorten the local staging window to zero by going memory-plus-SDK for small files or presigned for large ones, so the disk was never involved.
+
+**Q: What's your security checklist for user-uploaded files?**
+
+Never trust metadata: mimetype and filename are client-typed strings, so validate content by magic bytes, and never construct storage paths from `originalname` — generate random names server-side, storing the original only as display metadata. Serve uploads from a separate origin or domain when possible, so an uploaded file can never execute against your cookies; force safe `Content-Type` and `Content-Disposition: attachment` for types that shouldn't render inline, because uploaded SVG and HTML can carry scripts — the same family of risk covered in [preventing XSS](./how-do-you-prevent-xss.md). Constrain volume: size limits, file counts, rate limiting per user, since uploads are the cheapest denial-of-service vector on most apps. Scan for malware when files will be consumed by others. And authorize the destination: a presigned URL must encode the specific user's key, never a shared writable prefix.
+
+## 6. The Traps — What Goes Wrong in Production
+
+**Mounting `express.json()` and expecting uploads to work.** The wrong assumption: "body parsing is handled." Reality: the JSON parser sees `multipart/form-data`, declines, and steps aside. `req.body` stays empty, `req.file` never exists, and — nastiest detail — nothing errors, so the bug hides until someone actually exercises the endpoint. The fix is adding the right specialist: `upload.single('field')` (or friends) on the route, mounted *before* the handler so the crew unloads before you walk in.
+
+**Memory storage as a default.** People pick `multer.memoryStorage()` because it deletes the temp-file problem, then ship it for a feature where users upload 50MB PDFs. Each in-flight upload now lives entirely in process RAM, off-heap, invisible to JS heap alerts. At twenty concurrent uploads the container crosses its memory limit and the kernel kills the process — and since uploads resume after restart, it kills it again. Sawtooth memory graphs ending in OOMKills are this mistake's signature. Fix: size-aware choice — memory only for small files, disk or presigned for anything bigger.
+
+**Trusting the mimetype and filename.** `fileFilter` reading `file.mimetype` feels like validation but reads a client-written header. `malware.exe` renamed to `cat.jpg` reports itself as `image/jpeg` with a smiling `originalname`. Worse, teams who build storage paths from `originalname` invite crafted names like `../../config/app.js` into their filesystem. Fix: treat metadata as decoration; verify content by magic bytes after landing; generate names with `crypto.randomUUID()` server-side.
+
+**Letting `MulterError` reach the default handler.** Size rejections, wrong field names, exceeded counts — all arrive as `next(err)`. Teams forget the error middleware, so a user uploading a slightly-too-big photo receives an HTML 500 implying the server exploded, the frontend can't distinguish "too large" from "try again", and support tickets bloom. Fix: one error middleware branch on `err instanceof multer.MulterError` mapping codes to 400/413 responses — the mechanics are the same ones covered in [error handling middleware](./what-is-error-handling-middleware.md).
+
+**The `dest:` shortcut's silent surprise.** `multer({ dest: 'uploads/' })` works — and stores every file under a random name with *no extension*. Nothing breaks programmatically, but downloads lose their associations, image previews die in some tools, and confused engineers add extensions back by hand. Fix: use explicit `diskStorage` with a `filename` function whenever the stored name matters (which is almost always).
+
+**No `maxCount` on multi-file endpoints.** `upload.array('attachments')` with no count accepts unlimited files per request. One curl loop with ten thousand small files per request turns your staging area and event-loop schedule into mush. Multer only protects you where you drew a boundary. Fix: `maxCount` everywhere, plus `limits.files` as the global backstop.
+
+**Forgetting the reverse proxy's opinion.** Everything works locally; production returns 413 on anything over 1MB because nginx's default `client_max_body_size` rejects the body before Node participates. Teams burn hours debugging multer when multer never ran. Fix: align the proxy cap with (and slightly above) your application limits, so the two layers agree on what "too big" means.
+
+**Signing presigned URLs without conditions.** Teams adopt presigned uploads for scale, then generate grants pinned only to a key — no `content-length-range`, no type restriction. Congratulations: your authorization layer now permits any authenticated user to place unlimited gigabytes of anything into your bucket. The signature makes the request authentic, not restrained. Fix: bake size and content-type conditions into the signed policy so S3 enforces your limits at upload time.
+
+## 7. Compare With Related Concepts
+
+**Multer vs `express.json()` / `express.urlencoded()`.** Not competitors — specialists dispatched by content type. JSON parser for `application/json`, urlencoded for classic HTML form posts, multer for `multipart/form-data`. A single app legitimately mounts all three; each request is claimed by exactly the one whose format matches.
+
+**`diskStorage` vs `memoryStorage` vs presigned direct-to-cloud.** Three rungs on the same ladder. Disk: bytes stream to local filesystem, cheap on RAM, costs you temp-file hygiene. Memory: bytes held in process RAM, perfect for immediate hand-off to cloud SDKs, lethal at size. Presigned: bytes never touch your server at all, maximum scalability, costs you split validation and frontend complexity. Rung one for local persistence, rung two for small files bound elsewhere, rung three for large files or heavy traffic.
+
+**`req.body` vs `req.file` / `req.files`.** Same request, two cargo classes. Text parts parsed out of the multipart body land on `req.body` like any form data. File parts land on `req.file`/`req.files` as objects carrying metadata (`fieldname`, `originalname`, `mimetype`, `size`) plus location — `buffer` under memory storage, `path`/`filename`/`destination` under disk. Code assuming "everything the user sent is on `req.body`" is code that hasn't met a file input yet.
+
+**Buffering vs streaming.** Memory storage is buffering: collect the whole payload, then act. Disk storage is closer to streaming: transform and write chunks as they arrive. The streaming instinct — handle pieces in motion rather than hoarding the whole — scales to video ingestion and proxying; the buffering instinct is fine for thumbnails and avatars. Node's broader streaming story lives in the Node.js track; for Express uploads, multer has made the streaming-vs-buffering choice concrete on your behalf.
+
+**Multer vs writing busboy yourself vs other libraries.** Multer is a comfortable Express-shaped wrapper over busboy, the streaming parser doing the actual work. Reach for raw busboy when you need exotic control — per-part routing decisions, custom progress semantics, non-Express servers. Alternatives like formidable occupy similar territory with different defaults. Knowing multer sits atop busboy matters in interviews because it explains multer's behavior: the streaming, the per-part events, the mid-stream limit enforcement — all inherited from the parser below.
+
+## 8. 🧠 The Memory Hook
+
+An upload is not one package — it's a truckload of wrapped, tagged boxes separated by a tape pattern guaranteed to appear nowhere else in the cargo. Multer is the crew that reads the manifest, checks every box against the scale and the foreman, and stages it one of two ways: shelved as it arrives (disk) or carried in the arms until the truck is empty (memory) — and arms work fine until somebody sends a piano.
