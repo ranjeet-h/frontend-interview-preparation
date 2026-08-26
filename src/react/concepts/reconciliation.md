@@ -1,471 +1,404 @@
-# Reconciliation: How React Diffs and Updates the Tree
+# React Reconciliation: How React Preserves and Replaces UI
 
 ## 1. Why This Exists — The Problem First
 
-Imagine you are building a complex web application with forms, shopping carts, and dynamic data tables. If every time a piece of state changed you had to wipe out the entire DOM and rebuild it from scratch (`container.innerHTML = ...`), the user experience would be unusable. Form inputs would lose focus mid-typing, selected text would disappear, scroll positions would jump to the top, and ongoing CSS animations would instantly stutter and restart.
+React lets a component describe the whole UI for the current state:
 
-To avoid that nightmare in vanilla JavaScript, you would have to write hundreds of lines of manual DOM manipulations: find this specific `<span>`, update its text content, add a CSS class to that `<button>`, and insert a `<tr>` after the third row. As your app grows, this manual approach falls apart. One missed edge case leaves your UI showing stale data that does not match your application state.
+```tsx
+return <button disabled={isSaving}>Save</button>;
+```
 
-React solves this by letting you write declarative code: you describe what the UI should look like for any given state, and React figures out the rest. But computing the exact differences between two nested object trees is mathematically expensive. A general tree-diffing algorithm runs in $O(n^3)$ time complexity. If your page has 1,000 elements, comparing two trees would take a billion operations on every single state change.
+That description is cheap JavaScript data. The browser DOM is a stateful, expensive external system. Replacing the whole DOM whenever `isSaving` changes would throw away focus, selection, scroll position, media playback, browser-managed input state, and component state.
 
-Reconciliation is React's diffing engine. It is the intelligent comparison process that turns an impossible $O(n^3)$ mathematical problem into an ultrafast $O(n)$ linear operation, figuring out the absolute minimum number of DOM mutations needed to keep the screen in sync with your state without destroying user context.
+Reconciliation is React's process for comparing the result of a new render with the previously committed Fiber tree. It decides which existing elements can represent the same thing, which props or text need updating, and which nodes must be inserted, moved, or removed. The commit phase then applies the resulting host changes to the DOM.
+
+The goal is not to find a mathematically perfect edit script for every possible tree. React uses practical assumptions about UI trees: a different type usually means a different subtree, and a stable key identifies a child across renders. Those assumptions make common updates approximately linear in the number of relevant nodes instead of requiring a general tree-edit search.
+
+Reconciliation therefore protects two kinds of continuity at once:
+
+- **Host continuity:** a matched DOM element can keep its node, focus, selection, and browser state.
+- **Component continuity:** a matched component Fiber can keep its hooks, refs, and effect lifecycle.
+
+The central interview question is: “At this rendered position, is this the same entity as before?” The answer comes from type, key, and parent/child position—not from whether two JSX objects happen to have the same shape.
 
 ## 2. The Analogy — Make It Obvious
 
-Think of React reconciliation like an experienced building renovation inspector working with blueprints.
+Imagine a museum curator comparing yesterday's exhibit plan with today's plan.
 
-When an architect sends over a revised floor plan (a new React element tree produced by a render), the building inspector does not order the demolition of the entire skyscraper. Instead, the inspector walks through the building with the old blueprints in one hand and the new blueprints in the other, following three simple inspection rules:
+The curator first checks the room assignment. If a room that held a **painting gallery** is now assigned to a **science lab**, the curator clears the room and installs the new exhibit. Nothing inside the old room is considered reusable merely because some objects look similar. This is a change of element type, so the old subtree is unmounted and the new subtree mounts.
 
-First, **Different Room Types**: If the blueprint replaces an open-concept kitchen with a closed ceramic-tiled bathroom at the same location, the inspector does not try to salvage the wooden kitchen cabinets or appliances. The crew tears down the entire kitchen to the concrete slab, throws everything out, and builds a brand new bathroom from scratch. Any items left in that kitchen are destroyed.
+If it is still a painting gallery but the wall color changed, the curator keeps the room, frames, and visitor position, and changes only the affected property. This is the same element type with new props.
 
-Second, **Same Room, Updated Paint**: If the conference room is still a conference room, but the blueprint asks for a blue accent wall instead of grey, the inspector keeps the room, doors, and tables intact. The crew only repaints that one wall.
+For a row of exhibits, position alone is not enough. Each exhibit has a catalog number. If exhibit `A` moves from slot 1 to slot 3, the curator follows catalog number `A`; its local notes and condition record move with it. Those catalog numbers are React keys. If the curator labels every exhibit with its current slot number, inserting one exhibit at the front makes every later label lie, so notes stay attached to the wrong exhibit. That is the index-key bug.
 
-Third, **Office Desks with Name Tags**: If five employees swap desks, the inspector looks at their desk name tags (keys). When Alice moves from desk 1 to desk 5, the movers simply roll Alice's chair and desk to spot 5. If there were no name tags, the crew would look only at desk positions, clear out whatever was sitting on desk 1, rewrite Alice's name on Bob's personal notebook, and leave Alice's coffee cup on someone else's desk.
-
-In React, the blueprint comparison is **reconciliation**, the inspector's notes are **Fiber effect tags**, and the construction crew executing the changes on the physical building is the **commit phase** updating the real DOM.
+The curator may prepare a new plan, pause, and discard it when a newer request arrives. Visitors see only an approved plan, never a half-installed one. That is Fiber's render-versus-commit boundary: render/reconciliation prepares work in memory; commit makes one synchronous visible transition. A discarded plan never runs its committed effects.
 
 ## 3. How It Actually Works — The Full Explanation
 
-When a state or prop change occurs, React calls your component functions to produce a new tree of React elements (lightweight JavaScript objects describing what the UI should look like). React must compare this new element tree with the existing tree (the current Fiber tree) to determine what actually changed.
+**React elements, Fibers, and identity**
 
-Because generic tree comparison algorithms take $O(n^3)$ time, React relies on two practical heuristics based on how web applications behave in real life:
+JSX creates React element descriptions. They commonly contain `type`, `key`, and `props`; they are not DOM nodes and they do not hold hook state. A Fiber is React's internal work record for a component, host element, or other node. It links the current committed record with the work-in-progress record and stores information such as props, state, lanes, refs, and flags.
 
-1. Two elements of different types will produce fundamentally different trees.
-2. The developer can hint at which child elements remain stable across renders using a unique `key` prop.
+For a child at a given parent position, React can reuse the existing Fiber when the identity matches. In practical terms, identity is determined by:
 
-These heuristics reduce the diffing process to $O(n)$ linear time. React walks both trees level-by-level (breadth-first at each node level) and applies four core rules.
+1. **The parent and sibling slot:** children are reconciled under a particular parent. A component moved to a different owner/parent position is not automatically the same state location.
+2. **The element type:** for a host element, `"button"` and `"div"` differ; for a component, the function or class reference matters. Two separately declared functions with identical bodies are different types.
+3. **The key:** among siblings, a key distinguishes one child from another. A key is local to that sibling set; `key="42"` under one parent does not identify a child under a different parent.
 
-**Rule 1: Elements of Different Types Produce Different Trees**
+The phrase “ownership” is useful at the component boundary: the component that returns JSX establishes the parent/child relationship in the rendered tree, and keys are interpreted within that parent's children. It is not a license to move state by moving a JavaScript variable. Internal fields such as an element's `_owner` are implementation details and should not be used as application identity.
 
-Whenever the root element type changes between renders (e.g., changing from `<div>` to `<section>`, or from `<Header>` to `<Sidebar>`), React does not attempt to match their children.
+**The matching rules**
 
-React destroys the old tree completely:
-- It removes the old DOM nodes from the document.
-- It unmounts all component instances in that subtree, running their cleanup functions (`useEffect` return callbacks or `componentWillUnmount`).
-- All state held inside any component in that subtree is permanently destroyed.
-- It mounts the new component subtree fresh, initializing state from scratch and running mount effects.
+- If a rendered position has no old child, React creates a new Fiber and marks the needed host work for insertion.
+- If old and new children have different types, React replaces that subtree. Descendant state and refs are lost; unmount cleanups run for the old subtree, and mount behavior runs for the new one after it commits.
+- If type and key match, React reuses the Fiber. A function component runs again with new props, and its hook state remains associated with that Fiber. A host element keeps its DOM node while React updates changed props and then reconciles its children.
+- If a matching keyed child appears at a different sibling index, React can preserve the Fiber and arrange its host nodes at the new position. A move is not the same as a remount.
 
-**Rule 2: DOM Elements of the Same Type Retain Their Node**
+For unkeyed children, React primarily matches by position. This is often fine for an append-only list of identical stateless rows. It is unsafe when insertion, deletion, filtering, or sorting changes which data item occupies a position. A key should be stable, unique among the current siblings, and derived from the item's identity—not generated during render.
 
-When comparing two React elements of the same built-in DOM type (e.g., `<div className="light" title="Hello" />` versus `<div className="dark" title="Hello" />`), React preserves the underlying DOM node.
+The array algorithm uses a fast sequential pass while old and new children line up, then map-like lookup for remaining keyed children. The exact internal implementation is version-dependent, so “$O(n)$ diffing” is a useful heuristic description, not a promise that every render costs exactly one operation per node. Matching also does not mean React skips all work: new props can still cause a component render or host-property update.
 
-React only compares their attributes and updates what changed:
-- It removes old CSS classes or attributes and applies the new ones.
-- When updating `style` objects, it only updates modified properties (e.g., modifying `color` while leaving `fontWeight` untouched).
-- After updating the attributes on the current node, React moves down to reconcile that element's children.
+**State preservation and remounting**
 
-**Rule 3: Component Elements of the Same Type Preserve Instance and State**
+State belongs to a position in the rendered tree as identified by its parent relationship, type, and key. Keeping the same component function at the same keyed position preserves its hooks. Changing the key deliberately creates a new identity:
 
-When a custom component updates (e.g., `<UserBadge role="viewer" />` changes to `<UserBadge role="admin" />`), React sees that the component type is identical (`UserBadge === UserBadge`).
+```tsx
+<ProfileForm key={selectedUserId} userId={selectedUserId} />
+```
 
-React keeps the existing component instance and its internal state alive:
-- React updates the props on the underlying Fiber node.
-- React re-executes the component function with the new props.
-- The component produces new React elements, and React recursively reconciles the returned subtree.
+When `selectedUserId` changes, the old form unmounts and the new form mounts, which is a useful way to reset form state. Conversely, changing only a prop preserves state, so a component must explicitly synchronize or reset state when that is what the product behavior requires.
 
-**Rule 4: Child Lists Are Reconciled Using Keys**
+**Render, reconciliation, and commit**
 
-When a parent has a list of children, React iterates over the old list and the new list simultaneously:
+These terms describe related but distinct work:
 
-If you append an item to the end of a list, React matches the first items positionally and inserts the last item at the end. That is fast and efficient.
+- **Render:** React calls components and evaluates JSX to calculate the next React element output.
+- **Reconciliation:** React matches that output with the current Fiber tree, reuses or creates Fibers, and records changes such as placement, update, or deletion. This is in memory; it is not a DOM mutation.
+- **Commit:** React synchronously applies the finished host changes and makes the work-in-progress tree current. The user never sees a partially committed tree.
 
-However, if you insert an item at the beginning of a list without keys, React compares the first old child with the first new child. Seeing a mismatch, React mutates the existing first DOM node in place, mutates the second node in place, and inserts a new node at the bottom. This causes unnecessary DOM updates and causes any local component state (like focused inputs, open accordions, or checkbox checks) to stay pinned to the wrong position.
+In concurrent React, render/reconciliation work can be interrupted, restarted, reprioritized, or discarded. A component body must therefore be pure: do not mutate external systems, start subscriptions, or assume that every render call becomes visible. A render can happen without a commit, so render-time logging is not a reliable “the user saw this” signal.
 
-When you provide a stable, unique `key`, React creates an internal map of old keys. Instead of matching by array index, React looks up elements by key in $O(1)$ time. It knows immediately whether an item was moved, inserted, or removed, preserving the exact DOM nodes and local state associated with each item.
+Effects belong to the commit lifecycle. Cleanup for an old committed effect runs when that effect is replaced or its component unmounts. `useLayoutEffect` runs after DOM mutations and before the browser paints the committed update, making it suitable for layout measurement that must happen before paint. `useEffect` is a passive effect scheduled after commit; React generally lets the browser paint first, but its exact scheduling should not be treated as a timer contract.
 
-**Bailout Mechanisms: When React Skips Reconciliation Entirely**
+Strict Mode in development intentionally exercises purity and cleanup. In a Strict Mode tree, React may call render logic more than once and may perform an extra setup/cleanup cycle for effects on initial mount. This is a development diagnostic, not evidence that production has two durable component instances. Concurrent discarded renders likewise do not run effects from an uncommitted tree.
 
-Diffing has a cost. React provides multiple ways to bail out of diffing subtrees when nothing changed:
+React's memoization features change how much work is attempted, not the identity rules:
 
-- **State Identity Bailout (`Object.is`)**: When you call `setState(newValue)`, React compares `newValue` with the existing state using `Object.is`. If they are identical, React bails out early without re-rendering the component or diffing its children.
-- **Component Memoization (`React.memo`)**: Wrapping a component in `React.memo` tells React to perform a shallow comparison of its props. If all props are referentially equal to the previous render, React skips executing the component and reuses the previous rendered output.
-- **Element Identity Bailout (`useMemo` and `children`)**: If a JSX element reference is identical to the previous render (for example, passed in as `children` from a parent that did not re-render, or memoized with `useMemo`), React knows the element's props and type have not changed, skipping reconciliation for that subtree.
+- `React.memo` can skip a parent-driven function-component render when its props compare equal, but local state and context updates can still render it.
+- `useMemo` caches a calculated value; it does not make a component type stable or guarantee a permanent cache.
+- Reusing the same React element object can allow React to reuse that subtree, but creating a new element object is not itself a remount when type, key, and position still match.
+- A state update with an `Object.is`-equal value may be ignored, but mutating an object in place is still a correctness bug because React cannot observe the intended changed reference.
 
-**The Two Phases: Reconciliation vs Committing**
+**React and TypeScript context**
 
-Reconciliation happens during the **Render Phase**. In this phase, React calls component functions and calculates what DOM changes are needed. In modern React (Fiber architecture), this phase is pure and can be split into chunks, paused, resumed, or discarded if higher-priority user events (like keystrokes) come in.
+TypeScript checks the props supplied to a component; it does not participate in runtime reconciliation. `key` is special React metadata and is not received as a normal prop, so declare a separate `id` when the child needs the identifier:
 
-Once the entire tree has been diffed, React enters the **Commit Phase**. This phase is synchronous and uninterruptible: React applies all computed changes to the real browser DOM at once, ensuring the user never sees a half-updated or inconsistent UI.
+```tsx
+type RowProps = { id: string; label: string };
+
+function Row({ id, label }: RowProps) {
+  // `id` is available here. `key` would not be.
+  return <li data-row-id={id}>{label}</li>;
+}
+
+function Rows({ rows }: { rows: RowProps[] }) {
+  return (
+    <ul>
+      {rows.map((row) => (
+        <Row key={row.id} id={row.id} label={row.label} />
+      ))}
+    </ul>
+  );
+}
+```
+
+The generic `ReactNode` type is appropriate for arbitrary `children`, while a specific element type is appropriate when an API requires one particular component shape. Neither type annotation changes how React matches the resulting runtime elements.
 
 ## 4. Real Code — See It Working
 
-Let us look at three practical scenarios showing how reconciliation operates under the hood.
+**Example 1: same type preserves state; a key or type change resets it**
 
-### Example 1: Type Change Destroys State vs Same Type Preserves State
+This complete TSX example can run in a React + TypeScript app. Increment the counter, then change its label, its key, and its wrapper type.
 
 ```tsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 function Counter({ label }: { label: string }) {
   const [count, setCount] = useState(0);
 
   return (
-    <div style={{ margin: '8px 0', padding: '8px', border: '1px solid #ccc' }}>
-      <span>{label}: <strong>{count}</strong></span>
-      <button onClick={() => setCount(c => c + 1)} style={{ marginLeft: '8px' }}>
-        Increment
+    <p>
+      {label}: {count}{' '}
+      <button type="button" onClick={() => setCount((value) => value + 1)}>
+        increment
       </button>
-    </div>
+    </p>
   );
 }
 
-export function ReconciliationDemo() {
-  const [useWrapperSection, setUseWrapperSection] = useState(false);
-  const [swapPosition, setSwapPosition] = useState(false);
+export default function IdentityDemo() {
+  const [label, setLabel] = useState('first label');
+  const [counterKey, setCounterKey] = useState('stable');
+  const [useSection, setUseSection] = useState(false);
+
+  const counter = <Counter key={counterKey} label={label} />;
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: '16px' }}>
-      <h3>1. Changing Root Element Type</h3>
-      {/* 
-        When useWrapperSection toggles:
-        React sees <div> vs <section>. Different element types!
-        It completely unmounts the old subtree and destroys the Counter's state.
-      */}
-      {useWrapperSection ? (
-        <section>
-          <Counter label="Section Wrapper Counter" />
-        </section>
-      ) : (
-        <div>
-          <Counter label="Div Wrapper Counter" />
-        </div>
-      )}
-      <button onClick={() => setUseWrapperSection(v => !v)}>
-        Toggle Wrapper Type (Wipes Counter State)
+    <main>
+      <button type="button" onClick={() => setLabel('new label')}>
+        Change prop: preserve count
+      </button>{' '}
+      <button type="button" onClick={() => setCounterKey((key) => `${key}!`)}>
+        Change key: reset count
+      </button>{' '}
+      <button type="button" onClick={() => setUseSection((value) => !value)}>
+        Change wrapper type: reset descendant
       </button>
 
-      <hr style={{ margin: '24px 0' }} />
-
-      <h3>2. Preserving Type and Changing Props</h3>
-      {/* 
-        When swapPosition toggles:
-        React sees <Counter> at the same tree position.
-        Same component type! React preserves the instance and count state,
-        only updating the 'label' prop.
-      */}
-      <Counter label={swapPosition ? 'Admin Counter' : 'User Counter'} />
-      <button onClick={() => setSwapPosition(v => !v)}>
-        Toggle Label Prop (Preserves Count State)
-      </button>
-    </div>
+      {useSection ? <section>{counter}</section> : <div>{counter}</div>}
+    </main>
   );
 }
 ```
 
-### Example 2: List Diffing With Keys vs Index Keys
+Changing `label` keeps the `Counter` identity. Changing `counterKey` changes its identity. Changing the wrapper from `div` to `section` replaces that wrapper subtree, so the counter also remounts even though its own JSX looks similar.
+
+**Example 2: stable data keys keep state with the item**
 
 ```tsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 
-interface TodoItem {
-  id: string;
-  text: string;
-}
+type Todo = { id: string; text: string };
 
-function TodoRow({ text }: { text: string }) {
-  // Local state representing user interaction (e.g. custom note or completion)
+function TodoRow({ todo }: { todo: Todo }) {
   const [checked, setChecked] = useState(false);
 
   return (
-    <li style={{ margin: '6px 0' }}>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={e => setChecked(e.target.checked)}
-      />
-      <span style={{ marginLeft: '8px' }}>{text}</span>
+    <li>
+      <label>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => setChecked(event.target.checked)}
+        />{' '}
+        {todo.text}
+      </label>
     </li>
   );
 }
 
-export function TodoListDiffDemo() {
-  const [todos, setTodos] = useState<TodoItem[]>([
-    { id: 'todo-1', text: 'Drink coffee' },
-    { id: 'todo-2', text: 'Write documentation' },
+export default function KeyDemo() {
+  const [todos, setTodos] = useState<Todo[]>([
+    { id: 'a', text: 'Read' },
+    { id: 'b', text: 'Practice' },
   ]);
 
-  const prependItem = () => {
-    const newItem: TodoItem = {
-      id: `todo-${Date.now()}`,
-      text: `Task added at ${new Date().toLocaleTimeString()}`,
-    };
-    // Prepend to the top of the list
-    setTodos(prev => [newItem, ...prev]);
-  };
-
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: '16px' }}>
-      <button onClick={prependItem}>Prepend New Task to Top</button>
-
-      <h4>Correct: Using Stable ID as Key</h4>
-      {/* 
-        React matches existing items by their stable 'id'.
-        When a new item is added at index 0, React leaves existing TodoRow instances
-        and their checked state untouched, simply inserting the new DOM node at index 0.
-      */}
+    <section>
+      <button
+        type="button"
+        onClick={() =>
+          setTodos((items) => [{ id: 'new', text: 'New first task' }, ...items])
+        }
+      >
+        Prepend
+      </button>
       <ul>
-        {todos.map(todo => (
-          <TodoRow key={todo.id} text={todo.text} />
+        {todos.map((todo) => (
+          <TodoRow key={todo.id} todo={todo} />
         ))}
       </ul>
-    </div>
+    </section>
   );
 }
 ```
 
-### Example 3: Subtree Bailout Using Element Identity (`children`)
+Check `Read`, prepend, and observe that its checked state stays with `Read`. Replacing `key={todo.id}` with `key={index}` makes state follow positions instead of todos. The stable key does not prevent the new row from rendering; it tells React which existing row the old Fiber belongs to.
+
+**Example 3: render can be discarded, but effects require a commit**
 
 ```tsx
-import React, { useState } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 
-function ExpensiveVisualizer() {
-  // Imagine this component renders a massive chart or svg tree
-  const renderTime = new Date().toLocaleTimeString();
-  return (
-    <div style={{ padding: '12px', background: '#f5f5f5', marginTop: '8px' }}>
-      <strong>Expensive Tree Rendered at:</strong> {renderTime}
-    </div>
-  );
+function ConnectionStatus({ roomId }: { roomId: string }) {
+  useEffect(() => {
+    const connection = openRoomConnection(roomId);
+    connection.connect();
+    return () => connection.disconnect();
+  }, [roomId]);
+
+  return <output>Room: {roomId}</output>;
 }
 
-// Parent component that manages frequent timer updates
-export function OptimizedShell({ children }: { children: React.ReactNode }) {
-  const [count, setCount] = useState(0);
+type Connection = { connect(): void; disconnect(): void };
 
-  return (
-    <div style={{ padding: '16px', border: '2px dashed #007acc' }}>
-      <p>Parent Click Count: {count}</p>
-      <button onClick={() => setCount(c => c + 1)}>Increment Parent Count</button>
-      
-      {/* 
-        Because 'children' was passed in from the outer caller,
-        its element reference (React.createElement output) is identical across parent re-renders.
-        React detects Object.is(prevChildren, nextChildren) and completely bails out
-        of diffing or re-rendering the ExpensiveVisualizer!
-      */}
-      {children}
-    </div>
-  );
+function openRoomConnection(roomId: string): Connection {
+  return {
+    connect: () => console.log(`connected to ${roomId}`),
+    disconnect: () => console.log(`disconnected from ${roomId}`),
+  };
 }
 
-export function App() {
+export default function EffectsDemo() {
+  const [roomId, setRoomId] = useState('general');
+
   return (
-    <OptimizedShell>
-      <ExpensiveVisualizer />
-    </OptimizedShell>
+    <StrictMode>
+      <button type="button" onClick={() => setRoomId('interviews')}>
+        Switch room
+      </button>{' '}
+      <ConnectionStatus roomId={roomId} />
+    </StrictMode>
   );
 }
 ```
+
+The component body can be evaluated during a render that React later abandons. The connection belongs in an effect because React runs that setup only for a committed result and runs its cleanup when the committed effect is replaced or removed. In development Strict Mode, the setup/cleanup cycle may be deliberately repeated to expose missing cleanup.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
-**Q: What is reconciliation in React, and why is it needed?**
+**Q: What is reconciliation?**
 
-Reconciliation is the process React uses to compare two trees of React elements (the previous render and the newly returned render) to determine what changes need to be made to the actual host environment (like the browser DOM). 
+It is React's in-memory matching process: React compares newly rendered element descriptions with the current Fiber tree and records what can be reused, inserted, moved, updated, or deleted. Commit is the separate synchronous step that applies host changes. Reconciliation is not a synonym for “the browser painted.”
 
-It is needed because directly re-creating the entire DOM tree on every state update is devastating for performance and destroys user state like input focus and scroll positions. At the same time, manual DOM querying and patching is error-prone and hard to maintain. Reconciliation enables React's declarative programming model: developers write components as pure projections of state, and React efficiently computes the exact minimum DOM mutations required.
+**Q: What determines whether state is preserved?**
 
-**Q: How does React achieve an O(n) diffing algorithm instead of the traditional O(n³) tree comparison?**
+The rendered position under the same parent, the same element type, and the same key. Same props are not required; changing props normally preserves state. A different type or key creates a new identity and resets descendant state at that replaced position.
 
-General tree-to-tree transformation algorithms calculate the minimum edit distance across all possible permutations, which has an $O(n^3)$ time complexity. React avoids this by making two practical assumptions:
-1. **Type heuristic**: If two elements have different types (e.g., `<div>` vs `<span>` or `<ComponentA>` vs `<ComponentB>`), they will generate completely different subtrees. React immediately unmounts the old subtree and mounts the new one without attempting to diff children.
-2. **Key heuristic**: For lists of sibling elements, developers provide a `key` prop that acts as a stable identifier. React builds a lookup map by key, matching old and new elements in $O(1)$ time rather than comparing every old child to every new child.
+**Q: Does React compare JSX object references?**
 
-Because React only compares nodes level-by-level at the same tree depth and uses keys for siblings, it visits each node a constant number of times, resulting in $O(n)$ complexity.
+Not as the primary identity rule. New JSX objects can still match an existing Fiber when their type, key, and position match. Conversely, the same-looking component function created anew inside a render is a different function reference and therefore a different type. Stable element references can enable a bailout, but element reference equality is an optimization detail, not the general state-preservation rule.
 
-**Q: What is the exact difference between rendering, reconciliation, and committing?**
+**Q: Why are keys required for lists?**
 
-These represent three distinct stages in React's update pipeline:
-- **Rendering**: React executes component functions (or class `render` methods) to produce a new tree of React elements (virtual descriptions of the UI).
-- **Reconciliation**: React compares the newly rendered element tree against the current Fiber tree to identify differences. It flags Fiber nodes with effect tags (like Placement, Update, ChildDeletion). This is still in memory and does not touch the DOM.
-- **Committing**: React takes the list of effect tags produced during reconciliation and synchronously applies the actual changes to the real DOM (via ReactDOM). After DOM mutations are applied, React runs layout effects and passive effects (`useEffect`).
+Keys identify siblings across renders when their order changes. They let React preserve the correct Fiber, DOM node, and local state for an item that moves. Keys must be unique among siblings and stable for the lifetime of that data identity; they do not need to be globally unique.
 
-A component can render and undergo reconciliation without any commit work taking place if the returned output is identical to the previous render.
+**Q: Why is an array index a risky key?**
 
-**Q: What happens when the root element type changes between renders (e.g., from `<div>` to `<section>` or `<ComponentA>` to `<ComponentB>`)?**
+An index describes a slot, not an item. After a prepend or deletion, the same index refers to different data, so React reuses the old row's state for the new item at that slot. Index keys can be acceptable for a truly static, never-reordered list whose items have no local state, but an ID from the data model is the safer default.
 
-When the element type changes at a given tree position, React executes a full subtree replacement:
-1. The entire old subtree is torn down.
-2. All DOM nodes in that subtree are removed from the browser document.
-3. Component instances in that subtree are unmounted, running their respective cleanup functions (`useEffect` return callbacks).
-4. All local state held anywhere inside that subtree is permanently destroyed.
-5. The new element subtree is mounted from scratch with initial state, creating brand-new DOM nodes.
+**Q: What happens when a type changes?**
 
-Even if the children of the new element are visually and structurally identical to the old children, changing the parent container's type destroys all child component state.
+React does not recursively search for visually similar descendants. It replaces the old subtree at that position. Old effects clean up, refs detach, state is discarded, and the new subtree mounts. Changing a wrapper from `div` to `section` can therefore reset a form nested below it.
 
-**Q: Why is using array index as a `key` considered an anti-pattern when rendering dynamic lists?**
+**Q: What is the difference between render and commit?**
 
-When you use an array index as a key (`key={index}`), the key is tied to the item's position in the array, not to the item's actual data identity.
+Render executes component logic and reconciliation builds a candidate Fiber tree in memory. Commit applies the finished mutation work to the host environment and makes that tree current. Render can be interrupted or discarded in concurrent React; commit is synchronous and a discarded render has no committed effects.
 
-If you insert, delete, or sort items in the list:
-- An item moved from index 0 to index 1 receives the key `1`.
-- React compares the new item at index 0 with the old item at key `0`.
-- Because the keys match (`0 === 0`), React assumes the component at position 0 did not move and merely received updated props.
-- React reuses the existing DOM node and preserves local component state (such as uncontrolled `<input>` text, checkbox toggle states, or CSS transitions).
-- As a result, the UI will display the new text props over the old component's local state, causing severe visual bugs and unnecessary DOM re-renders.
+**Q: When do `useLayoutEffect` and `useEffect` run?**
 
-**Q: Does reconciliation always result in real DOM mutations?**
+Both are tied to a committed update, not to an arbitrary render call. Layout effects run after DOM mutations and before paint. Passive effects run after commit and are generally deferred until after paint. Each effect's cleanup runs before the next committed setup for that effect when dependencies change, or on unmount.
 
-No. Reconciliation merely calculates whether differences exist. If a parent component re-renders, all of its child components re-render by default, producing new React elements. 
+**Q: Does Strict Mode mean React mounts production UI twice?**
 
-React reconciles those new child elements against the previous Fiber nodes. If React discovers that the attributes, styles, and text content returned by a child are identical to what is already on the screen, React generates zero DOM mutations for that child. The render and reconciliation cost was incurred in JavaScript, but the commit phase performs no browser DOM operations.
+No. In development, Strict Mode intentionally re-invokes render logic and exercises effect setup/cleanup to reveal impure rendering and missing cleanup. Code must tolerate this, but it should not use development-only invocation counts to infer production behavior.
 
-**Q: How does React Fiber relate to the reconciliation process?**
+**Q: Can `React.memo` or `useMemo` stop reconciliation?**
 
-React Fiber is the internal engine and data structure that powers reconciliation. Before Fiber (in React 15 and earlier), reconciliation used a synchronous recursive walk down the tree (the "Stack Reconciler") that could not be interrupted once started.
+They can reduce work in specific cases. `React.memo` compares parent-provided props for a component, while local state or context can still schedule it. `useMemo` caches a value between renders when dependencies compare equal. Neither changes type/key identity, makes effects run during render, or guarantees that React never evaluates a component.
 
-Fiber represents every component and DOM element as an individual unit of work—a JavaScript object called a Fiber node linked via `child`, `sibling`, and `return` pointers. This linked-list architecture allows React to pause reconciliation work after any individual node, yield execution back to the browser to handle high-priority user input or animations, and resume reconciliation later without dropping frames.
+**Q: What does TypeScript have to do with keys?**
 
-**Q: How can you deliberately force React to reset a component's state without unmounting the parent?**
+Nothing at runtime. TypeScript validates props, but `key` is consumed by React and is not passed into the component's props. Pass an `id` separately when the component needs to read it. A type such as `ReactNode` describes allowed children; it does not control Fiber matching.
 
-You can change the component's `key` prop. 
+**Q: How do you intentionally reset state?**
 
-When React reconciles two renders and notices that a component at the same tree position has a different `key` than before (e.g., `<UserProfile key={userId} />`), React treats the component as a completely different entity. It unmounts the old component instance, discards its existing state, and mounts a fresh instance with clean initial state. This is the idiomatic React way to reset forms, video players, or detail views when switching selected items.
+Give the component a new key, or render a different component type/position. The explicit-key approach is usually clearest:
+
+```tsx
+<Editor key={documentId} documentId={documentId} />
+```
+
+Use it when switching documents should create a fresh editor. Do not change keys merely to force an update; that also destroys focus, pending local state, and effect continuity.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Declaring Components Inside Another Component's Render Function
-
-**The Wrong Assumption:** Developers sometimes define a helper sub-component inside a parent component's body for convenience or to capture parent scope variables.
+**Trap: defining a component inside another component**
 
 ```tsx
-// ❌ BROKEN: Nested component declaration
-function UserDashboard() {
-  const [text, setText] = useState('');
-
-  // This creates a brand new function reference (new component type) on EVERY render!
-  function ProfileInput() {
-    const [localValue, setLocalValue] = useState('');
-    return <input value={localValue} onChange={e => setLocalValue(e.target.value)} />;
+function Dashboard() {
+  function SearchBox() {
+    const [query, setQuery] = useState('');
+    return <input value={query} onChange={(event) => setQuery(event.target.value)} />;
   }
 
-  return (
-    <div>
-      <input value={text} onChange={e => setText(e.target.value)} />
-      <ProfileInput />
-    </div>
-  );
+  return <SearchBox />;
 }
 ```
 
-**Why It Fails:** On every keystroke in the outer input, `UserDashboard` re-renders. A new `ProfileInput` function is created in memory. During reconciliation, React checks `oldElement.type === newElement.type`. Because the function reference changed, React sees a different component type! React tears down the old `ProfileInput`, destroys its state, and remounts a new input. The input loses focus after every single character typed.
+`SearchBox` is a new function type on every `Dashboard` render. React can remount it and lose its state. Define component types at module scope and pass values through typed props.
 
-**The Fix:** Always declare components at the module root level and pass required data via props.
+**Trap: generating keys during render**
 
 ```tsx
-// ✅ FIXED: Declared at module scope
-function ProfileInput() {
-  const [localValue, setLocalValue] = useState('');
-  return <input value={localValue} onChange={e => setLocalValue(e.target.value)} />;
+items.map((item) => <Row key={crypto.randomUUID()} item={item} />);
+```
+
+Every render gives every row a new identity, so React cannot reuse the old rows. This causes remounts, effect churn, lost local state, and avoidable DOM work. Create an ID when the item is created, not while it is being displayed.
+
+**Trap: confusing a key with a prop**
+
+```tsx
+function Row(props: { id: string }) {
+  return <li>{props.id}</li>;
 }
 
-function UserDashboard() {
-  const [text, setText] = useState('');
-  return (
-    <div>
-      <input value={text} onChange={e => setText(e.target.value)} />
-      <ProfileInput />
-    </div>
-  );
+// `key` selects identity; `id` supplies application data.
+<Row key={item.id} id={item.id} />;
+```
+
+`props.key` is not how a child reads the key. Explicitly pass `id` when needed.
+
+**Trap: assuming same output means no component render**
+
+React may execute a component and then discover that the host output needs no mutation. Render cost and DOM mutation cost are different. Use profiling and appropriate memoization when render work matters; do not infer component execution from a lack of visible DOM changes.
+
+**Trap: performing side effects in render**
+
+```tsx
+function BadAnalytics({ userId }: { userId: string }) {
+  analytics.track('view', { userId }); // may run for a discarded render
+  return <p>{userId}</p>;
 }
 ```
 
-### Trap 2: Using Non-Deterministic Keys (Like `Math.random()`)
+Concurrent rendering and Strict Mode make this unsafe. Keep render pure. Put synchronization with an external system in an effect, or perform a user-caused action in its event handler.
 
-**The Wrong Assumption:** To silence the React list warning, a developer writes `key={Math.random()}` or `key={uuid()}` directly inside the JSX map callback.
+**Trap: using `React.memo` as a state boundary**
 
-```tsx
-// ❌ BROKEN: Generating new keys on every render
-<ul>
-  {items.map(item => (
-    <ListItem key={Math.random()} item={item} />
-  ))}
-</ul>
-```
+A memoized component can still update because its own state or a context subscription changed. `React.memo` only addresses eligible parent-prop updates; it does not freeze a subtree or prevent reconciliation from reaching a context consumer.
 
-**Why It Fails:** On every render, every item gets a brand-new key. During reconciliation, React cannot match any key from the previous render. It unmounts all existing DOM nodes and instances, rebuilds them from scratch, and runs all mount effects again. This destroys scrolling performance, resets local state, and causes visual flickering.
-
-**The Fix:** Use stable identifiers from your data model (e.g., `item.id` from the database).
+**Trap: changing a wrapper to change styling**
 
 ```tsx
-// ✅ FIXED: Stable identifier
-<ul>
-  {items.map(item => (
-    <ListItem key={item.id} item={item} />
-  ))}
-</ul>
-```
-
-### Trap 3: Mutating State Directly and Expecting Reconciliation to Detect It
-
-**The Wrong Assumption:** Developers push an item into an existing array or mutate an object property, then pass that same object to state.
-
-```tsx
-// ❌ BROKEN: Direct mutation
-const [user, setUser] = useState({ name: 'Alice', role: 'user' });
-
-const promoteUser = () => {
-  user.role = 'admin'; // Mutating existing object
-  setUser(user);       // Passing the same reference
-};
-```
-
-**Why It Fails:** When React begins reconciliation, the first thing it checks in `useState` is `Object.is(prevState, nextState)`. Because `user` is the exact same object reference in memory, React bails out immediately and skips diffing the component and its children altogether. The UI does not update.
-
-**The Fix:** Always return a new object reference using the spread operator or immutable update patterns.
-
-```tsx
-// ✅ FIXED: New object reference
-const promoteUser = () => {
-  setUser(prev => ({ ...prev, role: 'admin' }));
-};
-```
-
-### Trap 4: Assuming `React.memo` Stops All Re-Renders in Subtrees
-
-**The Wrong Assumption:** Wrapping a child component in `React.memo` guarantees it will never re-render unless its props change.
-
-**Why It Fails:** `React.memo` only checks incoming props from the parent. If the memoized component internally subscribes to a React Context (`useContext`) or manages its own state (`useState`), any change to that context or local state will bypass the prop memoization and trigger reconciliation for that component.
-
-**The Fix:** Understand that `React.memo` optimizes parent-driven prop updates only. To prevent context-driven renders, split contexts into smaller providers or use memoized selectors.
-
-### Trap 5: Changing Tag Wrappers Conditionally and Losing Form State
-
-**The Wrong Assumption:** Conditionally wrapping an input form with a styled card or raw container based on a layout toggle without realizing it wipes child inputs.
-
-```tsx
-// ❌ DANGEROUS: Type mismatch destroys child form state
-{isCardView ? (
-  <div className="card-container">
-    <CheckoutForm />
-  </div>
+return isCard ? (
+  <div className="card"><CheckoutForm /></div>
 ) : (
-  <section className="plain-container">
-    <CheckoutForm />
-  </section>
-)}
+  <section className="plain"><CheckoutForm /></section>
+);
 ```
 
-**Why It Fails:** React sees `div` vs `section` at the root of that branch. It treats it as an entirely different tree, unmounting `CheckoutForm` and losing whatever the user had already typed into the inputs.
+The wrapper type change replaces the subtree. Prefer one stable element type with a conditional class when the layout semantics do not actually require a different element.
 
-**The Fix:** Keep the element type identical and toggle the CSS class or style instead.
+**Trap: claiming that keys move arbitrary state**
 
-```tsx
-// ✅ FIXED: Same element type preserves CheckoutForm instance and state
-<div className={isCardView ? 'card-container' : 'plain-container'}>
-  <CheckoutForm />
-</div>
-```
+Keys preserve state only within the same relevant sibling set. Moving a child under a different parent, changing its type, or changing its key intentionally changes the identity relationship. A key is not a global database ID for React state.
 
 ## 7. Compare With Related Concepts
 
-| Concept | What It Is | How It Relates to Reconciliation | One-Line Decision Rule |
+| Concept | What it answers | Relationship to reconciliation | Interview distinction |
 | :--- | :--- | :--- | :--- |
-| **Reconciliation vs Rendering** | Rendering is the execution of component functions to produce React elements. | Rendering produces the new blueprint; reconciliation compares the new blueprint with the old one to find differences. | Use *rendering* when talking about producing UI descriptions; use *reconciliation* when talking about computing the diff between renders. |
-| **Reconciliation vs Virtual DOM** | Virtual DOM is the in-memory tree data structure of JavaScript objects representing the UI. | Virtual DOM is the data format; reconciliation is the algorithm that diffs two Virtual DOM / Fiber trees. | Virtual DOM is the noun (the tree structure); reconciliation is the verb (the comparison process). |
-| **Reconciliation vs Commit Phase** | Commit is the phase where React applies calculated mutations to the actual browser DOM. | Reconciliation calculates what needs to change; commit actually applies those changes to the screen. | Reconciliation is pure and interruptible in memory; committing is synchronous and touches the real DOM. |
-| **Reconciliation vs Browser Reflow/Repaint** | Browser Reflow/Repaint is the browser layout and pixel rendering pipeline. | Reconciliation calculates the minimal DOM mutations so the browser runs as few reflows and repaints as possible. | Reconciliation runs inside JavaScript engine memory; reflow/repaint runs inside the browser's layout/rendering engine. |
+| **Rendering** | What React elements does component code return for this update? | Produces the candidate output that reconciliation will compare. | A component can render without a visible commit. |
+| **Reconciliation** | Which old Fibers match the new elements, and what work is needed? | Uses parent position, type, and key to preserve or replace identity. | It is in-memory matching, not DOM mutation. |
+| **Fiber** | What internal work record and tree structure represent the update? | Stores the current and work-in-progress records used during reconciliation. | Fiber is the architecture/data structure; reconciliation is the matching work. |
+| **Commit** | What changes become visible in the host environment? | Applies the completed flags and finalizes the new current tree. | Commit is synchronous; an abandoned render never commits. |
+| **Virtual DOM / React elements** | What lightweight JavaScript descriptions represent UI? | The new element descriptions are inputs to reconciliation. | Elements are descriptions, not DOM nodes and not component state. |
+| **Component state** | What local data survives between renders? | It is attached to a preserved Fiber identity. | Same props do not reset it; a changed key/type can. |
+| **`key`** | Which sibling data identity is this? | Enables matching across insertions, deletions, and moves. | It is sibling-scoped metadata, not a normal prop. |
+| **`React.memo`** | Can a parent-driven render be skipped for this component? | Reduces render work after identity is established. | It does not override state, context, type, or key behavior. |
+| **`useEffect`** | How should committed UI synchronize with an external system? | Setup and cleanup run around committed effect lifecycles. | It does not run for a render that React discards. |
+| **TypeScript** | Are the props and children statically valid? | It has no runtime role in Fiber matching. | A TS `key` type cannot make unstable runtime keys correct. |
 
 ## 8. 🧠 The Memory Hook
 
-Reconciliation is React's blueprint inspector: if the room type changes, it demolishes the whole room; if only the paint changed, it touches only the paint; and if list items have name tags, it moves the furniture instead of throwing it away.
+**Same parent position + same type + same key = keep the identity.** React may render a new plan, but only a committed plan reaches the screen. A type change demolishes the subtree; a key names the right sibling so state travels with the item; a prop change usually keeps state; an effect belongs to commit, not render. In TypeScript, remember: `key` tells React who the child is, while `id` tells the child what the data is.
