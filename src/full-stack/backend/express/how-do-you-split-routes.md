@@ -1,111 +1,273 @@
 # How do you split routes
 
-## Detailed explanation
+## 1. The Real-World Problem — When You Actually Hit This
 
-How do you split routes is a core Express.js topic that interviewers use to check whether you can connect definitions to production backend behavior. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Your Express app starts small. Five endpoints in `app.js`. Life is good.
 
-## 1. One-line mental model
+Eight months later, `app.js` is 2000 lines long. Every route for every feature lives there: users, orders, payments, admin reports, webhooks. Three teams are editing the same file, so every PR has merge conflicts. Nobody can answer "where is the code for the orders API?" without scrolling and searching. Worse, someone added an auth middleware "just for admin routes" but attached it with `app.use()`, so now it silently runs on every single request — including your public health check that your load balancer pings, which now fails because the balancer doesn't send auth headers.
 
-Understand how do you split routes by linking what it is, why it exists, and how it fails in production.
+This is the exact moment you need to split routes. Not for tidiness — because one flat list of routes cannot scale past a few hundred lines without hurting correctness, testing, and team speed. Express gives you a first-class tool for this: `express.Router()`.
 
-## 2. Problem it solves
+## 2. The Analogy — Make the Mechanic Obvious
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+Think of your Express app as an office building, and think of a router as one department on one floor.
 
-## 3. Core idea
+The building has a reception desk at the entrance. Everyone passes through it. That reception is your app-level middleware — `express.json()`, CORS, logging. It applies to every visitor no matter where they're going.
 
-- Define the concept in backend terms.
-- Explain the problem it solves.
-- Show where it appears in real services.
-- Call out security, performance, or reliability impact.
-- Compare it with nearby concepts.
+Each department sits on its own floor. To reach the Users department, you take the elevator and get off at "Floor 3". The floor number is your mount prefix — `app.use('/api/users', usersRouter)`. Notice something important: once you step out of the elevator, every room number inside that floor is *relative to the floor*. Room 104 on Floor 3 isn't "Floor 3, Room 104" written on the door — the door just says "104". Inside a router, route paths work the same way: they are relative to where the router was plugged in.
 
-## 4. Visual / analogy
+Now, each department also has its own front desk just off the elevator. Anyone visiting this department gets checked there, and only there. That's router-level middleware — `router.use(requireAuth)`. Visitors to other floors never pass through it. This scoping is the whole superpower of routers.
 
-```txt
-Request/API/service -> concept applied -> safer production behavior
+Some departments have sub-teams down internal corridors. The Orders sub-team inside the Users department is a nested router — a router mounted on another router. And here's the badge rule: when you walk from the department into the sub-team corridor, you either carry your visitor badge (which says who you came to see) or you don't. Carrying the badge is `mergeParams: true`. Without it, the sub-team has no idea which user you originally asked about, because the context was left at the corridor door.
+
+Every mechanic in this analogy maps to real code: reception = app middleware, floor number = mount prefix, room numbers relative to floor = route paths relative to mount point, department front desk = `router.use`, sub-team corridors = nested routers, the badge = `mergeParams`.
+
+## 3. The Full Explanation — How It Actually Works
+
+`express.Router()` returns a complete, isolated mini routing system. It has the same methods as your app: `.get()`, `.post()`, `.put()`, `.delete()`, `.use()`, even `.param()`. What it doesn't have is `.listen()` — a router never accepts connections itself. It exists to be plugged into something that does.
+
+Here's the mental shift: **the app and each router each hold their own ordered list of middleware and routes.** When a request arrives, Express walks the app's list from top to bottom. Global middleware runs first, in registration order. When the walk reaches a line like `app.use('/api/users', usersRouter)`, Express checks whether the URL starts with `/api/users` (on path-segment boundaries, so `/api/users` and `/api/users/42` match, but `/api/usersx` does not). If it matches, the router takes over and walks *its own* list, using whatever is left of the URL after stripping the mount prefix.
+
+That last sentence explains almost every interview question about route splitting, so let's slow down on it:
+
+**Path math.** The final URL is mount path + route path. Mount at `/api/users`, define `router.get('/:id')` → the real endpoint is `/api/users/:id`. Define `router.get('/')` → it serves `/api/users` itself. Inside the router, handlers see `req.url` with the prefix already stripped, and `req.path` likewise — which is why tests against a bare router use `/` instead of `/api/users`.
+
+**Middleware scoping.** You get three scopes, and picking the right one is most of the design work. App-level (`app.use(...)`) runs for every request — put body parsing, CORS, and request logging here. Router-level (`router.use(...)`) runs only for requests that entered that router — put domain auth here, like "all user routes require a session". Route-level (a handler passed between the path and the final handler) runs for exactly one route — put validation here, like "this POST needs a valid email".
+
+**Order matters twice.** Across mounts: `app.use('/api', apiRouter)` registered before `app.use('/api/admin', adminRouter)` will swallow admin requests first, because the walk stops at the first match that responds. Within a router: `router.get('/me')` must be registered before `router.get('/:id')`, or a request to `/users/me` matches `:id` with the value `"me"`.
+
+**Nesting and parameters.** A router can mount another router, which is how you build URLs like `/api/users/:userId/orders`. Each matched parameter gets collected into `req.params` as the request descends through the layers. But by default, a child router receives a *fresh* params object containing only the parameters matched in its own mount path and routes. Create the child with `express.Router({ mergeParams: true })` and the parent's `:userId` flows into the child's `req.params` too.
+
+**What you gain and what you pay.** You gain isolation: each file owns one domain, teams stop colliding, middleware intent becomes explicit, and each router can be tested without booting the whole app. You pay a little indirection — to know the real URL of a handler you have to look at two places instead of one, and a misconfigured mount produces confusing 404s. For anything beyond a toy service, that trade is lopsided in favor of splitting. The failure mode to avoid is the opposite extreme: a router per single route, or five levels of nesting, which just moves the confusion around. One router per resource or feature area is the sweet spot.
+
+## 4. See It In Practice — Real Code or Queries
+
+First, the disease. This is the shape that hurts at scale — everything stacked in one file:
+
+```js
+// app.js — BEFORE: works at 100 lines, dies at 2000
+const express = require('express');
+const app = express();
+
+app.use(express.json());
+
+app.get('/api/users', listUsers);
+app.get('/api/users/:id', getUser);
+app.post('/api/orders', createOrder);
+app.get('/api/orders/:id', getOrder);
+app.post('/api/payments', createPayment);
+// ...1900 more lines, mixed with middleware and business logic
+
+function listUsers(req, res) { res.json([]) }
+function getUser(req, res) { res.json({}) }
+function createOrder(req, res) { res.json({}) }
+function getOrder(req, res) { res.json({}) }
+function createPayment(req, res) { res.json({}) }
+
+app.listen(3000);
 ```
 
-## 5. Minimal example
+Now the fix. One file per domain, each exporting a plain router. Note the paths inside are *relative* — no `/api/users` anywhere:
 
-```txt
-Input  -> validate
-Work   -> apply Express.js rule
-Output -> success or structured error
+```js
+// routes/users.router.js
+const express = require('express');
+const { requireAuth } = require('../middleware/auth');
+const { validateCreateUser } = require('../middleware/validateUser');
+const usersService = require('../services/users');
+
+const router = express.Router();
+
+// Router-scoped middleware: runs ONLY for requests that reached this router,
+// so we don't force auth onto health checks or public marketing endpoints.
+router.use(requireAuth);
+
+router.get('/', async (req, res, next) => {
+  try {
+    // Serves GET /api/users (mount prefix + '/')
+    const users = await usersService.list(req.query);
+    res.json(users);
+  } catch (err) {
+    next(err); // forward to the central error handler, never crash the process here
+  }
+});
+
+// Must be registered BEFORE '/:id', otherwise "me" gets captured as an id
+router.get('/me', async (req, res, next) => {
+  try {
+    res.json(await usersService.getById(req.user.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/:id', async (req, res, next) => {
+  try {
+    const user = await usersService.getById(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Route-scoped middleware: validation runs for this POST only
+router.post('/', validateCreateUser, async (req, res, next) => {
+  try {
+    const created = await usersService.create(req.body);
+    res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = router;
 ```
 
-## 6. Real-world example
+A nested router showing `mergeParams`. The goal: `GET /api/users/:userId/orders`.
 
-In a production full-stack app, how do you split routes affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+```js
+// routes/userOrders.router.js
+const express = require('express');
 
-## 7. Common interview questions
+// mergeParams: true is REQUIRED to see :userId matched by the parent mount below.
+// Without it, req.params here would be {} and userId would be undefined.
+const router = express.Router({ mergeParams: true });
+const ordersService = require('../services/orders');
 
-#### How do you split routes in Express?
-- **The Engine Mechanism (Why it behaves this way):** Express provides `express.Router()` to create modular, mountable route handlers. A Router is a mini Express application that has its own middleware stack, routes, and parameters. You define routes on a Router instance and then mount it on the main app with `app.use('/api/users', userRouter)`. All routes defined on the Router are prefixed with the mount path. Routers can be nested — a Router can mount another Router. This enables clean separation of concerns by domain (users, products, orders).
-- **The Unforgettable Mental Model:** The **Department System**. The main app is the company headquarters. Each Router is a department (HR, Engineering, Sales) with its own internal processes. The headquarters routes visitors to the right department, and each department handles its own business independently.
-- **The Trap:** Creating too many small Routers (one per file for simple apps) or too few giant Routers (everything in one file). The sweet spot is one Router per domain entity or feature area.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use express.Router() to create modular route handlers. Each domain entity gets its own Router — users, products, orders — defined in separate files. The Router is mounted on the main app with a path prefix like app.use('/api/users', userRouter). This keeps the codebase organized, enables team parallelism, and makes testing easier since each Router can be tested in isolation."
+router.get('/', async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    res.json(await ordersService.listForUser(userId));
+  } catch (err) {
+    next(err);
+  }
+});
 
-#### What is express.Router() and how does it work?
-- **The Engine Mechanism (Why it behaves this way):** `express.Router()` creates an isolated middleware and routing layer. It supports all the same methods as the main app: `router.get()`, `router.post()`, `router.use()`, `router.param()`, etc. When mounted with `app.use('/prefix', router)`, Express merges the router's middleware stack into the main app's stack at that point. The router's routes are prefixed with the mount path. Routers can have their own middleware that only applies to routes within that router. You can also create routers with options: `express.Router({ mergeParams: true })` preserves parent route parameters.
-- **The Unforgettable Mental Model:** The **Sub-Assembly Line**. The main factory line (app) has a station where a sub-assembly line (router) takes over. The sub-line has its own workers and processes, but everything that comes out is still part of the main product.
-- **The Trap:** Forgetting `mergeParams: true` when nesting routers with parameters. Without it, child routers can't access parent route parameters like `req.params.parentId`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: express.Router() creates a modular route handler with its own middleware stack. I define routes on it just like the main app, then mount it with app.use('/prefix', router). Each router can have its own middleware, making it self-contained. When nesting routers, I use mergeParams: true so child routers can access parent parameters. This pattern scales well — each router file is a focused module for a specific domain."
+module.exports = router;
+```
 
-#### How do you organize routes across multiple files?
-- **The Engine Mechanism (Why it behaves this way):** The standard pattern is: (1) Create a `routes/` directory. (2) Each file exports a Router: `module.exports = router`. (3) In `app.js` or `server.js`, import and mount each router: `app.use('/api/users', require('./routes/users'))`. (4) Within each route file, define all CRUD operations for that entity. For larger apps, add subdirectories: `routes/admin/`, `routes/public/`. Some teams use an `index.js` in the routes directory that imports and re-exports all routers for centralized mounting.
-- **The Unforgettable Mental Model:** The **Filing Cabinet**. Each drawer (file) contains documents for one topic. The cabinet label (mount path) tells you which drawer to open. You don't mix tax documents with medical records.
-- **The Trap:** Circular dependencies between route files and the main app. Keep routers self-contained — they should import services/controllers, not the app instance.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I create a routes/ directory with one file per domain entity. Each file exports an express.Router with all CRUD routes for that entity. The main app imports and mounts each router with a path prefix. For larger apps, I group by feature area — routes/admin/, routes/public/. Routers stay self-contained, importing services rather than the app instance, which avoids circular dependencies and makes testing easier."
+```js
+// routes/users.router.js (addition at the bottom)
+const userOrdersRouter = require('./userOrders.router');
 
-#### What is the benefit of route splitting for testing?
-- **The Engine Mechanism (Why it behaves this way):** When routes are split into separate Router modules, each router can be tested in isolation without starting the full Express app. You can use `supertest` with just the router: `request(router).get('/users').expect(200)`. This enables faster, more focused unit tests. Each router's middleware chain is self-contained, so you can mock dependencies (database, auth) per router. Integration tests can still test the full app, but unit tests target individual routers.
-- **The Unforgettable Mental Model:** The **Car Component Testing**. You don't need to test the entire car to verify the brakes work. You can test the brake system independently, then test the full car for integration.
-- **The Trap:** Over-isolating tests to the point where you miss integration issues between routers. Always have both unit tests (per router) and integration tests (full app).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Split routes into separate Router modules so each can be tested independently. I use supertest to test routers without starting the full app, which makes tests faster and more focused. Each router's dependencies can be mocked individually. I combine this with integration tests that test the full mounted app to catch cross-router issues. The result is a test pyramid — many fast unit tests per router, fewer slower integration tests."
+// Mounted INSIDE the users router, so the full path is
+//   '/api/users' + '/:userId/orders' + '/'
+router.use('/:userId/orders', userOrdersRouter);
+```
 
-#### How do you handle shared middleware across split routes?
-- **The Engine Mechanism (Why it behaves this way):** Shared middleware can be applied at three levels: (1) **Application level** — `app.use(authMiddleware)` applies to all routes, including mounted routers. (2) **Router level** — `router.use(authMiddleware)` applies to all routes within that router. (3) **Route level** — `router.get('/path', authMiddleware, handler)` applies to a single route. The common pattern is to apply global middleware (CORS, body parsing, logging) at the app level, domain-specific middleware (auth, role checks) at the router level, and route-specific middleware (validation, ownership checks) at the route level.
-- **The Unforgettable Mental Model:** The **Layered Security**. Airport security (app-level) checks everyone. Terminal security (router-level) checks people entering a specific terminal. Gate security (route-level) checks people boarding a specific flight.
-- **The Trap:** Applying the same middleware at multiple levels, causing duplicate processing. For example, applying auth at both app level and router level means auth runs twice for mounted router routes.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I apply middleware at the appropriate scope. Global concerns like CORS and body parsing go on the app. Domain-specific middleware like auth goes on the router. Route-specific checks like validation go on individual routes. This layered approach avoids duplication and makes it clear which middleware applies where. I also extract shared middleware into a middleware/ directory so it can be reused across routers."
+And the app file shrinks back to what it should always have been — wiring, not features:
 
-## 8. Active recall test
+```js
+// app.js — AFTER: readable wiring plus global cross-cutting concerns
+const express = require('express');
+const app = express();
 
-1. **What does express.Router() create?**
-   - **Explanation:** A modular, mountable route handler with its own middleware stack, routes, and parameter handling. It's a mini Express application that can be mounted on the main app with a path prefix.
+// App-level middleware: everyone passes reception
+app.use(express.json());
 
-2. **How do you mount a router on the main app?**
-   - **Explanation:** `app.use('/api/users', userRouter)` — all routes defined on userRouter will be prefixed with `/api/users`.
+// Mount routers at prefixes. Specific prefixes should come before generic ones.
+app.use('/api/users', require('./routes/users.router'));
+app.use('/api/orders', require('./routes/orders.router'));
 
-3. **What does mergeParams: true do?**
-   - **Explanation:** It preserves parent route parameters in nested routers. Without it, a child router cannot access parameters defined in the parent router's mount path.
+// 404 for anything no router claimed — placed AFTER all mounts
+app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
-4. **What is the recommended file organization for routes?**
-   - **Explanation:** A `routes/` directory with one file per domain entity, each exporting a Router. The main app imports and mounts each router. For larger apps, subdirectories group by feature area.
+// Central error handler: signature order matters (err, req, res, next)
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
-5. **Why is route splitting beneficial for testing?**
-   - **Explanation:** Each Router can be tested in isolation with supertest without starting the full app. Dependencies can be mocked per router, enabling faster, more focused unit tests alongside integration tests.
+module.exports = app;
 
-## 9. Mistakes / traps
+// server.js stays a separate entry point so tests can import app without listening
+// const app = require('./app');
+// app.listen(3000);
+```
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+Finally, the payoff for testing. Supertest accepts any request handler, and a router is one:
 
-## 10. Compare with related concepts
+```js
+// __tests__/users.router.test.js
+const request = require('supertest');
+const usersRouter = require('../src/routes/users.router');
+const app = require('../src/app');
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+test('bare-router test: fast, no full app boot', async () => {
+  // Paths here are relative to the router root — '/' not '/api/users'
+  const res = await request(usersRouter).get('/');
+  expect(res.status).toBe(200);
+});
 
-## 11. Summary from memory
+test('integration test: full app, real prefixes and global middleware', async () => {
+  // Here the mount prefix applies, so the path IS '/api/users'
+  await request(app).get('/api/users').expect(200);
+});
+```
 
-Explain How do you split routes in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+One subtlety visible right in those two tests: `express.json()` was attached to the app, not the router. A bare-router test that posts JSON won't have `req.body` populated unless the test attaches a JSON parser too. Isolation has that cost — you opt into whichever middleware you want under test.
 
-## 12. Spaced revision prompts
+## 5. Interview Questions — All of Them, Done Properly
 
-- Day 1: Define How do you split routes in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**Q: How do you split routes in Express?**
+
+By feature, using `express.Router()`. Each domain — users, orders, payments — gets its own file that creates a router, defines all of that domain's routes and router-scoped middleware, and exports it. The main app file imports each router and mounts it at a prefix with `app.use('/api/users', usersRouter)`. Cross-cutting concerns (JSON parsing, CORS, logging) stay at the app level; domain concerns (auth for user routes) go on the router; per-request rules (validation for one endpoint) go on the individual route. The result is that adding a feature touches one new file plus one mounting line, instead of one shared 2000-line file.
+
+**Q: What is express.Router() and how does it work?**
+
+It creates a complete, standalone routing layer — essentially a mini Express app without `.listen()`. Internally it maintains its own ordered stack of middleware and route handlers, exactly like the app does. When you mount it with `app.use(prefix, router)` and a request's path matches that prefix (at segment boundaries), the router takes over: it strips the prefix from the URL and walks its own stack against the remainder. Because it's a real handler function, it can be mounted anywhere an app could use one — on the app, on another router, even handed directly to Supertest in tests.
+
+**Q: If I mount a router at /api/users and define router.get('/:id'), what URL does that handle?**
+
+`GET /api/users/:id` — the final path is the mount prefix plus the route path. This trips people constantly in both directions: they define `router.get('/api/users/:id')` *and* mount at `/api/users`, producing the absurd real path `/api/users/api/users/:id`; or they define `router.get('/users/:id')` expecting it to be absolute. Inside a router, every path is relative to the mount point. Say that sentence in the interview and you've answered the underlying question they're really asking.
+
+**Q: How do you organize routes across multiple files?**
+
+A `routes/` directory with one file per resource, each exporting a router. For larger apps, group by area: `routes/admin/`, `routes/public/`, each with its own index that mounts its children. Two rules keep it healthy. First, routers import services/controllers — never the app instance — so you don't create circular dependencies. Second, mounting happens in exactly one place (usually `app.js` or a `routes/index.js`), so anyone can read the whole URL map of the API in ten lines. Some teams add a `routes/index.js` that gathers all routers so `app.js` has a single `app.use('/api', apiRouter)` line; that's fine as long as specific prefixes are still registered before generic ones.
+
+**Q: How does middleware scoping work when routes are split?**
+
+Three levels, chosen by who needs it. App-level via `app.use()` runs for every request — body parsing, CORS, request IDs. Router-level via `router.use()` runs only for requests that matched that router's mount prefix — domain auth, feature-wide rate limits. Route-level — middleware passed inline like `router.post('/', validateUser, handler)` — runs for one endpoint. The common production bug is scope leakage in either direction: auth attached at the app level "for admin routes" ends up blocking your health check, while auth intended globally gets attached to one router and some endpoints go out unprotected. Scoping is the actual reason routers exist; the file organization is a side benefit.
+
+**Q: Why is splitting routes good for testing, and how do you test one router alone?**
+
+Because a router is a self-contained handler function, Supertest can drive it directly: `request(usersRouter).get('/')`. No port, no server boot, no unrelated middleware — fast, focused unit tests where you can inject fake services easily. Keep integration tests that hit the fully assembled app too, because isolation hides two classes of bugs: conflicts between routers (two mounts fighting over the same prefix) and missing global middleware (the classic one being `req.body` undefined in a bare-router test because `express.json()` lives on the app).
+
+**Q: What does mergeParams: true do, and when does it bite you?**
+
+When routers nest, each level normally gets a fresh `req.params` containing only its own matches. So in `app.use('/api/users/:userId', userOrdersRouter)`, the child router handling `/orders/:orderId` sees `{ orderId }` — the `userId` is gone unless the child was created with `express.Router({ mergeParams: true })`, which merges ancestor params into its own. It bites in a sneaky way: nothing errors. The route works, the response is just wrong — queries filter by `undefined` and return everything or nothing. Any time you mount a router under a path containing a parameter, say the option name out loud in code review.
+
+**Q: Does the order of mounting matter?**
+
+Yes, twice over. Between mounts, Express walks registrations top-down, so `app.use('/api', ...)` before `app.use('/api/admin', ...)` means admin requests never reach the admin router — the generic mount answers first. Inside a router it's the same walk: register `router.get('/users/me')` before `router.get('/users/:id')`, or "me" becomes an id and your lookup fails with a cast error or a 404. Rule of thumb: most specific first, catch-alls last — and put your final 404 and error handlers after every mount.
+
+## 6. The Traps — What Goes Wrong in Production
+
+**The double prefix.** The most common split-routes bug. Someone mounts `app.use('/api/users', usersRouter)` and then writes full paths inside the router: `router.get('/api/users/:id')`. The real URL is now `/api/users/api/users/:id`. Nothing crashes; the frontend just gets 404s, and debugging is miserable because the code "clearly" defines the right path. The rule: mount path lives in exactly one place — the `app.use` line — and route files contain only relative paths. Fixing it after the fact usually means updating the frontend's base URL too, since the accidental long paths were sometimes already in production.
+
+**Missing mergeParams in nested routers.** Described above, worth restating as a pattern: it fails silently. The nested route returns 200 with empty data, or worse, `listForUser(undefined)` returns *every* row in the table — a data-leak bug wearing a correctness costume. Whenever a mount path contains `:something`, the immediate child router needs `{ mergeParams: true }` if it reads that param.
+
+**Route-order capture.** `/:id` registered before `/me` turns `GET /users/me` into a database lookup for the string `"me"`. With Mongoose that's a CastError; with Postgres it's a 404 or worse, a row that happens to exist. Always define static segments before dynamic ones in the same router.
+
+**Scope leakage of middleware.** Auth on the app level when it was meant for one domain blocks health checks and public endpoints — your orchestrator or uptime monitor suddenly sees 401s and restarts healthy instances. The inverse is scarier: an admin router relies on `requireAdmin` that was attached at the app level during a refactor cleanup, and now every admin endpoint is public. After any middleware move, grep for the old attachment and test one protected and one public endpoint per router.
+
+**Testing a bare router and trusting the green checkmark.** The isolated test passes, then integration fails in staging: the bare router never had `express.json()`, helmet, or the tenant middleware that the app provides. Isolation tests prove the router's logic; only the assembled-app tests prove the contract. Keep both, and when a bare-router test needs body parsing, attach `express.json()` in the test setup explicitly so the dependency is visible.
+
+**Circular imports.** A route file does `require('../app')` to reach a helper or to add one more route, while `app.js` requires that route file. Node hands one side a half-finished export, and you get `undefined is not a function` at startup or subtly dead routes. Routers should receive everything they need through their own imports of services and middleware; the app imports routers, never the reverse.
+
+## 7. Compare With Related Concepts
+
+**Router vs the app itself.** Same API surface — verbs, `use`, `param` — different role. The app is the process edge: it listens on a port and owns truly global concerns. A router is an internal organizer: no listening, scoped middleware, relative paths. One-line rule: if it should apply to literally every request, app-level; if only to one feature, a router.
+
+**Splitting by feature vs splitting by verb or file-per-route.** Organizing files as `get-users.js`, `post-users.js` fragments one cohesive operation across many files and makes middleware scoping awkward — where does "auth for all user routes" live? Feature-first (one users router owning its CRUD) keeps related behavior together. One-line rule: one router per resource or bounded feature, not per HTTP method.
+
+**App-level vs router-level middleware.** They're the same mechanism at different points of the walk. The difference is purely positional: middleware registered on the app runs for everyone; middleware registered on a router runs only for traffic routed through it. Choose by blast radius — parsing affects everyone, "orders require a subscription" affects one router.
+
+**Routers vs controllers/services.** Express has no controller concept — a router is just where HTTP meets functions. Mature apps treat the router as a thin translation layer (parse request, call service, shape response) and push business rules into a service layer the router imports. That separation is why routers stay testable: swap the service, not the HTTP plumbing. One-line rule: routers decide *how requests map to operations*; services decide *what the operations do*.
+
+**Mounting a router vs string-concatenating paths.** You could skip routers and hand-write `app.get('/api/orders/:id', ...)`, but you lose scoped middleware, standalone testability, and the ability to move or version a whole API by changing one mount line (`/api/v1` → `/api/v2`). Manual prefixes scale linearly with pain.
+
+## 8. 🧠 The Memory Hook
+
+A router is a full mini-app that never listens — it waits to be plugged into a path, and once plugged in, everything inside it is relative to that plug point: paths, middleware, even its params. Remember the office building: reception checks everyone, the floor number comes off in the elevator, and the sub-team only knows who sent you if you carry the badge — `mergeParams: true`.
