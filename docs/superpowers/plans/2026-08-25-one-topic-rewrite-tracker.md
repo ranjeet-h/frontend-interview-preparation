@@ -524,38 +524,83 @@ Process 50 leaf pages under `src/full-stack/backend/fastapi/` as Type E in SUMMA
 49. [ ] queued — `src/full-stack/backend/fastapi/rollback-transactions.md` — Type E
 50. [ ] queued — `src/full-stack/backend/fastapi/pagination.md` — Type E
 
+## Phase 4 — SQL
+
+Process 40 leaf pages under `src/full-stack/databases/sql/` as Type E in alphabetical order. Skip `index.md`.
+
+1. [x] rewritten — `src/full-stack/databases/sql/how-do-you-debug-a-slow-query.md` — Type E
+2. [x] rewritten — `src/full-stack/databases/sql/how-do-you-prevent-deadlocks.md` — Type E
+3. [x] rewritten — `src/full-stack/databases/sql/how-does-an-index-improve-query-performance.md` — Type E
+4. [x] rewritten — `src/full-stack/databases/sql/what-are-1nf-2nf-and-3nf.md` — Type E
+5. [x] rewritten — `src/full-stack/databases/sql/what-are-acid-properties.md` — Type E
+6. [x] rewritten — `src/full-stack/databases/sql/what-is-a-clustered-index.md` — Type E
+7. [x] rewritten — `src/full-stack/databases/sql/what-is-a-composite-index.md` — Type E
+8. [x] rewritten — `src/full-stack/databases/sql/what-is-a-composite-key.md` — Type E
+9. [x] rewritten — `src/full-stack/databases/sql/what-is-a-foreign-key.md` — Type E
+10. [x] rewritten — `src/full-stack/databases/sql/what-is-a-non-clustered-index.md` — Type E
+11. [x] rewritten — `src/full-stack/databases/sql/what-is-a-primary-key.md` — Type E
+12. [x] rewritten — `src/full-stack/databases/sql/what-is-a-table.md` — Type E
+13. [x] rewritten — `src/full-stack/databases/sql/what-is-a-transaction.md` — Type E
+14. [x] rewritten — `src/full-stack/databases/sql/what-is-a-unique-key.md` — Type E
+15. [x] rewritten — `src/full-stack/databases/sql/what-is-connection-pooling.md` — Type E
+16. [x] rewritten — `src/full-stack/databases/sql/what-is-covering-index.md` — Type E
+17. [ ] assigned — `src/full-stack/databases/sql/what-is-database-migration.md` — Type E
+18. [ ] assigned — `src/full-stack/databases/sql/what-is-database-replication.md` — Type E
+19. [ ] assigned — `src/full-stack/databases/sql/what-is-database-sharding.md` — Type E
+20. [ ] assigned — `src/full-stack/databases/sql/what-is-deadlock.md` — Type E
+21. [ ] assigned — `src/full-stack/databases/sql/what-is-denormalization.md` — Type E
+22. [ ] assigned — `src/full-stack/databases/sql/what-is-dirty-read.md` — Type E
+23. [ ] assigned — `src/full-stack/databases/sql/what-is-explain-analyze.md` — Type E
+24. [ ] assigned — `src/full-stack/databases/sql/what-is-explain.md` — Type E
+25. [ ] queued — `src/full-stack/databases/sql/what-is-indexing.md` — Type E
+26. [ ] queued — `src/full-stack/databases/sql/what-is-isolation-level.md` — Type E
+27. [ ] queued — `src/full-stack/databases/sql/what-is-non-repeatable-read.md` — Type E
+28. [ ] queued — `src/full-stack/databases/sql/what-is-normalization.md` — Type E
+29. [ ] queued — `src/full-stack/databases/sql/what-is-optimistic-locking.md` — Type E
+30. [ ] queued — `src/full-stack/databases/sql/what-is-partitioning.md` — Type E
+31. [ ] queued — `src/full-stack/databases/sql/what-is-pessimistic-locking.md` — Type E
+32. [ ] queued — `src/full-stack/databases/sql/what-is-phantom-read.md` — Type E
+33. [ ] queued — `src/full-stack/databases/sql/what-is-query-execution-plan.md` — Type E
+34. [ ] queued — `src/full-stack/databases/sql/what-is-rdbms.md` — Type E
+35. [ ] queued — `src/full-stack/databases/sql/what-is-read-replica.md` — Type E
+36. [ ] queued — `src/full-stack/databases/sql/what-is-row-level-locking.md` — Type E
+37. [ ] queued — `src/full-stack/databases/sql/what-is-schema-migration.md` — Type E
+38. [ ] queued — `src/full-stack/databases/sql/what-is-sql.md` — Type E
+39. [ ] queued — `src/full-stack/databases/sql/what-is-table-level-locking.md` — Type E
+40. [ ] queued — `src/full-stack/databases/sql/when-can-indexes-hurt-performance.md` — Type E
+
 ## Phase 10 — SQLAlchemy
 
 Process 30 leaf pages under `src/full-stack/backend/sqlalchemy/` as Type E/A in SUMMARY order. Skip `index.md`.
 
-1. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy.md` — Type A
-2. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-orm.md` — Type A
-3. [ ] assigned — `src/full-stack/backend/sqlalchemy/orm-vs-raw-sql.md` — Type A
-4. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy-core.md` — Type A
-5. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy-orm.md` — Type A
-6. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-declarative-model.md` — Type A
-7. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-session-in-sqlalchemy.md` — Type A
-8. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-create-a-database-session.md` — Type A
-9. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-manage-session-lifecycle.md` — Type A
-10. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-connection-pool.md` — Type A
-11. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-define-relationships.md` — Type A
-12. [ ] queued — `src/full-stack/backend/sqlalchemy/one-to-one-relationship.md` — Type A
-13. [ ] queued — `src/full-stack/backend/sqlalchemy/one-to-many-relationship.md` — Type A
-14. [ ] queued — `src/full-stack/backend/sqlalchemy/many-to-many-relationship.md` — Type A
-15. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-lazy-loading.md` — Type A
-16. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-eager-loading.md` — Type A
-17. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-n-1-query-problem.md` — Type A
-18. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-solve-n-1-query-problem.md` — Type A
-19. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-joinedload.md` — Type A
-20. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-selectinload.md` — Type A
-21. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-transaction-handling-in-sqlalchemy.md` — Type A
-22. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-rollback-transactions.md` — Type A
-23. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-use-alembic.md` — Type A
-24. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-create-migrations.md` — Type A
-25. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-handle-schema-changes.md` — Type A
-26. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-write-raw-sql-in-sqlalchemy.md` — Type A
-27. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-do-bulk-inserts.md` — Type A
-28. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-optimize-sqlalchemy-queries.md` — Type A
-29. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-handle-soft-deletes.md` — Type A
-30. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-implement-audit-columns.md` — Type A
+1. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy.md` — Type A
+2. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-orm.md` — Type A
+3. [x] rewritten — `src/full-stack/backend/sqlalchemy/orm-vs-raw-sql.md` — Type A
+4. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy-core.md` — Type A
+5. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy-orm.md` — Type A
+6. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-declarative-model.md` — Type A
+7. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-session-in-sqlalchemy.md` — Type A
+8. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-create-a-database-session.md` — Type A
+9. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-manage-session-lifecycle.md` — Type A
+10. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-connection-pool.md` — Type A
+11. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-define-relationships.md` — Type A
+12. [x] rewritten — `src/full-stack/backend/sqlalchemy/one-to-one-relationship.md` — Type A
+13. [x] rewritten — `src/full-stack/backend/sqlalchemy/one-to-many-relationship.md` — Type A
+14. [x] rewritten — `src/full-stack/backend/sqlalchemy/many-to-many-relationship.md` — Type A
+15. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-lazy-loading.md` — Type A
+16. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-eager-loading.md` — Type A
+17. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-n-1-query-problem.md` — Type A
+18. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-solve-n-1-query-problem.md` — Type A
+19. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-joinedload.md` — Type A
+20. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-selectinload.md` — Type A
+21. [x] rewritten — `src/full-stack/backend/sqlalchemy/what-is-transaction-handling-in-sqlalchemy.md` — Type A
+22. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-rollback-transactions.md` — Type A
+23. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-use-alembic.md` — Type A
+24. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-create-migrations.md` — Type A
+25. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-handle-schema-changes.md` — Type A
+26. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-write-raw-sql-in-sqlalchemy.md` — Type A
+27. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-do-bulk-inserts.md` — Type A
+28. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-optimize-sqlalchemy-queries.md` — Type A
+29. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-handle-soft-deletes.md` — Type A
+30. [x] rewritten — `src/full-stack/backend/sqlalchemy/how-do-you-implement-audit-columns.md` — Type A
 
