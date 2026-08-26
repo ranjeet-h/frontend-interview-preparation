@@ -2,195 +2,58 @@
 
 ## 1. Why This Exists — The Problem First
 
-Imagine building a sortable, paginated user table for an admin dashboard. You write a single 300-line React component: inside it, you call `fetch('/api/v2/users')`, read URL search params to synchronize pagination with `useSearchParams()`, pull the current auth token directly from a global Redux or Zustand store, and render the HTML `<table>` with custom CSS classes, loading spinners, and action buttons.
+An admin user table often starts as one convenient component. It fetches `/api/v2/users`, reads the page from the router, gets an auth token from a store, maps API fields, renders the table, and handles pagination. It works until another screen needs the same table with customer data, Storybook needs to show an empty state without a backend, or a small API rename forces a developer to edit a file full of layout code.
 
-The component works on day one. Then production reality hits:
-
-1. **Zero Reusability:** The billing team asks to display customer accounts using the exact same table design, column sorting, and pagination controls. But because your table has `/api/v2/users` hardcoded inside its body, you cannot reuse the markup. You either duplicate the 300 lines or hack in conditional API flags.
-2. **Broken Design Workflows:** The design team wants to test the table in Storybook across various visual edge cases (empty states, 50-character names, mobile viewports). Storybook crashes instantly because there is no backend API server, no active Redux store, and no router context.
-3. **Painful Testing:** To test whether clicking a column header toggles the sort arrow icon, your unit test must set up mock service workers (MSW), mock global state providers, configure memory routers, and wait for asynchronous network promises to settle. A five-line UI check turns into a 60-line test harness.
-4. **High Regression Risk:** When the backend team renames an API response property from `user_id` to `id`, you must open the exact file containing your CSS flexbox layouts and responsive dropdown logic. An API tweak risks breaking the visual layout.
-
-This friction happens when **how things look** (markup, styles, visual states) is tightly coupled to **how things work** (data fetching, business logic, store subscriptions, side effects). Separating presentation from data orchestration solves this immediately.
-
----
+That is the real problem: the component has mixed two different reasons to change. The data and orchestration change when the API, route, cache, or business rule changes. The presentation changes when the markup, accessibility behavior, or visual design changes. Keeping those concerns connected by props and callbacks makes each side easier to reuse, test, and replace.
 
 ## 2. The Analogy — Make It Obvious
 
-Think of a **high-end restaurant**:
+Think of a restaurant. The kitchen receives raw ingredients, checks inventory, follows the recipe, handles a missing ingredient, and prepares a finished meal. That is the container's job: it talks to APIs and stores, applies business rules, and prepares data for the screen. The kitchen does not need to know which plates or table decorations the diner prefers.
 
-```
-[ Kitchen & Executive Chef ]  ──( Prepared Meal / Props )──▶  [ Waitstaff & Plating ]  ──▶  [ Diner / User ]
-   • Sources raw ingredients                                     • Arranges food on china
-   • Controls stoves & timers                                    • Handles silverware & napkins
-   • Manages recipes & inventory                                 • Listens to guest feedback
-   (Container / Smart)                                           (Presentational / Dumb)
-```
+The waitstaff and plating station receive the finished meal and present it clearly. They handle the diner's immediate requests and pass those requests back to the kitchen. That is the presentational component: it receives props, renders the visual result, and emits callbacks such as `onDelete` or `onNextPage`.
 
-- **The Kitchen & Executive Chef (The Container):** The kitchen sources raw ingredients from vendors (APIs), checks refrigerator inventory (cache/store), manages stove timers and prep work (side effects, state machines), and handles supply failures (if the salmon is spoiled, substitute sea bass). The kitchen does not care about table linens or background music. Its job is to turn raw ingredients into a clean, ready-to-serve meal.
-- **The Waitstaff & Plating (The Presentational Component):** The waitstaff receives the prepared meal on a silver platter (props). They focus entirely on visual presentation, plate arrangement, and diner interactions. When the diner asks for water or sends a dish back (user clicks/events), the server catches the request and passes the message back to the kitchen (callbacks).
-- **Why the separation matters:** You can switch food vendors from Local Farms to Ocean Catch (switch a REST API to GraphQL or local mock data), and the plated presentation at the table remains identical. Conversely, you can replace all the restaurant's plates and dining room decor (re-theme UI) without changing the kitchen's cooking recipes.
-
----
+The mapping is useful because it also shows the boundary. Switching from a REST endpoint to GraphQL is a kitchen change; the plated meal can stay the same. Replacing the plates with a new visual theme is a presentation change; the recipe can stay the same. Props are the prepared meal crossing the boundary, and callbacks are requests travelling back from the table.
 
 ## 3. How It Actually Works — The Full Explanation
 
-The Presentational vs. Container pattern divides UI development into two distinct layers of responsibility.
+The pattern has two responsibilities, not necessarily two files or two React components. A **presentational component** owns the visual contract. Its meaningful inputs are props, and its output is JSX. It may own ephemeral UI state such as whether a menu is open, which accordion panel is expanded, or whether a tooltip is visible. It should not secretly know about an API client, router, authentication store, or database-shaped response.
 
-### The Two Layers of Responsibility
+A **container** owns orchestration. It chooses where data comes from, subscribes to server state or global state, reads route parameters, performs mutations, handles loading and error states, and converts backend data-transfer objects into a view model. In a modern React application, the container may be a route component, a small wrapper, or mostly a custom hook. The architectural question is “where does this responsibility belong?”, not “does every feature need a file named `Container`?”
 
-```
-┌────────────────────────────────────────────────────────┐
-│ CONTAINER LAYER ("Smart" / Orchestration)              │
-│ - Fetches data (TanStack Query, SWR, fetch)            │
-│ - Subscribes to global stores (Zustand, Redux)         │
-│ - Reads router params (useParams, useSearchParams)     │
-│ - Shapes raw API payloads into clean UI data shapes    │
-│ - Passes data and event handlers down as props         │
-└──────────────────────────┬─────────────────────────────┘
-                           │ Props (Data & Callbacks)
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ PRESENTATIONAL LAYER ("Dumb" / Visual)                 │
-│ - Receives data and callbacks strictly via props       │
-│ - Renders JSX markup, CSS, and layout styling          │
-│ - Handles local UI state (accordion open, hover state) │
-│ - No knowledge of APIs, databases, stores, or routes   │
-│ - Pure, deterministic, and isolated                    │
-└────────────────────────────────────────────────────────┘
+There is another React rule underneath this boundary: every render is a snapshot. A function component call receives one set of props and state values, and the handlers it creates close over that render's values. Calling a setter schedules a new render; it does not rewrite the variables or closures from the handler that is already running. This is why a presentational callback reports the user intent from its committed snapshot, while the container decides what the next render should show. If a delayed callback must work from the latest state, use a functional state update or an explicit ref/synchronization design rather than assuming the old closure becomes live.
+
+Component identity is separate from data ownership. React preserves a component's state when the element has the same type and key at the same position in the tree; changing props alone does not create a fresh component. The parent that chooses the type and `key` therefore owns whether a child keeps its local visual state or is deliberately remounted. A changed key discards the old instance/Fiber and mounts a new one, which can be useful for resetting a form, but it also destroys focus, local state, and effect subscriptions. A presentational component owns its local state; the container or route owns the identity decision when the feature's domain says a reset is required.
+
+The boundary can be pictured as:
+
+```text
+route / container / custom hook
+  API data + route state + business actions
+               │
+               │ typed props and callbacks
+               ▼
+reusable presentational UI
+  markup + styles + accessibility + local visual state
 ```
 
-#### 1. Presentational Components ("Dumb" / UI Components)
-- **Primary concern:** How things look.
-- **Inputs and Outputs:** Props in, JSX elements out.
-- **Data dependencies:** They never import API clients, fetch utilities, global store selectors, or router hooks. If they need data, it must arrive through `props`.
-- **State ownership:** They do not own business or domain state. However, they **can** own ephemeral, visual-only UI state—such as whether a dropdown menu is open, whether a tooltip is hovered, or which tab is highlighted.
-- **Determinism:** Given the exact same props, a presentational component produces the exact same rendered output. This makes them trivial to test and drop into Storybook or component catalogs.
+The important invariant is that the reusable UI can be given a different data source without learning a new infrastructure context. If `UserTable` accepts `{ id, name, email, role }`, it does not matter whether the parent obtained those values from REST, GraphQL, a fixture, or a cached query. The parent owns the translation from a raw DTO such as `{ user_id, email_address }` into that stable view model.
 
-#### 2. Container Components ("Smart" / Orchestrator Components)
-- **Primary concern:** How things work.
-- **Responsibilities:** Managing network calls, caching, error boundaries, router coordination, global store reading/writing, and business calculations.
-- **Markup:** Minimal. Containers rarely have custom CSS classes, layout wrappers beyond basic structural divs, or detailed HTML tags. They primarily render presentational child components and feed them props.
-- **Data Transformation:** Containers act as a translation barrier. They receive raw backend data structures (DTOs), sanitize and reshape them into UI-friendly props, and pass them down. If the backend schema changes, only the container needs updating.
+This separation also clarifies state ownership. Server state belongs near the query or data layer, because it has freshness, caching, retry, and cancellation concerns. URL state belongs near routing, because it must be encoded and changed through the router. Domain state belongs near the feature that owns the rule. A presentational component may own “is the dropdown open?”, but it should not own “which customer is authorized to delete?”
 
----
+Effects fit this model when they synchronize React with something outside React: a WebSocket, browser event listener, timer, imperative widget, or network client that needs setup and cleanup. They are not a second render phase and should not be used to derive `fullName` from props, mirror one state value into another, or respond to a button click that can call the action directly. Derive values during render, handle user events in event handlers, and use an effect only when an external system must be brought into alignment with the committed snapshot. Its dependency list describes the reactive values that make that synchronization valid; omitting one can leave an external callback with a stale closure, while unstable dependencies can cause unnecessary teardown and setup.
 
-### The Evolution: From Class Wrappers to Custom Hooks
+The pattern evolved with React. Before Hooks, class components held state and lifecycle methods, so teams often created a stateful `UserListContainer` around a stateless `UserList`. That made the boundary visible but could create wrapper chains. Hooks let a route component call `useUsersList()` and pass its result to `UserTable`, preserving the same separation without requiring a wrapper for every view. Data-fetching libraries such as TanStack Query are especially useful here because they provide caching, status, retries, and request identity instead of forcing each component to rebuild those concerns.
 
-Understanding how this pattern evolved prevents dogmatic or outdated architectural decisions.
-
-#### The 2015 Era: File-Level Component Pairs
-When Dan Abramov popularized this pattern in the early days of React and Redux, React had a fundamental limitation: **only class components could hold state and lifecycle methods (`componentDidMount`)**, while function components were strictly stateless (`(props) => JSX`).
-
-To separate logic from layout, developers created two physical files for every view:
-1. `UserListContainer.jsx` (Class component fetching data in `componentDidMount` and rendering the child).
-2. `UserList.jsx` (Stateless function component rendering `<ul>` and `<li>`).
-
-This led to deep component nesting ("wrapper hell") in React DevTools and excessive boilerplate.
-
-#### The Modern Era: Custom Hooks as Containers
-With React 16.8+ (Hooks), function components can manage state, side effects, and context subscriptions directly.
-
-This fundamentally changed how the pattern is implemented:
-- The **Container Component** largely evolved into a **Custom Hook** (e.g., `useUserData()`).
-- The logic (network calls, caching, state machines) lives in the hook.
-- The UI (markup, styles, accessibility) lives in the component.
-
-```tsx
-// The modern expression of the Container/Presentational pattern:
-function UsersPage() {
-  // Custom hook acts as the Container / Data Orchestrator
-  const { users, isLoading, error, deleteUser } = useUsers();
-
-  // Presentational component receives clean props
-  return (
-    <UserTable
-      users={users}
-      isLoading={isLoading}
-      errorMessage={error?.message}
-      onDelete={deleteUser}
-    />
-  );
-}
-```
-
-The separation of concerns did not disappear—it became cleaner. You get all the benefits of isolated UI components without arbitrary component wrapper hierarchies.
-
----
+This is not a purity contest. A small feature that appears once may be clearer as one component. Split the boundary when reuse, Storybook isolation, independent testing, or growing orchestration makes the separation pay for itself. Conversely, creating `ThingContainer.tsx`, `ThingView.tsx`, and `useThing.ts` for a tiny local button can make the code harder to follow.
 
 ## 4. Real Code — See It Working
 
-### The Anti-Pattern: Tightly Coupled God Component
+The following TypeScript/React fragments are contextual application examples: they assume React, React Router, and `@tanstack/react-query` are installed in the application. The presentational component has no API, router, or store dependency.
 
-Here is the coupled approach where networking, routing, store access, and table rendering are tangled together:
-
-```tsx
-// AntiPatternUserTable.tsx - Hard to test, impossible to reuse
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useAuthStore } from '../stores/authStore';
-
-export function AntiPatternUserTable() {
-  const [data, setData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const token = useAuthStore((s) => s.token);
-  const page = Number(searchParams.get('page')) || 1;
-
-  useEffect(() => {
-    // Tightly coupled to a specific URL endpoint and auth mechanism
-    fetch(`/api/v2/users?page=${page}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-      .then((res) => res.json())
-      .then((json) => {
-        setData(json.items);
-        setLoading(false);
-      });
-  }, [page, token]);
-
-  if (loading) return <div className="spinner">Loading users...</div>;
-
-  return (
-    <div className="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Role</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((user) => (
-            <tr key={user.id}>
-              <td>{user.full_name}</td>
-              <td>{user.email_address}</td>
-              <td><span className="badge">{user.role_name}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <button onClick={() => setSearchParams({ page: String(page + 1) })}>
-        Next Page
-      </button>
-    </div>
-  );
-}
-```
-
----
-
-### The Refactored Pattern: Clean Separation
-
-#### Step 1: The Presentational Component (Pure UI)
-
-This component knows nothing about network requests, URLs, or authentication. It accepts typed props and renders UI.
+**Presentational component: a stable view-model boundary.**
 
 ```tsx
 // components/UserTable.tsx
-import React from 'react';
-
 export interface UserRowViewModel {
   id: string;
   name: string;
@@ -203,7 +66,7 @@ interface UserTableProps {
   isLoading: boolean;
   currentPage: number;
   onNextPage: () => void;
-  onPrevPage: () => void;
+  onPreviousPage: () => void;
 }
 
 export function UserTable({
@@ -211,74 +74,48 @@ export function UserTable({
   isLoading,
   currentPage,
   onNextPage,
-  onPrevPage,
+  onPreviousPage,
 }: UserTableProps) {
-  if (isLoading) {
-    return <div className="p-8 text-center text-gray-500">Loading user records...</div>;
-  }
-
-  if (users.length === 0) {
-    return <div className="p-8 text-center text-gray-500">No users found.</div>;
-  }
+  if (isLoading) return <p role="status">Loading user records...</p>;
+  if (users.length === 0) return <p>No users found.</p>;
 
   return (
-    <div className="rounded-lg border border-gray-200 shadow-sm">
-      <table className="min-w-full divide-y divide-gray-200">
-        <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
-          <tr>
-            <th className="px-4 py-3">Name</th>
-            <th className="px-4 py-3">Email</th>
-            <th className="px-4 py-3">Role</th>
-          </tr>
+    <section aria-label="Users">
+      <table>
+        <thead>
+          <tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th></tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 bg-white text-sm text-gray-800">
+        <tbody>
           {users.map((user) => (
-            <tr key={user.id} className="hover:bg-gray-50">
-              <td className="px-4 py-3 font-medium">{user.name}</td>
-              <td className="px-4 py-3 text-gray-500">{user.email}</td>
-              <td className="px-4 py-3">
-                <span className="inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
-                  {user.role}
-                </span>
-              </td>
+            <tr key={user.id}>
+              <td>{user.name}</td>
+              <td>{user.email}</td>
+              <td>{user.role}</td>
             </tr>
           ))}
         </tbody>
       </table>
-
-      {/* Pagination controls emit callbacks instead of mutating router directly */}
-      <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
-        <button
-          type="button"
-          disabled={currentPage <= 1}
-          onClick={onPrevPage}
-          className="rounded border px-3 py-1 text-sm disabled:opacity-50"
-        >
+      <nav aria-label="User pages">
+        <button type="button" disabled={currentPage === 1} onClick={onPreviousPage}>
           Previous
         </button>
-        <span className="text-sm text-gray-600">Page {currentPage}</span>
-        <button
-          type="button"
-          onClick={onNextPage}
-          className="rounded border px-3 py-1 text-sm"
-        >
-          Next
-        </button>
-      </div>
-    </div>
+        <span>Page {currentPage}</span>
+        <button type="button" onClick={onNextPage}>Next</button>
+      </nav>
+    </section>
   );
 }
 ```
 
-#### Step 2: The Orchestration Hook (Container Logic)
+The component still handles real UI behavior: loading and empty states, semantic table markup, the disabled previous button, and the callbacks emitted by pagination. “Presentational” does not mean “no interaction”; it means the interaction is expressed through its visual contract rather than hidden infrastructure access.
 
-All side effects, routing, caching, and data reshaping are encapsulated inside a custom hook:
+**Container hook: fetch, transform, and coordinate route state.**
 
 ```tsx
 // hooks/useUsersList.ts
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { UserRowViewModel } from '../components/UserTable';
+import type { UserRowViewModel } from '../components/UserTable';
 
 interface RawApiUser {
   user_id: string;
@@ -290,17 +127,18 @@ interface RawApiUser {
 
 export function useUsersList() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const page = Math.max(1, Number(searchParams.get('page')) || 1);
+  const parsedPage = Number(searchParams.get('page'));
+  const page = Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
 
   const query = useQuery({
     queryKey: ['users', page],
     queryFn: async (): Promise<UserRowViewModel[]> => {
-      const res = await fetch(`/api/v2/users?page=${page}`);
-      if (!res.ok) throw new Error('Failed to fetch users');
-      const data: { items: RawApiUser[] } = await res.json();
+      const response = await fetch(`/api/v2/users?page=${page}`);
+      if (!response.ok) throw new Error('Failed to fetch users');
 
-      // Transform raw backend DTO into clean View Model
-      return data.items.map((item) => ({
+      const payload: { items: RawApiUser[] } = await response.json();
+      // The translation protects reusable UI from backend naming decisions.
+      return payload.items.map((item) => ({
         id: item.user_id,
         name: `${item.first_name} ${item.last_name}`.trim(),
         email: item.email_address,
@@ -309,164 +147,112 @@ export function useUsersList() {
     },
   });
 
-  const goToNextPage = () => setSearchParams({ page: String(page + 1) });
-  const goToPrevPage = () => setSearchParams({ page: String(Math.max(1, page - 1)) });
+  const setPage = (nextPage: number) => {
+    setSearchParams({ page: String(Math.max(1, nextPage)) });
+  };
 
   return {
     users: query.data ?? [],
     isLoading: query.isLoading,
-    isError: query.isError,
-    errorMessage: query.error instanceof Error ? query.error.message : null,
+    error: query.error instanceof Error ? query.error.message : null,
     currentPage: page,
-    goToNextPage,
-    goToPrevPage,
+    nextPage: () => setPage(page + 1),
+    previousPage: () => setPage(page - 1),
   };
 }
 ```
 
-#### Step 3: The Route / Container Component
+The query key includes `page`, so page 1 and page 2 are distinct server-state entries. The hook is also the right place to add authentication to the API client, preserve previous data during a transition, or expose a mutation that invalidates `['users']`. The table does not need to know any of those choices.
 
-The route component serves as the glue, wiring the container logic to the presentational component:
+**Route component: connect the two sides.**
 
 ```tsx
 // pages/UsersPage.tsx
-import { useUsersList } from '../hooks/useUsersList';
 import { UserTable } from '../components/UserTable';
+import { useUsersList } from '../hooks/useUsersList';
 
 export function UsersPage() {
-  const {
-    users,
-    isLoading,
-    isError,
-    errorMessage,
-    currentPage,
-    goToNextPage,
-    goToPrevPage,
-  } = useUsersList();
+  const users = useUsersList();
 
-  if (isError) {
-    return <div className="rounded bg-red-50 p-4 text-red-700">{errorMessage}</div>;
-  }
+  if (users.error) return <p role="alert">{users.error}</p>;
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
-      <h1 className="mb-6 text-2xl font-bold text-gray-900">User Management</h1>
+    <main>
+      <h1>User management</h1>
       <UserTable
-        users={users}
-        isLoading={isLoading}
-        currentPage={currentPage}
-        onNextPage={goToNextPage}
-        onPrevPage={goToPrevPage}
+        users={users.users}
+        isLoading={users.isLoading}
+        currentPage={users.currentPage}
+        onNextPage={users.nextPage}
+        onPreviousPage={users.previousPage}
       />
-    </div>
+    </main>
   );
 }
 ```
 
----
+For a focused UI test, render `UserTable` with fixture props and assert on rows, status text, and button events. For a hook test, provide a query client and router test context, mock the network boundary, and assert that a raw API response becomes the expected view model. Each test supplies only the infrastructure required by the layer under test.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
 **Q: What is the fundamental distinction between presentational and container components?**
 
-Presentational components govern how things look; container components govern how things work.
+Presentational components own the visual contract: props enter, JSX is rendered, and user intent leaves through callbacks. Containers own orchestration: data fetching, route and store subscriptions, business rules, mutations, and translation from external data into UI props. The distinction is about responsibility, not a mandatory file naming scheme.
 
-Presentational components receive data and callbacks exclusively through props and return JSX. They do not initiate network requests, read route parameters, or subscribe to global state stores. They are deterministic and pure with respect to their props.
+**Q: Must a presentational component be stateless?**
 
-Container components orchestrate side effects: data fetching, caching, error states, route management, and state mutations. They shape raw data into clean view models and pass that data down to presentational components.
+No. It may own state that only affects its local visual behavior, such as an open menu, focused item, or expanded panel. It should not hide domain state or infrastructure dependencies inside itself. A dropdown can own whether it is open; the feature container should decide whether the selected account is allowed to perform an action.
 
----
+**Q: Is this pattern obsolete now that Dan Abramov no longer recommends splitting components into presentational and container categories by default?**
 
-**Q: Can a presentational component hold internal state, or must it be completely stateless?**
+Historically, presentational/container was a useful category for explaining class-based React designs, where a stateful wrapper often surrounded a mostly stateless view. Dan Abramov no longer recommends splitting components into those categories by default. That historical guidance should be distinguished from modern practice: Hooks, composition, route boundaries, and query libraries let teams place orchestration where it belongs without automatically creating a `Container` and a `View` pair. Keep the underlying dependency boundary when it reduces coupling or improves reuse and testing, but do not treat the old categories as a required architecture.
 
-Presentational components can hold internal state, provided that state is purely local and visual.
+**Q: Where should fetching and route parameters live?**
 
-The misconception is equating "presentational" with "stateless". A presentational component should not manage business or domain state (e.g., user profiles, cart items, authentication tokens). However, it frequently manages visual interaction state:
-- Whether an accordion section is collapsed or expanded.
-- Whether a custom dropdown menu is open.
-- Which tab is visually active in a tab bar.
-- Ephemeral hover, focus, or tooltip animations.
+At a page or feature boundary, usually in a route component, container, or custom hook. A reusable table should receive `users` and callbacks rather than call `useSearchParams()` or fetch a hardcoded endpoint. That keeps it usable in another route, a Storybook story, or a unit test with no router or backend.
 
-These state values dictate visual presentation, not application business rules.
+**Q: Why does the pattern improve testing and Storybook work?**
 
----
+The UI can be tested with plain props, so visual states do not require a network server, store provider, or router. Storybook can show loading, empty, error, long-name, and populated states by changing fixture props. The orchestration layer still needs integration-style tests for query behavior and transformations, but those tests no longer have to inspect CSS or DOM details to prove that data logic works.
 
-**Q: Dan Abramov wrote an update saying he no longer promotes this pattern. Does that mean we should not use it?**
+**Q: What does the container do when the backend schema changes?**
 
-No. Dan Abramov clarified that he no longer promotes the rigid practice of splitting every UI feature into two physical wrapper components (`ThingContainer.jsx` wrapping `Thing.jsx`).
+It updates the translation from the backend DTO to the view model. For example, if `user_id` becomes `id`, the hook or API adapter changes while `UserTable` continues consuming `UserRowViewModel.id`. This is a boundary, not a magic shield: if the meaning of the field changes, both layers may need a deliberate product change.
 
-Before Hooks in React 16.8, class components were the only way to hold state and lifecycle methods, making wrapper components necessary to keep presentation functions pure. With React Hooks, stateful logic can be encapsulated inside Custom Hooks (`useThing()`) instead of wrapper components.
+**Q: When should you not split the component?**
 
-The underlying principle—**Separation of Concerns between data orchestration and UI rendering**—remains a fundamental pillar of scalable frontend architecture. Hooks changed the implementation mechanism, not the architectural goal.
-
----
-
-**Q: Where should data fetching and route parameters live in a clean React architecture?**
-
-Data fetching and route parameters should live at the boundary: in page-level route components, container components, or dedicated custom hooks.
-
-They should never live inside reusable UI components (like buttons, modals, cards, or tables). If a shared `<UserProfileCard />` component directly calls `useParams()` or `fetch('/api/user')`, it cannot be rendered inside a preview popover, a search results dropdown, or a test environment without setting up fake routes and network mocks. Keeping shared UI dependent only on props ensures maximum portability.
-
----
-
-**Q: How does this pattern improve unit testing and Storybook development?**
-
-It decouples visual testing from infrastructure testing:
-
-1. **For Presentational Components:** You test UI rendering, accessibility, and user events using simple props without mocking `fetch`, setting up Redux store providers, or configuring `MemoryRouter`. Tests run in milliseconds in jsdom and are completely deterministic. In Storybook, you can render empty states, loading states, error states, and populated states simply by passing different mock prop objects.
-2. **For Container Hooks / Logic:** You test data transformations, retry mechanisms, and pagination state machines using hook testing utilities (`renderHook`) with network mocks (like MSW). You verify that the hook returns the correct state without asserting on DOM nodes or CSS classes.
-
----
-
-**Q: When should you NOT split a component into presentational and container layers?**
-
-You should not split when the component is small, localized, and has low probability of reuse.
-
-If you are building a simple 30-line feedback form that appears on a single settings sub-page, creating `FeedbackFormContainer.tsx`, `FeedbackFormView.tsx`, and `useFeedbackForm.ts` adds needless indirection and cognitive overhead. Start with a single cohesive component. Split into container logic and presentational views only when:
-- The UI needs to be reused with different data sources.
-- The UI needs to be developed or documented in Storybook.
-- The component's state or side-effect logic grows complex enough that testing UI and logic together becomes painful.
-
----
+Keep a small, local component together when it appears once, has little orchestration, and is easy to test as a unit. Split when the UI has multiple data sources, the logic is difficult to test alongside markup, the view needs Storybook or reuse, or the route boundary is already a natural seam. Extra files are not automatically better architecture.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Leaking Domain DTOs into Shared UI Primitives
-- **The Mistake:** Passing raw backend database payloads directly into a shared UI component (e.g., `<DataTable data={rawBackendSqlResponse} />`).
-- **Why It Fails:** The presentational component becomes coupled to backend database column names (like `usr_frst_nm` or `created_at_epoch_ms`). If the backend schema changes, your UI breaks.
-- **The Fix:** The container (or custom hook) should map backend DTOs into a sanitized View Model (`{ id, name, formattedDate }`) before passing them as props to the presentational component.
+**Trap: passing backend DTOs directly into shared UI.** A table that reads `user_id`, `email_address`, and `role_name` is coupled to the server vocabulary. A schema rename now leaks into visual code. Map the DTO once at the container boundary and make the view model describe what the UI needs.
 
----
+**Trap: calling a global store from a supposedly shared component.** A component may look reusable because it lives under `shared/`, yet `useAuthStore()` inside it creates a hidden provider and application dependency. It can fail in Storybook or be impossible to reuse in a different product. Pass the needed `displayName`, `avatarUrl`, or permission result explicitly.
 
-### Trap 2: Hidden Global Dependencies in "Shared" Components
-- **The Mistake:** Placing a component in the `src/components/shared/` folder, but having it internally call `const user = useAuthStore((s) => s.user)`.
-- **Why It Fails:** It looks like a shared component, but it has a hidden dependency on a specific global store slice. Dropping it into a public landing page or an isolated test immediately causes runtime errors.
-- **The Fix:** Pass `user` (or the specific fields it needs, like `avatarUrl` and `displayName`) explicitly through props.
+**Trap: treating all state as container state.** Local visual state does not need to be lifted merely to preserve a label. Lifting every hover, menu, or accordion flag creates noisy props and makes the component less cohesive. Lift state when another component must own or coordinate the decision; keep purely visual state local.
 
----
+**Trap: treating all state as presentational state.** Putting authentication, selected account permissions, or server records into a table makes the table responsible for rules it cannot properly own. The result is a component that is difficult to reuse and easy to misuse. Keep domain ownership at the feature boundary and pass the smallest useful contract down.
 
-### Trap 3: Premature File Splitting (Indirection Overkill)
-- **The Mistake:** Enforcing a strict repository rule that every single component must have a matching `.container.tsx` file.
-- **Why It Fails:** Developers spend time writing pass-through boilerplate for components with zero business logic. Navigating the codebase requires jumping between two files for every minor change.
-- **The Fix:** Keep simple feature components unified. Extract custom hooks for data fetching when logic expands, and extract presentational components when visual reuse or Storybook isolation is needed.
+**Trap: assuming the pattern requires three files.** A container wrapper that only forwards five values adds indirection without a boundary worth protecting. Start with a cohesive feature, then extract a hook or view when the coupling produces a real cost. Architecture should follow change and ownership, not a directory template.
 
----
+**Trap: confusing a custom hook with a presentational component.** A hook can be headless and reusable, but it still contains stateful orchestration. It is not “dumb” just because it does not render JSX. Test it according to its contract: query status, returned data, actions, and side effects.
+
+**Trap: making callbacks too vague.** `onChange(value: unknown)` pushes business interpretation into the UI and weakens the boundary. Prefer a meaningful contract such as `onPageChange(nextPage: number)` or `onDelete(userId: string)`. The UI should report user intent; the container should decide what that intent means.
 
 ## 7. Compare With Related Concepts
 
-| Pattern / Concept | Primary Focus | Where Logic Lives | When to Choose |
-| :--- | :--- | :--- | :--- |
-| **Presentational Component** | Visual rendering, markup, and local UI interaction. | None (props in, JSX out). Minimal ephemeral UI state. | Building reusable UI primitives, tables, modals, cards, and design system elements. |
-| **Container Component** | Data orchestration, store subscriptions, and side effects. | Component lifecycle / body, delegating UI to children. | Orchestrating top-level page views, route entry points, and multi-component workflows. |
-| **Custom Hook** | Headless business logic, async state, and event handling. | Encapsulated inside hook functions (`useUsersList`). | Sharing stateful logic across multiple components without adding wrapper nodes to the React tree. |
-| **Headless UI / Compound Components** | Behavior and accessibility primitives with flexible markup slots. | Context and internal state machines; consumer provides JSX. | Building complex interactive widgets (e.g., Radix UI, Headless UI, Select menus) where consumers need custom styling. |
+| Concept | Main responsibility | Dependency shape | Choose it when |
+|---|---|---|---|
+| Presentational component | Markup, styles, accessibility, and local visual interaction | Props in; callbacks out; no hidden API/store/router access | A view needs reuse, isolated tests, or multiple data sources |
+| Container or route component | Fetching, routing, global state, mutations, and business decisions | Knows application infrastructure and feeds a view model | A page or feature must coordinate external systems |
+| Custom hook | Share stateful or asynchronous logic without adding a DOM wrapper | Called by a component; can use query, router, or store APIs | Several containers need the same orchestration behavior |
+| Headless UI / compound component | Reusable behavior and accessibility with consumer-controlled markup | Often uses context and internal state; styling is supplied by the consumer | A complex widget needs behavior reuse with different visual shells |
+| Feature component | A deliberately cohesive vertical slice of UI and logic | May contain both presentation and orchestration | The feature is small or the boundary would add more indirection than value |
 
----
+The practical rule is simple: separate a boundary when the two sides change for different reasons. Use a custom hook when you want to share logic without adding a wrapper. Use headless UI when the behavior itself is reusable but the markup must remain flexible. Keep a feature together when it is local and clear.
+
+Context is another way to cross a boundary, but it is a dependency boundary rather than a replacement for every prop. It is a good fit for a value many descendants need, such as the current theme, locale, or an established feature-level service; the provider makes that dependency available without threading it through every intermediate component. Props and composition make dependencies visible at the call site and let a parent choose exactly what a child receives, while context hides the path and couples consumers to a provider contract. That hidden coupling can make isolated reuse and testing harder, and a provider update can notify all consumers that read its value, even when a particular consumer only needs part of it. Prefer props or composition for a focused, local contract; use context when the dependency is genuinely cross-cutting or when introducing it removes more plumbing than coupling.
 
 ## 8. 🧠 The Memory Hook — What Sticks
 
-**Containers care about the plumbing; presentational components care about the canvas.**
-
-- **The Plumbing (Container / Hook):** Fetches data, manages state, connects routes, and handles errors.
-- **The Canvas (Presentational Component):** Takes props in, paints pixels out, and emits user clicks.
-- **The Modern Shift:** Custom hooks let you separate the plumbing from the canvas without building extra component walls.
+Picture a restaurant: the container is the kitchen that handles ingredients, recipes, and failures; the presentational component is the plating station that turns the prepared meal into a visible experience. Props carry the meal to the table, callbacks carry the diner's request back, and a custom hook lets the kitchen move out of the dining room without building wrapper walls.
