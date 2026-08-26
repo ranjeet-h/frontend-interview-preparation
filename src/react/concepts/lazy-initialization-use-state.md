@@ -1,119 +1,242 @@
-# Lazy Initialization in useState
+# Lazy Initialization in `useState`
 
-## Detailed explanation
-Lazy initialization means passing a function to `useState` so React calls it only during the initial render. This avoids repeating expensive setup work on every render.
+## 1. Why This Exists — The Problem First
 
-Use it for expensive initial calculations, reading from localStorage, parsing initial data, or creating initial state objects. The initializer function should be pure enough for React development checks.
+Imagine a settings screen that parses a large saved JSON document, builds a lookup map, and chooses the user's initial filter. If that work is written directly inside the `useState` call, JavaScript performs it every time the component renders—even when the user only typed one character into an unrelated input. The state value is reused, but the calculation that produced the first value keeps being paid for.
 
-## 1. One-line mental model
-Lazy initialization runs expensive initial state setup only on the first render.
+That is wasteful in a small component and noticeable in a large one. It can make typing feel slow, repeatedly read browser storage, or redo work that was only needed to establish the component's starting state. Lazy initialization gives React a function to call when it needs the initial value, instead of making JavaScript calculate that value before React even receives it.
 
-## 2. Problem it solves
-Expensive initial values can be recalculated on every render if passed directly.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Pass a function to `useState`.
-- React calls it for the initial state.
-- Later renders reuse stored state.
-- Useful for expensive setup.
-- Initializer should not cause side effects.
+Think of a hotel room's welcome package. The hotel prepares it when a guest first checks in and leaves it in the room. When that guest later asks for a towel, the staff does not rebuild the welcome package; they use the package already stored for that room.
 
-## 4. Visual / analogy
-Lazy initialization is like making a key once, not forging it every time you open the door.
+In this analogy, the room is the component instance, the welcome-package preparation is the initializer function, and the stored package is React's state. `useState(buildWelcomePackage())` prepares the package before handing it to the hotel desk on every visit to the desk—that is ordinary JavaScript argument evaluation. `useState(() => buildWelcomePackage())` hands the desk instructions for preparing it, so React can run those instructions during the room's initial setup and store the result. Later renders are like later service requests: React reads the stored state and does not run the preparation instructions again.
 
-```mermaid
-flowchart LR
-  First["First render"] --> Init["Run initializer"]
-  Later["Later renders"] --> Stored["Use stored state"]
-```
+If the hotel closes a room and opens a brand-new room, a new package is prepared. Likewise, a component that unmounts and later mounts again gets a new initial state. Lazy does not mean “once for this source-code location forever”; it means once for each mount of a component instance.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+The important distinction is between these two expressions:
 
 ```tsx
-const [items] = React.useState(() => createExpensiveInitialItems());
+// Fragment (not standalone): assumes React's useState and a createInitialItems helper.
+useState(createInitialItems())
+useState(() => createInitialItems())
 ```
 
-## 6. Real-world example
+JavaScript evaluates arguments before calling `useState`. In the first expression, `createInitialItems()` runs during every execution of the component function. React receives the resulting array, but on an update it ignores that new initial-state argument because the hook already has state.
+
+In the second expression, JavaScript creates an arrow function and passes that function object to `useState`. During the mount path, React treats a function initial argument as an initializer, calls it, and stores the returned value as the hook's initial state. During an update, React reads the existing hook state and does not call the function or use a newly created initializer.
+
+Conceptually, the lifecycle looks like this:
+
+```text
+# Pseudocode (not runnable)
+mount:  component runs → initializer runs → result is stored as state
+update: component runs → existing state is read → initializer is ignored
+remount: new component instance → initializer runs again
+```
+
+The function is not a general “run this later” callback. React calls it with no arguments, and its return value becomes the initial state. The initializer therefore needs to be synchronous and render-safe: it should calculate or read a value, not start an HTTP request, mutate the DOM, write to storage, or change another piece of application state.
+
+The result is not permanently frozen. A setter can replace it later:
 
 ```tsx
-const [theme, setTheme] = React.useState(() => {
-  return window.localStorage.getItem("theme") ?? "light";
+// Fragment (not standalone): assumes React's useState and a readInitialItems helper.
+const [items, setItems] = useState(() => readInitialItems());
+
+setItems(nextItems); // updates state; it does not rerun readInitialItems()
+```
+
+This is why lazy initialization is about the cost of establishing state, not about memoizing every future computation.
+
+There are two details that often decide whether an interview answer is accurate:
+
+- React development Strict Mode may call an initializer twice to expose impure render logic; one result is discarded. Production behavior should not be designed around a single call being guaranteed in every development check. A pure initializer gives the same answer either way and has no harmful external effects.
+- A function can itself be the desired state. `useState(() => makeHandler)` means “the initial state is the function returned by `makeHandler`.” `useState(makeHandler)` means “call `makeHandler` as the initializer.” If the state is a function, the extra wrapper is necessary to prevent React from interpreting that function as initializer code.
+
+For server rendering, the initializer still runs while the component is rendered on the server. Browser-only globals such as `window` and `localStorage` may not exist there. A guarded read can avoid a crash, but it can also produce server/client differences that affect hydration. The safest design is to choose a deterministic server-safe default and synchronize browser-only preferences after hydration when that distinction matters.
+
+## 4. Real Code — See It Working
+
+This self-contained component demonstrates the difference between eager evaluation and lazy initialization. `buildRows` logs whenever it runs; changing the filter causes a re-render.
+
+```tsx
+import { useState } from "react";
+
+function buildRows() {
+  console.log("building initial rows");
+  return Array.from({ length: 10_000 }, (_, id) => ({ id, label: `Row ${id}` }));
+}
+
+export function RowSearch() {
+  // Production: once per normal mount; development Strict Mode may invoke it twice.
+  const [rows] = useState(() => buildRows());
+  const [query, setQuery] = useState("");
+
+  const visibleRows = rows.filter((row) =>
+    row.label.toLowerCase().includes(query.toLowerCase()),
+  );
+
+  return (
+    <label>
+      Search
+      <input value={query} onChange={(event) => setQuery(event.target.value)} />
+      <span>{visibleRows.length} matches</span>
+    </label>
+  );
+}
+```
+
+This is the contrasting mistake:
+
+```tsx
+// Fragment (not standalone): assumes React's useState and the buildRows helper above.
+// Incorrect when buildRows is expensive: it runs on every render.
+const [rows] = useState(buildRows());
+```
+
+React still keeps the first state value, so the bug can be hard to notice in the UI. The repeated log and repeated allocation reveal the actual cost.
+
+Reading a persisted preference is a practical use case, provided the environment supports the API:
+
+```tsx
+import { useState } from "react";
+
+function readTheme(): "light" | "dark" {
+  if (typeof window === "undefined") return "light";
+
+  const saved = window.localStorage.getItem("theme");
+  return saved === "dark" ? "dark" : "light";
+}
+
+export function ThemeToggle() {
+  const [theme, setTheme] = useState(() => readTheme());
+
+  function toggleTheme() {
+    setTheme((current) => (current === "light" ? "dark" : "light"));
+  }
+
+  return (
+    <button type="button" onClick={toggleTheme}>
+      Theme: {theme}
+    </button>
+  );
+}
+```
+
+The initializer below is not appropriate because rendering it changes an external system:
+
+```tsx
+// Intentionally bad, non-runnable example: it demonstrates a render-time side effect.
+// Do not do this: Strict Mode or another render retry can write more than once.
+const [id] = useState(() => {
+  window.localStorage.setItem("last-created", String(Date.now()));
+  return crypto.randomUUID();
 });
 ```
 
-## 7. Common interview questions
-#### What is lazy initialization?
-- **The Engine Mechanism (Why it behaves this way):** When you pass a function to `useState`, React detects the function type during the initial render and calls it to compute the initial state value. On subsequent renders, React skips calling the initializer entirely and returns the stored state from the Fiber node's `memoizedState`. The initializer function is only invoked once during the mount phase of the component's lifecycle.
-- **The Unforgettable Mental Model:** The **One-Time Spell**. A wizard casts an expensive enchantment once when the sword is forged (initial render). Every time the sword is drawn afterward (subsequent renders), the enchantment is already there — no need to recast it.
-- **The Trap:** Confusing lazy initialization with `useMemo`. Lazy init runs only on mount and never again. `useMemo` re-runs when its dependencies change. They solve different problems.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Lazy initialization is passing a function to `useState` instead of a direct value. React calls that function only during the first render to compute the initial state, then discards it. On every subsequent render, React uses the stored state value without re-invoking the initializer. This avoids repeating expensive computations on every render."
+If the application must create and persist an ID, keep render pure and perform that workflow at an explicit event or in an appropriate external synchronization boundary. Also note that a random ID is not a stable server-rendering strategy unless the application has a hydration-safe plan.
 
-#### Why pass a function to `useState`?
-- **The Engine Mechanism (Why it behaves this way):** If you pass `useState(expensiveComputation())`, the function executes during every render because JavaScript evaluates function arguments before calling the outer function. By passing `useState(() => expensiveComputation())`, you pass a function reference — not its result. React's internal logic checks if the initial state argument is a function, and only then invokes it during the mount phase. This defers execution and limits it to a single call.
-- **The Unforgettable Mental Model:** The **Recipe vs. the Meal**. Passing `expensiveComputation()` is like cooking the meal before handing it to the chef — you cook it every time. Passing `() => expensiveComputation()` is like handing the chef a recipe — they only cook it once when the restaurant opens.
-- **The Trap:** Using lazy initialization for cheap values like `useState(() => 0)`. The overhead of the function call outweighs any benefit. Reserve it for genuinely expensive operations.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Passing a function to `useState` defers expensive computation to only the initial render. Without it, `useState(expensiveFn())` executes the function on every render because JavaScript evaluates arguments eagerly. The lazy initializer pattern ensures the computation runs exactly once during mount, improving performance for costly initializations like parsing large datasets or reading from storage."
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### When is lazy initialization useful?
-- **The Engine Mechanism (Why it behaves this way):** Any operation that's expensive to compute and only needed for the initial state benefits from lazy initialization. This includes: parsing JSON from localStorage, constructing large initial data structures, computing date/time values, reading browser APIs, or performing complex calculations. Since React stores the result in the Fiber node's `memoizedState`, the expensive work is never repeated unless the component unmounts and remounts.
-- **The Unforgettable Mental Model:** The **Museum Exhibit**. You only need to set up the exhibit (expensive initialization) once when the museum opens. Visitors (renders) come and go, but the exhibit stays in place — you don't rebuild it for every visitor.
-- **The Trap:** Using lazy initialization for values that need to respond to prop changes. The initializer only runs on mount, so if a prop changes, the initial state won't update. For prop-dependent values, compute them during render or use `useMemo`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Lazy initialization is useful for expensive one-time setup: parsing localStorage data, building large initial arrays or objects, computing complex default values, or reading browser APIs. It's ideal when the initial value is costly to compute and doesn't need to change in response to props. If the value depends on props that change, I'd compute it during render or use `useMemo` instead."
+**Q: What is lazy initialization in `useState`?**
 
-#### Does initializer run every render?
-- **The Engine Mechanism (Why it behaves this way):** No. React's `useState` implementation checks whether the component is mounting or updating. During mount, if the initial state argument is a function, React calls it and stores the result. During updates, React reads from `memoizedState` and ignores the initial state argument entirely — the function reference is passed but never invoked. This is why the initializer's code has zero performance impact on re-renders.
-- **The Unforgettable Mental Model:** The **Launch Button**. You press the launch button (initializer) once to start the rocket. After liftoff, pressing the button again does nothing — the rocket is already in orbit.
-- **The Trap:** In StrictMode development, React double-invokes the initializer during the mount-unmount-remount cycle. This can cause issues if the initializer has side effects (like writing to localStorage or making API calls).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: No, the initializer runs only during the initial mount. React stores the computed value in the Fiber node and reuses it on every subsequent render, completely ignoring the initializer function. The only exception is StrictMode in development, which double-invokes the mount phase to test cleanup — so the initializer runs twice there, but only in dev."
+It is passing a function as the initial-state argument: `useState(() => expensiveSetup())`. On mount, React calls that function and stores its return value. On later renders, React uses the state already associated with the hook and ignores the initializer argument. The benefit is avoiding work that is only needed to compute the starting value.
 
-#### Should initializer have side effects?
-- **The Engine Mechanism (Why it behaves this way):** The render phase in React's Fiber architecture should be pure — no side effects like network requests, DOM mutations, or external state modifications. React may call component functions multiple times (StrictMode, Concurrent Mode, error recovery), so side effects in initializers can execute unpredictably. While reading from localStorage is generally safe (idempotent read), writing to it or making API calls in an initializer violates React's purity expectations.
-- **The Unforgettable Mental Model:** The **Mirror Test**. The render phase should be like looking in a mirror — you observe and describe, but you don't rearrange the room. Side effects rearrange the room while you're still describing it.
-- **The Trap:** Reading `window` or `localStorage` in an initializer during SSR. These globals don't exist on the server, causing crashes. Guard with `typeof window !== 'undefined'` checks or use environment-specific initialization.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Initializers should be side-effect-free. The render phase must be pure because React may invoke it multiple times. Reading from localStorage or computing values is fine, but writing to storage, making API calls, or mutating external state belongs in `useEffect`. For SSR compatibility, I also guard browser-only reads with environment checks."
+**Q: Why does `useState(expensiveWork())` run on every render?**
 
-#### How does StrictMode affect initializers?
-- **The Engine Mechanism (Why it behaves this way):** In StrictMode development, React mounts the component, runs the initializer, immediately unmounts (discarding the state), then remounts and runs the initializer again. This means any side effect in the initializer — like a `console.log`, a network request, or a localStorage write — executes twice. The second mount's result is the one that persists, but the first execution's side effects still occurred.
-- **The Unforgettable Mental Model:** The **Double-Check Inspector**. StrictMode is an inspector who checks your work twice. If your initialization writes something to a log, the inspector sees it written twice — even though only the second version is kept.
-- **The Trap:** Assuming double-invocation means the state is doubled. It's not — the state from the second mount is what persists. Only the side effects compound.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: StrictMode double-invokes the mount phase in development, so the initializer runs twice. The state from the second mount is what persists, but any side effects from the first execution still happened. This is why initializers must be pure — if they have side effects like API calls or storage writes, those effects will execute twice in development, which can cause confusing behavior or data duplication."
+Because this is first a JavaScript evaluation issue, not a React issue. JavaScript must evaluate `expensiveWork()` before it can call `useState`, and the component function runs again on every render. `useState(() => expensiveWork())` creates a function reference instead; React invokes it only on the mount path.
 
-#### Lazy initialization vs `useMemo`?
-- **The Engine Mechanism (Why it behaves this way):** `useState(() => expensive())` runs once on mount and never again — the value is stored in `memoizedState` and only changes via `setState`. `useMemo(() => expensive(), [deps])` runs on mount AND whenever any dependency changes — the value is recomputed and stored in the Fiber's `memoizedState` for that hook slot. Lazy init is for initial state that doesn't change; `useMemo` is for derived values that update when inputs change.
-- **The Unforgettable Mental Model:** The **Birth Certificate vs. the Annual Report**. Lazy init is like a birth certificate — created once, never changes. `useMemo` is like an annual report — regenerated whenever the underlying data changes.
-- **The Trap:** Using `useMemo` for initial state that never needs recomputation — adding unnecessary dependency tracking overhead. Or using lazy init for values that should update when props change.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Lazy initialization with `useState` runs exactly once on mount and the value persists until explicitly updated with `setState`. `useMemo` runs on mount and re-runs whenever its dependencies change. Use lazy init for expensive initial state that doesn't need to update. Use `useMemo` for expensive derived values that should recompute when their inputs change."
+**Q: Does the initializer run exactly once?**
 
-## 8. Active recall test
-1. **What syntax enables lazy initialization?**
-   - **Explanation:** Pass a function to `useState` instead of a direct value: `useState(() => expensiveComputation())`. React detects the function type and invokes it only during the initial render to compute the state value.
-2. **When does the initializer run?**
-   - **Explanation:** Only during the component's first render (mount phase). On all subsequent renders, React reads the stored state from the Fiber node's `memoizedState` and ignores the initializer function entirely. StrictMode in development runs it twice due to double-mounting.
-3. **Why not call the expensive function directly?**
-   - **Explanation:** JavaScript evaluates function arguments before calling the outer function. `useState(expensive())` executes `expensive()` on every render. `useState(() => expensive())` passes a function reference that React only invokes during mount, avoiding repeated computation.
-4. **What is a localStorage use case?**
-   - **Explanation:** Reading a saved theme preference: `const [theme, setTheme] = useState(() => localStorage.getItem('theme') ?? 'light')`. This reads from storage once on mount instead of on every render, and the stored state persists across re-renders.
-5. **Why should the initializer be side-effect-free?**
-   - **Explanation:** React may invoke the component function multiple times during rendering (StrictMode, Concurrent Mode). Side effects like API calls, DOM mutations, or external state writes in the initializer would execute unpredictably, causing bugs, duplicate requests, or data corruption.
+It runs once for a normal mount in production and is not rerun for ordinary updates. It runs again when the component is genuinely unmounted and mounted as a new instance. In development Strict Mode, React can invoke it twice as a purity check, so “once” should be stated with that development caveat rather than as an absolute promise.
 
-## 9. Mistakes / traps
-- Writing `useState(expensive())` instead of `useState(() => expensive())`.
-- Doing network requests in initializer.
-- Expecting initializer to respond to prop changes.
-- Using it for cheap values unnecessarily.
-- Ignoring SSR when reading `window`.
+**Q: What happens if the initial value depends on a prop that changes later?**
 
-## 10. Compare with related concepts
-- **Lazy init vs `useMemo`:** lazy init sets initial state once; memo recalculates when dependencies change.
-- **Initializer vs setter:** initializer creates first value; setter updates later.
-- **Lazy init vs effect:** initializer is render-time state setup; effect syncs external systems.
+The initializer captures the prop's value from the mount render and does not automatically recalculate when the prop changes. For a value that is merely derived from current props, calculate it during render or use `useMemo` when profiling shows the calculation is expensive. If it is editable state seeded from a prop, define an explicit policy for what happens when the prop changes; do not expect lazy initialization to synchronize it.
 
-## 11. Summary from memory
-Explain why reading localStorage directly inside `useState()` can be less ideal than lazy initialization.
+**Q: Is lazy initialization the same as `useMemo`?**
 
-## 12. Spaced revision prompts
-- After 1 day: Define lazy initialization.
-- After 3 days: Write lazy initializer syntax.
-- After 7 days: Compare with `useMemo`.
-- After 14 days: Explain SSR caveat.
+No. Lazy initialization supplies the first value of state, and the value changes only through its setter. `useMemo` caches a derived value and may recompute it when dependencies change; its cache is a performance optimization, not the component's source of truth. Use lazy initialization for expensive state setup and `useMemo` for expensive derivation from current inputs.
 
+**Q: Should a lazy initializer have side effects?**
+
+No. It executes during rendering, and React may render more than once, abandon a render, or call the initializer twice in development checks. Reading an available value is generally a calculation; writing to `localStorage`, making a request, registering a subscription, mutating the DOM, or changing external state is a side effect and does not belong in the initializer.
+
+**Q: Is reading `localStorage` in a lazy initializer safe?**
+
+It is efficient on the client because the read happens at initial state setup rather than on every render, but it is not automatically safe in every runtime. SSR has no browser `window`, and a client-only value can differ from the server's default and cause hydration concerns. Guard browser access and choose an SSR strategy deliberately; for some applications, start with a deterministic default and reconcile the preference after hydration.
+
+**Q: What if the state value itself is a function?**
+
+React uses a function initial argument as initializer code, so `useState(handler)` asks React to call `handler` and store its return value. To store `handler` itself, wrap it: `useState(() => handler)`. The same distinction applies to a setter: `setState(next)` can be interpreted as an updater function, while `setState(() => next)` stores a function value.
+
+**Q: When is lazy initialization not worth using?**
+
+For a cheap literal such as `useState(0)` or `useState("")`, the wrapper adds indirection without meaningful savings. It is also the wrong tool when the value must track changing inputs, when initialization needs an asynchronous request, or when the “initial value” is actually a value derived from state and props on every render.
+
+**Q: What does React store after the initializer returns?**
+
+At the conceptual level, React stores the returned value in the hook state associated with that component instance. On an update it reads that stored value and processes queued state updates; it does not use the newly evaluated initial argument to reset the state. The exact internal data structures are implementation details, but the observable invariant is stable: initial-state input is for initialization, and the setter is for later changes.
+
+## 6. The Traps — What Goes Wrong
+
+**Mistaking a lazy initializer for a callback you control.**
+
+The function is not returned to you for later use. React calls it as part of initial state setup. If you need a function as the state value, use `useState(() => actualFunction)`. Otherwise React will call `actualFunction` and store its return value.
+
+**Assuming the initializer repairs state when props change.**
+
+This code only uses `userId` on the first mount:
+
+```tsx
+// Fragment (not standalone): assumes React's useState and a userId in component scope.
+const [draft, setDraft] = useState(() => makeDraft(userId));
+```
+
+If `userId` changes while the same component remains mounted, `draft` remains the old draft. That is often correct for a user-edited form, but it is wrong if the product expects a new draft. Make the reset an explicit event or change the component identity with a deliberate `key` when remounting is truly the desired behavior.
+
+**Putting writes or requests in render-time initialization.**
+
+Strict Mode can expose this by producing duplicate writes or requests in development. A successful return value does not make the side effect safe. Keep initialization deterministic and move external work to an event handler or a synchronization mechanism designed for that external system.
+
+**Calling the expensive function outside the wrapper.**
+
+The difference is one pair of parentheses:
+
+```tsx
+// Fragment (not standalone): assumes React's useState and a parseLargeDocument helper.
+useState(parseLargeDocument()); // parse now, on every component render
+useState(() => parseLargeDocument()); // let React initialize once per mount
+```
+
+The first form can be expensive even though React later ignores the new result.
+
+**Treating Strict Mode's duplicate call as duplicate committed state.**
+
+Development Strict Mode is checking whether render-time code is pure; it is not adding two copies of the state to the hook. One initialization result is discarded. The real danger is that an impure initializer can still perform its external action twice, which is why relying on “it only runs once” is unsafe.
+
+**Using browser APIs without an SSR plan.**
+
+`localStorage.getItem("theme")` can throw on the server because `localStorage` is not defined. Adding `typeof window !== "undefined"` prevents that particular crash, but the server's fallback and client's first render still need to be compatible with the framework's hydration rules.
+
+**Using lazy initialization to hide a broader performance problem.**
+
+It removes repeated initialization work; it does not make a 10,000-item filter, a large render tree, or a network request cheap. Profile the expensive path and choose the right fix—better data structures, virtualization, memoized derivation, caching, or server-side work—rather than wrapping every calculation in a function.
+
+## 7. Compare With Related Concepts
+
+**Lazy initialization vs. `useMemo`.** Lazy initialization creates the starting state once per mount. `useMemo` recomputes a derived value when its dependencies change and may discard its cache. Use lazy initialization when the result becomes state; use `useMemo` when the result should follow current inputs.
+
+**Lazy initialization vs. a direct initial value.** A direct value is fine when constructing it is cheap: `useState(0)`. A function wrapper matters when producing the initial value does meaningful work or touches a costly read. The wrapper controls when the computation happens; it does not change state semantics after initialization.
+
+**Lazy initialization vs. a functional state update.** `useState(() => createInitialValue())` supplies the initial state. `setState((previous) => nextValue(previous))` computes a later state update from the latest committed state. Both use functions, but one is for mount-time initialization and the other is for update-time sequencing.
+
+**Lazy initialization vs. an effect.** Initialization calculates the first render's state synchronously. An effect is for synchronizing with something outside React after a commit, such as a subscription or external system. Do not put an API request or storage write in the initializer just because it runs only once; “once” does not make render-time side effects correct.
+
+**Lazy initialization vs. `useRef`.** State updates schedule a re-render and are appropriate when the UI depends on the value. A ref stores a mutable value without scheduling a render. Use lazy state for initial UI state and a ref for an instance-local mutable handle that should not itself drive the UI.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+`useState(value)` makes JavaScript cook the meal before React sees it; `useState(() => value)` hands React the recipe to cook when the component first opens. React stores the first meal for that mount, so later renders read the stored state—but a new mount gets a new meal, and a pure recipe is safe when React checks it twice.
