@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (313 pages complete)
+## Completed Sections Summary (343 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -19,7 +19,8 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **Node.js Core Concepts** (`src/full-stack/backend/nodejs/`) | 30 / 30 | Complete |
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
-| **Total Completed Concept Pages** | **313** | **100% Done** |
+| **SQLAlchemy Core Concepts** (`src/full-stack/backend/sqlalchemy/`) | 30 / 30 | Complete |
+| **Total Completed Concept Pages** | **343** | **100% Done** |
 
 ---
 
@@ -36,26 +37,27 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ### Backend Sections (Pending Rewrite)
 
-| Section | Leaf Pages Remaining |
-|---|---:|
-| API design | 30 |
-| Authentication | 30 |
-| Coding practice | 30 |
-| Deployment | 25 |
-| Express | 30 |
-| FastAPI | 50 |
-| Full-stack integration | 20 |
-| Observability | 25 |
-| Performance | 25 |
-| Python backend | 30 |
-| Queues | 20 |
-| Redis | 20 |
-| Security | 30 |
-| Senior scenarios | 25 |
-| SQLAlchemy | 6 (24 / 30 completed) |
-| Testing | 20 |
-| WebSockets | 20 |
-| **Total Backend Remaining** | **446** |
+| Section | Total Pages | Completed | In-Flight / Assigned | Not Started |
+|---|---:|---:|---:|---:|
+| API design | 30 | 0 | 0 | 30 |
+| Authentication | 30 | 0 | 0 | 30 |
+| Coding practice | 30 | 0 | 0 | 30 |
+| Deployment | 25 | 0 | 0 | 25 |
+| **Express** (in rewrite now) | **30** | **0** | **8** | **22** |
+| **FastAPI** (in rewrite now) | **50** | **0** | **0** | **50** |
+| Full-stack integration | 20 | 0 | 0 | 20 |
+| Observability | 25 | 0 | 0 | 25 |
+| Performance | 25 | 0 | 0 | 25 |
+| Python backend | 30 | 0 | 0 | 30 |
+| Queues | 20 | 0 | 0 | 20 |
+| Redis | 20 | 0 | 0 | 20 |
+| Security | 30 | 0 | 0 | 30 |
+| Senior scenarios | 25 | 0 | 0 | 25 |
+| Testing | 20 | 0 | 0 | 20 |
+| WebSockets | 20 | 0 | 0 | 20 |
+| **Total Backend** | **440** | **0** | **8** | **432** |
+
+Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `EXP-n` / `FA-n`); 8 Express pages were written in wave 1 and are in review/fix loop at last update.
 
 ### MERN Status
 
@@ -77,6 +79,6 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **337**
+- **Total Completed Concept/System Pages:** **343**
 - **Total Completed Output Question Puzzles:** **15**
-- **Total Outstanding Leaf Pages:** **581** (446 Backend + 135 Database)
+- **Total Outstanding Leaf Pages:** **575** (440 Backend + 135 Database)
