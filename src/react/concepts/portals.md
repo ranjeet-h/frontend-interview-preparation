@@ -2,562 +2,483 @@
 
 ## 1. Why This Exists — The Problem First
 
-Imagine you are building a data table component where each row contains an action menu that opens a confirmation modal or a rich tooltip dropdown. Everything looks pristine on a wide desktop display. Then, you test the interface on a smaller laptop screen: the table container has `overflow-x: auto` to allow horizontal scrolling across twenty columns.
+Imagine a product card with a “Delete” button. The card sits inside a scrolling panel. Clicking the button should open a confirmation dialog that covers the viewport.
 
-The moment a user clicks the action menu, your dropdown is sliced in half right at the bottom edge of the table row. 
+If the dialog is rendered as an ordinary child of the card, it inherits the card’s physical environment. An ancestor may have `overflow: hidden`, a scrolling clipping box, a `transform`, a `filter`, or a stacking context with a lower `z-index`. A `position: fixed` dialog can then be clipped, positioned relative to the wrong ancestor, or painted behind another layer.
 
-You try fixing it with CSS: you add `position: fixed` and set `z-index: 999999`. Yet the modal still renders behind a sticky table header, or gets clipped completely. Then you discover why: a teammate added a smooth fade-in animation using `transform: translate3d(0, 0, 0)` on the parent card. In CSS, any non-none value for `transform`, `filter`, or `perspective` creates a brand-new stacking context and turns that ancestor element into the containing block for all `position: fixed` descendants. Your modal is now physically imprisoned inside a 40-pixel table cell.
+The tempting fixes create different problems:
 
-Before portals, solving this required messy workarounds:
-1. **Lifting modal state to the root:** Moving every boolean `isOpen` flag, confirmation callback, and form state up to the top-level `App` component, causing massive prop-drilling and unnecessary re-renders across the entire tree.
-2. **Imperative DOM hacking:** Bypassing React with `document.body.appendChild()` inside a `useEffect`, which severed React's lifecycle, broke React Context propagation, and created memory leaks when cleanup was forgotten.
+- Move every dialog’s state to `App`, which loses the dialog’s natural ownership and causes prop drilling.
+- Append DOM nodes with `document.body.appendChild()` manually, which makes React unaware of ownership, updates, and cleanup.
+- Increase `z-index` forever, even though `z-index` cannot escape an ancestor’s stacking context.
 
-React Portals exist to eliminate this architectural compromise. They let you declare a component wherever it logically belongs in your component tree, while instructing React's rendering engine to physically insert its HTML into a completely different DOM node—such as `document.body` or a dedicated `#modal-root`.
+A portal solves the specific placement problem. `createPortal(children, domNode)` tells React to keep `children` in the same React tree while committing their DOM nodes into another DOM container. The component can remain next to the state and event that control it, while its visual surface can live under a top-level host such as `<div id="modal-root"></div>`.
 
----
+The most important sentence is: **a portal changes DOM placement, not React ownership.** It is a layout escape hatch, not a second React application and not an accessibility feature.
 
 ## 2. The Analogy — Make It Obvious
 
-Think of a **Live TV Broadcast with a Remote Camera Crew**.
+Think of a theatre company with a remote stage.
 
-```
-┌────────────────────────────────────────────────────────┐
-│             TV Studio Control Room                     │
-│         (The Parent React Component)                   │
-│                                                        │
-│  - Holds the director, script, and state               │
-│  - Supplies shared broadcast context & cues            │
-│  - Listens to the headset intercom                     │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-             Headset Comms │ (React SyntheticEvent)
-             Intercom Line │ Bubbles UP to Studio
-                           │
-┌──────────────────────────▼─────────────────────────────┐
-│          Open Stadium Across the City                  │
-│       (The Destination DOM Node: document.body)        │
-│                                                        │
-│  - No studio ceilings or tight walls (No CSS clipping) │
-│  - Physical Camera & Scoreboard (Rendered Portal DOM)  │
-└────────────────────────────────────────────────────────┘
-```
+The director, script, actors, and cue system stay in the main theatre: that is the React tree. The company can perform a scene on a remote outdoor stage: that is the portal container in the DOM. The scenery is physically somewhere else, but the same director still owns the scene, sends its props and context, and receives its React events.
 
-1. **The TV Studio Control Room (The React Parent Component):** The director, executive producer, and lighting controllers sit inside the studio. They manage the overall show state, timing, and shared context.
-2. **The Open Stadium (The Destination DOM Container, e.g., `document.body`):** The stadium is across town. It has no low ceilings, tight doors, or wall barriers.
-3. **The Scoreboard in the Stadium (The Portal's Rendered DOM Nodes):** The scoreboard is physically installed inside the wide-open stadium so every fan in the city can see it without obstruction.
-4. **The Headset Intercom (React's Synthetic Event Bubbling):** When the camera operator in the stadium speaks into their headset, the audio signal travels directly back to the director's headset in the control room. Even though the operator is physically miles away in another building, the control room hears every word as if they were standing in the same room.
-5. **The Studio Building's Walls (Parent DOM CSS Constraints):** If you tried to set up a 60-foot stadium scoreboard inside the studio room, it would smash through the ceiling and get blocked by doorways (`overflow: hidden` and `z-index` limits). Placing it in the open stadium bypasses all physical room constraints, while the studio maintains 100% operational command.
+The mapping is direct:
 
----
+- The **director’s script** is props and state. The dialog’s `open`, `onClose`, and form state can stay beside the button that owns them.
+- The **remote stage** is `#modal-root` or `document.body`. It avoids the parent DOM subtree’s clipping and stacking constraints.
+- The **company’s cue system** is React’s Fiber ownership. Context and reconciliation still follow the React parent-child relationship.
+- The **intercom** is React event propagation. A click in the remote scene can still reach a parent React handler, even though the browser’s DOM ancestry is different.
+- The **stage manager’s teardown** is effect cleanup. If the company creates a temporary stage or installs a key listener, it must remove exactly that resource when the owner leaves.
+
+The analogy has one limit: the remote stage does not automatically make the performance accessible. Focus order, dialog semantics, keyboard behavior, and background inertness still require deliberate implementation.
 
 ## 3. How It Actually Works — The Full Explanation
 
-### The Core API
-React provides the portal factory function in the `react-dom` package:
+**The API and the two trees.** The API comes from `react-dom`:
 
 ```tsx
-import { createPortal } from 'react-dom';
+import { createPortal } from "react-dom";
 
-createPortal(children, domNode, key?);
+createPortal(children, domNode, optionalKey);
 ```
 
-- `children`: Any valid React renderable node (JSX elements, strings, numbers, fragments).
-- `domNode`: A valid, existing DOM element (like `document.body` or `document.getElementById('portal-root')`).
-- `key`: An optional unique string or number for list reconciliation.
+`children` is any renderable React node. `domNode` must be an existing DOM node at commit time. The optional `key` participates in reconciliation when portals are returned from a list or when multiple portal destinations need stable identity.
 
-### Physical DOM vs. React Virtual / Fiber Tree
-The defining characteristic of a portal is the deliberate decoupling of the **Physical DOM Tree** from the **React Fiber Tree**.
+Suppose the React tree is:
 
-```
-React Virtual / Fiber Tree                Physical Browser DOM Tree
-─────────────────────────                 ─────────────────────────
-<App>                                     <div id="root">
-  └─ <Dashboard>                            └─ <div class="dashboard">
-       └─ <DataTable>                            └─ <div class="table-scroll">
-            └─ <TableRow>                             └─ <div class="row">
-                 └─ <ActionMenu>                           └─ <button>Open</button>
-                      └─ [HostPortal]                   </div>
-                           └─ <ConfirmModal>          </div>
-                                └─ <button>Confirm    </div>
-                                                  <div id="modal-root">
-                                                    └─ <div class="modal">
-                                                         └─ <button>Confirm</button>
+```text
+App
+└─ ProductCard
+   └─ DeleteDialog
 ```
 
-- **In the React Fiber Tree:** The `<ConfirmModal>` is a direct child of `<ActionMenu>`. React maintains normal parent-child relationships in memory. State updates, props, and React Context flow downward through this hierarchy without interruption.
-- **In the Browser DOM:** React's commit phase bypasses the parent DOM element (`<div class="row">`) and appends the modal's DOM nodes directly into the target container (`<div id="modal-root">`).
+The browser DOM may be:
 
-### The Event Bubbling Mechanism (Synthetic vs. Native)
-One of the most frequently tested concepts in frontend interviews is how events bubble through portals.
-
-In standard browser DOM behavior, events bubble strictly through physical DOM ancestors:
-$$\text{Button} \longrightarrow \text{\#modal-root} \longrightarrow \text{body} \longrightarrow \text{html} \longrightarrow \text{document} \longrightarrow \text{window}$$
-
-Because the modal DOM node is not inside `<div class="row">`, a native DOM event listener attached to the row would never catch the click.
-
-**React does not use native per-node event listeners.** Instead, React attaches root-level event delegates (at `document` in React 16, and at the root DOM container `root.render()` in React 17+).
-
-When a click occurs inside a portal:
-1. The native browser event bubbles up to the root container.
-2. React catches the native event and maps the originating DOM element back to its corresponding React Fiber node.
-3. React generates a `SyntheticEvent` and walks **up the React Fiber hierarchy**, not the physical DOM hierarchy.
-4. If `<ActionMenu>` or `<Dashboard>` has an `onClick` prop in JSX, React executes those handlers in order!
-
-```tsx
-function ParentComponent() {
-  // This handler WILL run when the portal button is clicked,
-  // because event bubbling follows the React component hierarchy!
-  const handleParentClick = () => {
-    console.log("Parent caught the portal click!");
-  };
-
-  return (
-    <div onClick={handleParentClick} className="parent-container">
-      <h2>Parent Container</h2>
-      <ModalPortal>
-        <button onClick={() => console.log("Button clicked")}>
-          Click Me
-        </button>
-      </ModalPortal>
-    </div>
-  );
-}
+```text
+body
+├─ #root
+│  └─ product-card
+└─ #modal-root
+   └─ dialog
 ```
 
-If you do not want the parent React component to receive the event, you must explicitly invoke `event.stopPropagation()` on the React synthetic event inside your portal child.
+`DeleteDialog` remains a descendant of `ProductCard` in React’s Fiber tree. React therefore still reconciles its props and state, preserves or resets its state according to normal identity rules, and resolves context from the same React ancestors. The dialog’s host DOM nodes are simply inserted under `#modal-root` during the commit phase.
 
-### React Context Propagation
-Because the portal stays anchored in the React Fiber tree, any Context Provider wrapping the portal's parent in JSX automatically provides its context value to the portal's children.
+**React ownership versus browser ancestry.** The browser only sees physical DOM ancestry. CSS selectors, inherited styles, native `closest()`, and native event propagation use that DOM. React’s reconciliation, context, and synthetic event handling use React ownership. This split explains both the power and the traps of portals.
 
-You do not need to re-instantiate `<ThemeContext.Provider>` or `<QueryClientProvider>` inside the portal. A `useTheme()` or `useAuth()` call inside `<ConfirmModal>` reads the exact same context values as `<ActionMenu>`.
+**Events follow the React tree for React handlers.** A click inside a portal bubbles through the React tree to React ancestors, according to the React `onClick` relationships. It does not need to be a DOM descendant of the ancestor that declares `onClick`.
 
-### Lifecycle and Automatic Cleanup
-When the parent component unmounts the portal (for instance, when `isOpen` flips from `true` to `false`), React's reconciler runs its standard commit-phase unmount pass:
-1. It unmounts all child components and runs their cleanup functions.
-2. It automatically removes the child DOM nodes from the portal container DOM element.
-3. You never have to manually call `container.removeChild()` or manage garbage collection.
+The native event still has a physical DOM path. A native listener attached to the original card element will not receive a click from a dialog mounted elsewhere merely because React considers the dialog its child. A native listener on a physical ancestor of the portal container may receive it. React’s event system then dispatches React handlers using the Fiber relationship. With multiple React roots, propagation does not jump into an unrelated root.
 
-### Server-Side Rendering (SSR) Considerations
-During server rendering in frameworks like Next.js or Remix, there is no browser environment. The global `document` and `window` objects are `undefined`.
+This is why a dialog inside a clickable card can accidentally trigger the card’s navigation handler. Stop propagation at the dialog boundary when that is the intended behavior; do not assume DOM relocation stopped React propagation.
 
-Calling `createPortal(children, document.body)` during the server render phase throws a fatal error:
-`ReferenceError: document is not defined`.
+**Context crosses the portal.** Context lookup follows the React tree, so a portal child can read a theme, authenticated user, router, query client, or typed dialog context supplied above its logical parent. You do not re-wrap a portal merely because its DOM is under `body`. A portal rendered into a different document, such as an iframe, has additional document and stylesheet concerns, but its React ownership still matters.
 
-Furthermore, if the server renders nothing for the portal while the client immediately renders the portal before hydration completes, React will throw a hydration mismatch warning.
+**A portal does not create a new React root.** `createPortal` returns a React node that is reconciled by the existing root. `createRoot()` creates a separate root with separate ownership boundaries. Mixing the two concepts is a common source of incorrect claims about context and event propagation.
 
-The production standard for SSR-safe portals is a client-side mounting guard that defers portal creation until after the initial client mount.
+**Container lifecycle has two valid patterns.** Prefer a server-rendered, stable host when the application can provide one:
 
----
+```html
+<body>
+  <div id="root"></div>
+  <div id="modal-root"></div>
+</body>
+```
+
+If a component creates its own host with `document.createElement`, it owns that host and must remove it in cleanup. React removes the portal’s child nodes when the portal unmounts, but React cannot know that an application-created container should be removed from `body` unless your code does so.
+
+**SSR and hydration require a client boundary.** `document` and `window` do not exist during server rendering. Do not read `document.body` in module scope, in a state initializer, or unconditionally during render. A stable host in the server HTML is helpful, but the component still needs to avoid browser-only lookup during the server render. Render `null` until a client-only lifecycle step has run, then create the portal. The server output and the initial client hydration output must agree; adding portal DOM before hydration has matched the server can produce a hydration mismatch.
+
+**Effects are synchronization contracts.** A portal modal commonly synchronizes external systems: a `keydown` listener, body scroll locking, focus restoration, or a dynamically created host. Each setup must return cleanup that undoes that exact setup. Cleanup runs when dependencies change and when the component unmounts. It can also run during development checks before a setup is repeated.
+
+**Strict Mode and discarded renders.** In development, Strict Mode may mount, clean up, and mount again to expose missing cleanup. Concurrent rendering may also start a render and discard it before commit. Render code must therefore stay pure: do not append a host, add a listener, focus an element, or mutate `body` during render. Only committed lifecycle work may touch those external systems. A discarded render does not get a corresponding committed cleanup, so render-phase side effects can leak.
+
+**State, keys, and portal identity.** A portal does not change React’s state rules while its destination is stable. If the same dialog component remains at the same logical position with the same key, its state can be preserved even when its DOM destination is elsewhere. However, changing `domNode` causes React to recreate the portal content in the new container, so state preservation across a container replacement is not guaranteed. Changing the portal’s `key`, changing component type, or intentionally remounting the dialog also resets its local state. Use a key when switching between records should create a fresh dialog state; do not use a key as a substitute for cleanup.
 
 ## 4. Real Code — See It Working
 
-Here is a complete, production-grade implementation of a reusable, accessible modal system using React Portals with SSR safety, focus trap, Escape key handling, and background scroll locking.
+The following labeled TSX examples are self-contained except for the normal React and React DOM packages. Each example is a separate entry point. They use a small custom lifecycle hook so the effect implementation is isolated in one reusable hook. In a conventional application, `usePortalEffect` is the place where the same synchronization rules as `useEffect` belong.
 
-### 1. The Reusable Client Portal Wrapper (`ClientPortal.tsx`)
-
-```tsx
-import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-
-interface ClientPortalProps {
-  children: React.ReactNode;
-  /** Custom DOM selector; defaults to body if not specified */
-  selector?: string;
-}
-
-export function ClientPortal({ children, selector }: ClientPortalProps) {
-  const [mounted, setMounted] = useState(false);
-  const [container, setContainer] = useState<Element | null>(null);
-
-  useEffect(() => {
-    // Only access DOM APIs after mounting on the client
-    const targetElement = selector 
-      ? document.querySelector(selector) 
-      : document.body;
-
-    setContainer(targetElement);
-    setMounted(true);
-  }, [selector]);
-
-  // Prevent SSR crashes and hydration mismatches
-  if (!mounted || !container) {
-    return null;
-  }
-
-  return createPortal(children, container);
-}
-```
-
-### 2. The Accessible Modal Component (`Modal.tsx`)
+**Example A — a stable host, typed context, accessible modal, and React bubbling.**
 
 ```tsx
-import React, { useEffect, useRef } from 'react';
-import { ClientPortal } from './ClientPortal';
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useRef,
+  useState,
+} from "react";
+import { createPortal, createRoot } from "react-dom";
+import { useEffect } from "react";
+
+// Keep direct effect code inside a synchronization hook.
+function usePortalEffect(
+  setup: () => void | (() => void),
+  dependencies: readonly unknown[],
+) {
+  useEffect(setup, dependencies);
+}
+
+type Theme = "light" | "dark";
+const ThemeContext = createContext<Theme>("light");
 
 interface ModalProps {
-  isOpen: boolean;
-  onClose: () => void;
+  open: boolean;
   title: string;
-  children: React.ReactNode;
+  onClose: () => void;
+  children: ReactNode;
 }
 
-export function Modal({ isOpen, onClose, title, children }: ModalProps) {
-  const modalRef = useRef<HTMLDivElement>(null);
-  const previousActiveElement = useRef<HTMLElement | null>(null);
+export function Modal({ open, title, onClose, children }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const restoreFocusTo = useRef<HTMLElement | null>(null);
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  const theme = useContext(ThemeContext);
 
-  useEffect(() => {
-    if (!isOpen) return;
+  usePortalEffect(() => {
+    setHost(document.getElementById("modal-root"));
+    return () => setHost(null);
+  }, []);
 
-    // Save the element that triggered the modal so we can restore focus on close
-    previousActiveElement.current = document.activeElement as HTMLElement;
+  usePortalEffect(() => {
+    if (!open) return;
 
-    // Prevent background page from scrolling while modal is active
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    restoreFocusTo.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
-    // Handle closing when user presses the Escape key
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
-      }
+      if (event.key === "Escape") onClose();
 
-      // Simple focus trap: keep Tab navigation inside the modal
-      if (event.key === 'Tab' && modalRef.current) {
-        const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      if (event.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
         );
-        const firstElement = focusableElements[0];
-        const lastElement = focusableElements[focusableElements.length - 1];
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
 
-        if (event.shiftKey && document.activeElement === firstElement) {
-          lastElement?.focus();
+        if (event.shiftKey && document.activeElement === first) {
+          last?.focus();
           event.preventDefault();
-        } else if (!event.shiftKey && document.activeElement === lastElement) {
-          firstElement?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          first?.focus();
           event.preventDefault();
         }
       }
     };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    // Focus the modal container on open for screen readers
-    modalRef.current?.focus();
+    window.addEventListener("keydown", handleKeyDown);
+    dialogRef.current?.focus();
 
     return () => {
-      // Cleanup: restore scroll and return focus to triggering element
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', handleKeyDown);
-      previousActiveElement.current?.focus();
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      restoreFocusTo.current?.focus();
     };
-  }, [isOpen, onClose]);
+  }, [host, open, onClose]);
 
-  if (!isOpen) {
-    return null;
-  }
+  if (!open || !host) return null;
+
+  return createPortal(
+    <div
+      role="presentation"
+      onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgb(0 0 0 / 50%)" }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-title"
+        tabIndex={-1}
+        data-theme={theme}
+        onClick={(event) => event.stopPropagation()}
+        style={{ margin: "10vh auto", maxWidth: 420, padding: 24, background: "white" }}
+      >
+        <h2 id="delete-title">{title}</h2>
+        {children}
+        <button type="button" onClick={onClose}>Cancel</button>
+      </div>
+    </div>,
+    host,
+  );
+}
+
+export function ProductCard() {
+  const [open, setOpen] = useState(false);
 
   return (
-    <ClientPortal>
-      {/* Backdrop overlay */}
-      <div 
-        className="modal-backdrop" 
-        onClick={onClose}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-        }}
-      >
-        {/* Modal Dialog Card */}
-        <div
-          ref={modalRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title"
-          tabIndex={-1}
-          // Stop click from bubbling to backdrop and closing the modal prematurely
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            background: '#ffffff',
-            borderRadius: '8px',
-            padding: '24px',
-            maxWidth: '500px',
-            width: '90%',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-            outline: 'none',
+    <ThemeContext.Provider value="light">
+      <article onClick={() => console.log("navigate to product")}>
+        <h1>Product Alpha</h1>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen(true);
           }}
         >
-          <header style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <h3 id="modal-title" style={{ margin: 0 }}>{title}</h3>
-            <button 
-              onClick={onClose} 
-              aria-label="Close dialog"
-              style={{ border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '18px' }}
-            >
-              ✕
-            </button>
-          </header>
-
-          <main>{children}</main>
-        </div>
-      </div>
-    </ClientPortal>
+          Delete
+        </button>
+        <Modal open={open} title="Delete Product?" onClose={() => setOpen(false)}>
+          <p>This dialog reads the theme context even though its DOM is elsewhere.</p>
+          <button type="button" onClick={() => setOpen(false)}>Confirm delete</button>
+        </Modal>
+      </article>
+    </ThemeContext.Provider>
   );
 }
+
+// Required HTML: <div id="root"></div><div id="modal-root"></div>
+const root = document.getElementById("root");
+if (!root) throw new Error("Missing #root");
+createRoot(root).render(<ProductCard />);
 ```
 
-### 3. Demonstrating Event Bubbling and StopPropagation (`UsageDemo.tsx`)
+There are three separate responsibilities here. `createPortal` handles placement. `ThemeContext` demonstrates logical ownership. The lifecycle hook handles the external listener, scroll lock, initial focus, and focus restoration. A production focus trap should also cycle `Tab` among the dialog’s focusable elements, and the application should make the background inert while the modal is modal; those are accessibility responsibilities, not portal behavior.
+
+**Example B — a dynamically created portal host with symmetrical cleanup.**
+
+Use this when the component, rather than the HTML document, owns the host. The host is created after a client commit and removed by the same lifecycle hook. The `host` state makes the first render return `null`; it also prevents a server render from reading `document`.
 
 ```tsx
-import React, { useState } from 'react';
-import { Modal } from './Modal';
+import { type ReactNode, useState } from "react";
+import { createPortal, createRoot } from "react-dom";
+import { useEffect } from "react";
 
-export function ProjectCard() {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-
-  const handleCardClick = () => {
-    console.log('Parent Card Clicked — Navigate to details page');
-  };
-
-  return (
-    <div 
-      onClick={handleCardClick}
-      style={{
-        border: '1px solid #e2e8f0',
-        padding: '20px',
-        borderRadius: '8px',
-        cursor: 'pointer',
-        maxWidth: '400px'
-      }}
-    >
-      <h3>Project Alpha</h3>
-      <p>Clicking this card navigates to the project view.</p>
-
-      <button
-        onClick={(e) => {
-          // Stop card navigation from triggering when clicking the delete button
-          e.stopPropagation();
-          setIsModalOpen(true);
-        }}
-        style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '4px' }}
-      >
-        Delete Project
-      </button>
-
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Confirm Deletion"
-      >
-        <p>Are you sure you want to delete Project Alpha?</p>
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
-          <button onClick={() => setIsModalOpen(false)}>Cancel</button>
-          <button 
-            onClick={(e) => {
-              // Crucial: If you don't call e.stopPropagation() here,
-              // this click bubbles up the React tree to handleCardClick on the parent card!
-              e.stopPropagation();
-              console.log('Deleted successfully');
-              setIsModalOpen(false);
-            }}
-            style={{ background: '#ef4444', color: '#fff', border: 'none', padding: '8px 12px', borderRadius: '4px' }}
-          >
-            Confirm Delete
-          </button>
-        </div>
-      </Modal>
-    </div>
-  );
+function usePortalEffect(
+  setup: () => void | (() => void),
+  dependencies: readonly unknown[],
+) {
+  useEffect(setup, dependencies);
 }
+
+export function TemporaryPortal({ children }: { children: ReactNode }) {
+  const [host, setHost] = useState<HTMLDivElement | null>(null);
+
+  usePortalEffect(() => {
+    const nextHost = document.createElement("div");
+    nextHost.dataset.portalHost = "temporary";
+    document.body.appendChild(nextHost);
+    setHost(nextHost);
+
+    return () => {
+      nextHost.remove();
+      setHost(null);
+    };
+  }, []);
+
+  return host ? createPortal(children, host) : null;
+}
+
+// Executable usage in a page containing <div id="root"></div>:
+const root = document.getElementById("root");
+if (!root) throw new Error("Missing #root");
+createRoot(root).render(
+  <TemporaryPortal>
+    <p>This content is mounted under a temporary body host.</p>
+  </TemporaryPortal>,
+);
 ```
 
----
+The cleanup removes the exact node created by that setup. It is safe if the component is unmounted, and it is safe under Strict Mode’s setup-cleanup-setup probe. React also removes the portal children before the host is removed. Do not create `nextHost` in the component body: a render can be repeated or discarded without a committed cleanup.
+
+**Example C — state reset is a key decision, not a portal feature.**
+
+If the same dialog edits different products, decide whether draft state should survive the product change. This complete browser-entry example uses a stable `#modal-root` host and makes the reset choice explicit; an SSR application should resolve the host in a client-only lifecycle step as shown in Example A/B.
+
+```tsx
+import { useState } from "react";
+import { createPortal, createRoot } from "react-dom";
+
+function EditDialog({ productId, onClose }: { productId: string; onClose: () => void }) {
+  const [draft, setDraft] = useState(productId);
+  const host = document.getElementById("modal-root");
+  if (!host) throw new Error("Missing #modal-root");
+
+  return createPortal(
+    <div role="dialog" aria-modal="true" aria-label={`Edit ${productId}`}>
+      <label>
+        Name
+        <input value={draft} onChange={(event) => setDraft(event.target.value)} />
+      </label>
+      <button type="button" onClick={onClose}>Close</button>
+    </div>,
+    host,
+  );
+}
+
+function App() {
+  const [productId, setProductId] = useState("alpha");
+  const [open, setOpen] = useState(true);
+
+  return (
+    <>
+      <button type="button" onClick={() => setProductId("beta")}>Edit beta</button>
+      {open && (
+        <EditDialog
+          key={productId}
+          productId={productId}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// Required HTML: <div id="root"></div><div id="modal-root"></div>
+const root = document.getElementById("root");
+if (!root) throw new Error("Missing #root");
+createRoot(root).render(<App />);
+```
+
+The `key` is attached to the logical React component, not to the destination DOM node. Here it intentionally resets the draft when `productId` changes. Without the key, the same `EditDialog` identity would keep its draft and would need an explicit event-driven update policy. A portal does not make state global, and moving a node under `body` does not by itself reset it; replacing the `domNode` can recreate the portal content and therefore must not be used as a state-preservation guarantee.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
-**Q: What is a React Portal and what fundamental problem does `createPortal` solve?**
+**Q: What is a React portal, and what problem does it solve?**
 
-A React Portal, created using `ReactDOM.createPortal(children, domNode)`, allows a developer to render a child component into a specific DOM node outside the parent component's DOM hierarchy, while maintaining the component's exact position in the React Virtual/Fiber tree.
+A portal renders React children into a DOM node outside their ordinary DOM parent while keeping them in the same React tree. It solves physical layout constraints such as clipping and stacking contexts. It does not automatically solve focus, ARIA, keyboard handling, or background inertness.
 
-The core problem it solves is CSS layout and stacking context imprisonment. When overlays (modals, dropdowns, tooltips, toasts) are nested inside elements with `overflow: hidden`, `overflow: scroll`, `z-index`, or CSS transforms/filters (`transform`, `filter`, `perspective`, `contain`), they get visually clipped or trapped behind other elements. By portaling the DOM node to `document.body` or `#modal-root`, the element escapes all parent styling constraints and can use `position: fixed` relative to the viewport.
+**Q: Does a portal preserve React parent-child relationships?**
 
----
+Yes. Props, state ownership, reconciliation, and context follow the React tree. Only the host DOM insertion point changes.
 
-**Q: Do events triggered inside a portal bubble through the DOM tree or the React tree? What are the practical implications?**
+**Q: Do events from a portal bubble?**
 
-Events triggered inside a portal bubble through the **React Component Tree**, not the physical DOM tree.
+React event handlers bubble through the React tree, so a parent React `onClick` can receive a click from a portal child. Native DOM listeners follow the physical DOM path. Stop the event at the dialog boundary when a clickable ancestor must not react.
 
-When a user clicks an element inside a portal, React's event delegation captures the native event at the root and traces the event path upward along the **Fiber hierarchy**. This means a parent React component wrapping the portal will catch the click in its `onClick` listener, even though the portal's DOM element lives in `document.body` and is not a DOM child of the parent.
+**Q: Does `event.stopPropagation()` stop every possible listener?**
 
-The practical implication is that you must be vigilant with event propagation. If a modal is rendered inside a clickable parent card, clicking a button inside the portalized modal will inadvertently trigger the parent card's `onClick` unless you explicitly call `event.stopPropagation()` on the React synthetic event.
+It stops propagation of the React event through React’s dispatch path. It does not rewrite the physical DOM structure, and the exact interaction with native listeners depends on where and when those listeners run. Use a React handler boundary for React ancestors; use native event controls only when you intentionally own native listeners.
 
----
+**Q: Does context work through a portal?**
 
-**Q: How does React Context behave across a portal boundary? Do you need to re-wrap children in Context Providers?**
+Yes. Context lookup follows React ownership. A portal child reads providers above its logical React parent without being re-wrapped because its DOM is under `body`.
 
-React Context behaves seamlessly across portal boundaries without any manual re-wrapping.
+**Q: Is a portal the same as `createRoot()`?**
 
-Because Context propagation in React operates over the Fiber tree (virtual component hierarchy) and not the browser's DOM tree, all context providers that wrap the parent component in JSX continue to provide their data to the portal's children. Hooks like `useContext(AuthContext)` or `useTheme()` inside a portalized dialog resolve their values identically to any normal child component.
+No. A portal is a React child returned from an existing root. `createRoot()` starts another root, which changes ownership boundaries and can change how context and event propagation work.
 
----
+**Q: Why can `z-index` fail without a portal?**
 
-**Q: Why does `position: fixed` fail to display a modal correctly when nested inside certain CSS parent containers, and how do portals fix this?**
+`z-index` compares layers within stacking contexts. It cannot make a descendant escape an ancestor’s stacking context or an ancestor’s clipping box. A portal mounted under a suitable top-level host removes the problematic ancestor from the dialog’s physical ancestry.
 
-According to the W3C CSS specifications, a `position: fixed` element is positioned relative to the initial containing block (the browser viewport), *except* when an ancestor element has any of the following properties:
-1. `transform` or `perspective` with a value other than `none`
-2. `filter` with a value other than `none`
-3. `backdrop-filter` with a value other than `none`
-4. `contain: paint` or `contain: layout`
-5. `will-change` specifying any of the above properties
+**Q: Is `position: fixed` alone enough?**
 
-When any of these properties are set on a parent element, that parent becomes the containing block for all fixed-position descendants. If that parent has a fixed height or `overflow: hidden`, the modal cannot span the full viewport and gets clipped. Portals fix this by physically mounting the modal element outside the transformed ancestor tree (directly under `document.body`), where the viewport remains the true containing block.
+Not always. Transforms, filters, perspective, containment, and other layout or stacking rules can affect a fixed descendant’s containing block or paint order. Portals are useful when the overlay must escape an unknown or restrictive ancestor environment; a local tooltip may not need one.
 
----
+**Q: Does `createPortal` work during SSR?**
 
-**Q: How do you safely handle Server-Side Rendering (SSR) with React Portals in frameworks like Next.js?**
+The API can be used in an SSR application, but the render must not read browser globals on the server. Look up or create the host in a client-only lifecycle step, render `null` until it exists, and ensure server and hydration output agree.
 
-During SSR, Node.js evaluates the React component tree on the server where browser global objects like `document` and `window` do not exist. Directly calling `createPortal(children, document.body)` throws a `ReferenceError: document is not defined`.
+**Q: Who removes portal DOM nodes?**
 
-To handle this safely:
-1. Track client-side mounting with state: `const [mounted, setMounted] = useState(false);`
-2. Update the state inside `useEffect`: `useEffect(() => setMounted(true), []);`
-3. Return `null` during server rendering and initial hydration if `!mounted`.
-4. Only call `createPortal` once `mounted` is `true`. This ensures the server and initial client markup match, avoiding hydration mismatch errors.
+When the portal unmounts, React removes the DOM children it rendered. If application code created the host element itself, that code must remove the host in cleanup. React cannot infer ownership of arbitrary nodes appended to `body`.
 
----
+**Q: Does a portal trap focus automatically?**
 
-**Q: Does `createPortal` handle accessibility, keyboard navigation, and focus trapping automatically?**
+No. An accessible modal needs a dialog role, a label, initial focus, focus restoration, Escape behavior, a real focus trap or equivalent modal primitive, and a strategy for making background content inert. A portal only changes placement.
 
-No. `createPortal` is strictly a DOM placement mechanism; it provides zero built-in accessibility features.
+**Q: What happens to portal state when its container changes?**
 
-When building an accessible modal or overlay using portals, the developer must manually implement:
-1. **Focus Trapping:** Ensuring the `Tab` key cycles strictly through focusable elements within the modal.
-2. **Initial Focus:** Directing focus to the modal container or its first interactive element when opened.
-3. **Focus Restoration:** Returning focus to the original trigger button when the modal closes.
-4. **ARIA Semantics:** Adding `role="dialog"`, `aria-modal="true"`, and `aria-labelledby` so screen readers announce the modal and treat background content as inert.
-5. **Keyboard Dismissal:** Listening for the `Escape` key to close the overlay.
-6. **Scroll Locking:** Setting `document.body.style.overflow = 'hidden'` while the modal is open.
+React state is controlled by logical component identity and keys, but the portal destination is part of the portal’s rendering identity. When `domNode` changes, React recreates the portal content in the new container, so state preservation is not guaranteed. A changed key or a changed component position/type can also reset state. Treat a stable host and logical keys as separate decisions: the React tree explains ownership, while replacing the container can recreate the owned content.
 
----
+**Q: Why must portal setup happen in an effect rather than render?**
 
-**Q: Can `createPortal` render into a different browser window, an iframe, or an external non-React DOM node?**
+Render can be repeated, paused, or discarded. Appending a host or adding a listener in render creates an external side effect without a guaranteed cleanup. Commit-time lifecycle work has the setup-cleanup contract needed for Strict Mode and concurrent rendering.
 
-Yes. `createPortal` accepts any valid DOM element as its target container. 
+**Q: What is the difference between a portal and an iframe?**
 
-This enables advanced architectural use cases:
-- **Rendering into an `<iframe>`:** You can create an iframe, retrieve its internal document (`iframeRef.current.contentDocument.body`), and portal React components directly into the isolated iframe document while managing state and handlers from the host React app.
-- **Rendering into a Popout Window:** You can open a new browser window with `window.open()`, grab `newWindow.document.body`, and portal React children into the new window with live state synchronicity.
-- **Integrating with legacy DOM widgets:** You can portal React subtrees into arbitrary DOM nodes managed by legacy jQuery or third-party vanilla JS libraries.
-
----
+A portal shares the same document, JavaScript environment, React tree, and styles unless you add isolation yourself. An iframe creates a separate browsing context with its own document, globals, CSS, and security boundary. Use a portal for in-app overlays and an iframe when document or trust isolation is the goal.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: The Ghost Click / Accidental Event Bubbling
-- **The Wrong Assumption:** Assuming that because the modal DOM is rendered outside the parent element in `document.body`, clicking inside the modal cannot affect the parent.
-- **What Actually Happens:** React's SyntheticEvent system bubbles the event up the React Fiber tree. If your modal is rendered inside a `<form>` or a clickable `<div onClick={handleNavigate}>`, clicking a button inside the modal will submit the outer form or trigger the page navigation.
-- **The Fix:** Explicitly invoke `e.stopPropagation()` in the modal's event handlers or on the modal dialog's root container.
+**Trap 1 — “The dialog is outside the card, so the card cannot receive its click.”**
+
+This confuses DOM ancestry with React ancestry. The portal dialog can still bubble to a parent React `onClick`. Stop propagation on the dialog surface or on the specific action when that is the desired interaction.
+
+**Trap 2 — “A portal makes the modal accessible.”**
+
+Placement is not semantics. Without focus management, keyboard users may tab into the page behind the dialog. Without `role="dialog"`, `aria-modal`, and a label, assistive technology may not understand the surface. Prefer a well-tested dialog primitive when the application does not need to implement these details itself.
+
+**Trap 3 — Reading `document` during SSR.**
+
+This fails:
 
 ```tsx
-// ❌ WRONG: Submits the parent form when clicking inside the portal modal
-function UserProfile() {
-  return (
-    <form onSubmit={handleSave}>
-      <button type="button" onClick={() => setShowModal(true)}>Open</button>
-      {showModal && (
-        <ClientPortal>
-          <div className="modal">
-            {/* Clicking this button triggers handleSave on the outer form! */}
-            <button onClick={handleDelete}>Delete Account</button>
-          </div>
-        </ClientPortal>
-      )}
-    </form>
-  );
-}
-
-// ✅ CORRECT: Prevent event from bubbling up the React component tree
-<button 
-  type="button" 
-  onClick={(e) => {
-    e.stopPropagation();
-    handleDelete();
-  }}
->
-  Delete Account
-</button>
+// ❌ Runs while the module or render is evaluated on the server.
+const host = document.getElementById("modal-root");
 ```
 
----
+Resolve browser nodes after the client commit, or pass a server-known host through a client boundary. Do not silence hydration warnings; make the server and client render contract intentional.
 
-### Trap 2: The SSR / Hydration Crash (`document is not defined`)
-- **The Wrong Assumption:** Calling `document.body` or `document.getElementById('portal-root')` directly in the component body or module scope.
-- **What Actually Happens:** The server environment crashes with `ReferenceError: document is not defined` during SSR, or React throws a Hydration Mismatch Error (Error #418 / #425) because the server returned nothing while the client immediately rendered DOM nodes into `document.body`.
-- **The Fix:** Use a client-side mount check (`useState(false)` + `useEffect`) to defer portal rendering until after the client component has mounted.
+**Trap 4 — Creating a host on every render.**
 
----
+This leaks orphan nodes and is unsafe under discarded renders:
 
-### Trap 3: The Stacking Context Trap with Nested Portal Containers
-- **The Wrong Assumption:** Creating a `#modal-root` container inside `<div id="app">` and assuming all portals will always render on top of the entire page.
-- **What Actually Happens:** If someone adds `transform`, `filter`, or `opacity: 0.99` to `<div id="app">` for a page transition, `#modal-root` is trapped inside that stacking context. Modals will be rendered behind any sibling elements outside `#app` that have a higher z-index.
-- **The Fix:** Always attach portal containers directly to `document.body` or ensure `#portal-root` is a direct child of `<body>`, completely sibling to your React `#root` container.
-
-```html
-<!-- ✅ CORRECT DOM Structure in index.html -->
-<body>
-  <div id="root"></div>       <!-- Main React App -->
-  <div id="portal-root"></div> <!-- Dedicated Portal Anchor -->
-</body>
+```tsx
+// ❌ A render is not a resource-ownership boundary.
+const host = document.createElement("div");
+document.body.appendChild(host);
+return createPortal(children, host);
 ```
 
----
+Create one host in a committed lifecycle setup and remove that exact host in cleanup, as in Example B.
 
-### Trap 4: The "Set and Forget" Accessibility Black Hole
-- **The Wrong Assumption:** Assuming that moving a modal to `document.body` makes it a fully functional modal dialog.
-- **What Actually Happens:** Sighted mouse users can interact with it, but keyboard-only users will press `Tab` and navigate through hidden links and buttons on the underlying background page. When the modal closes, focus is lost and resets to the top of the webpage.
-- **The Fix:** Add `role="dialog"`, `aria-modal="true"`, capture the previous active element to restore focus on unmount, and implement a focus trap.
+**Trap 5 — Assuming React removes a host that your code appended.**
 
----
+React owns the portal children it commits, not arbitrary siblings in `body`. If your code appends `nextHost`, your cleanup must remove `nextHost`. Otherwise every open-close cycle leaves an empty element behind.
 
-### Trap 5: Dynamic Container Memory Leaks
-- **The Wrong Assumption:** Dynamically creating a new `document.createElement('div')` inside a portal component on every render without removing it on unmount.
-- **What Actually Happens:** Every time the modal toggles open and closed, an empty `<div>` is left appended to `document.body`. After 50 modal toggles, the DOM contains 50 orphaned container elements.
-- **The Fix:** Create the dynamic container inside a `useEffect` and return a cleanup function that executes `document.body.removeChild(container)`.
+**Trap 6 — Using an unstable callback dependency and calling it a portal bug.**
 
----
+If `onClose` is recreated on every parent render, an effect depending on it may repeatedly tear down and reinstall its listener. Stabilize the callback when appropriate, or structure the synchronization so the dependency accurately describes the resource. Do not hide a broken dependency model with a “run once” ref guard.
+
+**Trap 7 — Resetting dialog state from cleanup.**
+
+Cleanup belongs to the old committed resource and can run because the component is leaving. Use a key when a new logical record needs fresh local state; use an event handler or explicit state transition for user-driven reset. Do not depend on cleanup to perform ordinary UI state choreography.
+
+**Trap 8 — Treating `z-index: 999999` as a universal escape hatch.**
+
+Large numbers do not cross stacking-context boundaries or undo clipping. Check the physical host and ancestor CSS. A portal helps only if its destination itself is placed at the correct top-level boundary.
+
+**Trap 9 — Claiming every event behaves identically across roots.**
+
+A portal within one React root preserves that root’s React propagation relationship. An unrelated root is a separate ownership system. Native listeners and React handlers also have different paths. State the exact boundary instead of saying “portals bubble through the DOM.”
 
 ## 7. Compare With Related Concepts
 
-| Feature / Concept | React Portals (`createPortal`) | Standard Component Render | CSS `position: fixed` (No Portal) | HTML5 `<dialog>` (`showModal()`) |
-| :--- | :--- | :--- | :--- | :--- |
-| **DOM Insertion Point** | Arbitrary target DOM node (`document.body`, `#portal-root`) | Parent element's direct DOM children | Inside parent element's DOM node | Native Browser Top Layer |
-| **Virtual / Fiber Tree** | Retains parent-child React hierarchy | Retains parent-child React hierarchy | Retains parent-child React hierarchy | Retains parent-child React hierarchy |
-| **Event Bubbling** | Bubbles through **React tree** | Bubbles through **React tree & DOM** | Bubbles through **DOM & React tree** | Bubbles through **DOM & React tree** |
-| **CSS Clipping Immunity** | **Immune** to parent `overflow: hidden` and `transform` | **Vulnerable** to parent CSS clipping | **Vulnerable** to parent `transform`, `filter`, `perspective` | **Immune** (native browser top layer) |
-| **React Context Support** | **Full native support** without re-wrapping | **Full native support** | **Full native support** | **Full native support** |
-| **Accessibility Built-in** | **No** (Must manage focus, ARIA, scroll manually) | Standard DOM accessibility rules | **No** (Must manage manually) | **Yes** (Native focus trap & backdrop) |
+| Concern | Ordinary child render | React portal | Native `<dialog>.showModal()` | iframe |
+|---|---|---|---|---|
+| Physical DOM location | Under the parent DOM node | In the supplied host node | Promoted to the browser top layer | In a separate document |
+| React ownership | Parent-child React tree | Same parent-child React tree | Same React tree if rendered by React | Host and iframe documents require coordination |
+| React context | Preserved | Preserved | Preserved | Not automatically shared across documents/apps |
+| React event relationship | Normal React propagation | React propagation follows logical ownership | Normal React propagation for React handlers | Separate document event system |
+| Escapes ancestor clipping | No | Usually, if host is outside it | Yes, through the top layer | Yes, by document isolation |
+| Accessibility built in | No | No | Some native modal behavior | No; must design it |
+| Cleanup of application resources | Component cleanup | Component cleanup plus owned-host cleanup | Close the dialog and clean app resources | Manage window/document lifecycle |
 
-### 1. React Portal vs. CSS `position: fixed` Alone
-- **The Key Difference:** `position: fixed` only positions relative to the viewport if *none* of its ancestor elements have `transform`, `filter`, `perspective`, or `contain` properties. Portals physically relocate the DOM node outside the styled ancestor hierarchy.
-- **Rule of Thumb:** If an element is a local overlay (like a small button badge), CSS positioning is sufficient. If an element must guarantee viewport overlay behavior (modals, global notifications, full-screen loaders), always use a Portal.
+**Portal versus ordinary rendering.** Use ordinary rendering when the overlay is intentionally local to a card or panel and its clipping is desirable. Use a portal when the surface must escape that physical layout but remain owned by the same React feature.
 
-### 2. React Portal vs. Native `<dialog>` Element
-- **The Key Difference:** The native HTML5 `<dialog>` element, when invoked with `.showModal()`, is promoted by the browser directly to the **Top Layer** (a special browser rendering plane above all z-indexes). React Portals relocate DOM elements within the standard DOM tree.
-- **Rule of Thumb:** Modern frontend architectures frequently combine both: using `createPortal` to render a native `<dialog>` element at the root level, gaining native browser top-layer stacking while keeping full declarative React state control.
+**Portal versus CSS positioning.** CSS positioning is cheaper and simpler when the containing block and stacking context are controlled. A portal is a structural answer to unknown or restrictive ancestors; it is not a replacement for good overlay positioning and sizing.
 
-### 3. React Portal vs. `<iframe>`
-- **The Key Difference:** An `<iframe>` creates an entirely isolated browser browsing context with its own global `window`, separate CSS stylesheets, and independent JavaScript execution environment. A Portal shares the same JavaScript heap, styles, document, and React Fiber tree.
-- **Rule of Thumb:** Use `<iframe>` for untrusted third-party code or sandboxed widgets. Use Portals for all in-app overlay UI.
+**Portal versus native `<dialog>`.** A native dialog can provide browser-managed modal behavior and top-layer placement when used with `showModal()`. A portal can place a React subtree at a predictable host and works for menus, tooltips, toasts, and custom overlays. They can be combined: portal a React-controlled `<dialog>` and let the browser provide its native modal layer, while still handling the application’s open state carefully.
 
----
+**Portal versus an iframe.** A portal gives physical relocation with logical unity. An iframe gives document isolation. Choose based on the problem: overlays need relocation; untrusted or independently styled content may need an iframe.
 
-## 8. 🧠 The Memory Hook
+**Portal versus a separate React root.** A portal preserves the parent root’s logical relationships. A separate root is an ownership boundary. If a dialog needs the parent’s context and event relationship, a portal is usually the appropriate abstraction.
 
-> **Physical separation, logical unity.**  
-> A React Portal moves your HTML to the rooftop so no parent walls can hide it, while keeping the remote control in your living room so your state, context, and events never miss a beat.
+## 8. 🧠 The Memory Hook — What Sticks
 
+> **Remote DOM, local React.**
+>
+> A portal moves the stage, not the director: the DOM surface escapes clipping, while React state, context, reconciliation, and React events stay attached to the logical owner.
 
+When debugging a portal, ask four questions in order:
+
+1. **Where is the DOM host?** Is it outside the clipping and stacking contexts that caused the problem?
+2. **Who owns the React node?** Which component supplies its state, context, and event ancestors?
+3. **What external resources were set up?** Are listeners, focus, scroll locking, and dynamic hosts cleaned up symmetrically?
+4. **What identity should state have?** Should the dialog preserve state, or should a deliberate `key` create a fresh instance?
