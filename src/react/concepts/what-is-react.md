@@ -64,36 +64,38 @@ Your user interface is a pure projection of your application data at a single po
 
 Here is what happens under the hood across every step of that journey.
 
-### 1. JSX Is Just Syntactic Sugar for JavaScript Objects
+**JSX is syntactic sugar for JavaScript objects.**
 
 Browsers cannot execute JSX natively. When you write `<div className="card"><h1>Hello</h1></div>`, a compiler like Babel, SWC, or TypeScript transpiles that syntax into standard JavaScript function calls using the JSX runtime:
 
-```javascript
+```tsx
 // What you write:
 const element = <div className="card"><h1>Hello</h1></div>;
 
-// What the compiler outputs (React 17+ JSX Transform):
-import { jsx as _jsx, jsxs as _jsxs } from 'react/jsx-runtime';
+// Representative output from the React 17+ automatic JSX transform:
+import { jsx as _jsx } from 'react/jsx-runtime';
 
-const element = _jsxs('div', {
+const element = _jsx('div', {
   className: 'card',
   children: _jsx('h1', { children: 'Hello' })
 });
 ```
 
-When those `_jsx` functions execute, they do not create real HTML DOM nodes. They return plain, lightweight JavaScript objects called **React Elements**:
+When `_jsx` executes, it does not create a real HTML DOM node. It returns a plain, lightweight JavaScript object called a **React Element**. The exact fields can vary by React runtime version; conceptually, it looks like this:
 
 ```javascript
 {
-  $$typeof: Symbol(react.element),
+  $$typeof: Symbol.for('react.element'),
   type: 'div',
   key: null,
   ref: null,
   props: {
     className: 'card',
     children: {
-      $$typeof: Symbol(react.element),
+      $$typeof: Symbol.for('react.element'),
       type: 'h1',
+      key: null,
+      ref: null,
       props: { children: 'Hello' }
     }
   }
@@ -102,18 +104,22 @@ When those `_jsx` functions execute, they do not create real HTML DOM nodes. The
 
 Because these are ordinary JavaScript objects in memory, React can create, inspect, and discard thousands of them in fractions of a millisecond without triggering browser layout calculations or repaints.
 
-### 2. The Component Tree and Virtual DOM
+**The component tree and Virtual DOM.**
 
 A React application is a tree of component functions. When your app mounts, React starts at the root component (such as `<App />`), executes it, reads the returned React elements, and recursively executes any child components until the entire application is mapped into an in-memory tree of objects. This tree of React elements is what developers commonly call the **Virtual DOM**.
 
-### 3. The React Rendering Lifecycle: Trigger, Render, Commit
+**State has an owner, and ownership determines what re-renders.** A piece of state belongs to the component instance that created it with `useState` or another state hook. A child receives a value through props and can request a change by calling a callback from its parent, but it does not own or mutate that state directly. If several components need the same changing value, move the state to their closest common parent and pass the value and the update callbacks down. Keep state lower when only one branch needs it; lifting every value to the root creates unnecessary updates and makes ownership harder to follow.
+
+React also preserves state by **identity**, not by the text of a component function. During reconciliation, React matches an element with the previous element at the same position when its component or host type is the same. A changed `key` tells React that it is a different identity, so the old state is discarded and a fresh component instance is mounted. This is why stable keys belong to the item identity in a list, and why swapping between `<Form />` and `<Summary />`, or changing a key on `<Form />`, resets the state at that position. A re-render alone does not reset it.
+
+**The React rendering lifecycle: trigger, render, commit.**
 
 Updating the screen in React happens in three distinct phases:
 
-#### Phase 1: The Trigger
+**Phase 1 — The trigger.**
 Something happens to change data. A user clicks a button, a network request finishes, or a timer fires, and your code calls a state setter (such as `setCount(prev => prev + 1)`). React schedules a re-render for the component that owns that state and all of its descendants.
 
-#### Phase 2: The Render Phase (Pure Calculation)
+**Phase 2 — The render phase (pure calculation).**
 React calls the component functions that need updating. 
 - React executes the component function with the latest state and props.
 - The component returns a new Virtual DOM subtree.
@@ -121,14 +127,14 @@ React calls the component functions that need updating.
 - React builds a list of specific mutations (insertions, updates, deletions) needed to make the real DOM match the new Virtual DOM.
 - **Key characteristic:** The Render phase is completely pure calculation. No changes are made to the browser screen. In modern React, this phase can be paused, split into chunks, or discarded entirely if higher-priority work (like user typing) arrives.
 
-#### Phase 3: The Commit Phase (Applying DOM Mutations)
+**Phase 3 — The commit phase (applying DOM mutations).**
 React takes the list of mutations computed during the Render phase and applies them to the real browser DOM using native DOM APIs (`node.textContent = ...`, `node.appendChild(...)`, `node.setAttribute(...)`).
 - React applies all changes in a single synchronous pass so the browser never displays a partial or torn UI state.
-- Once the DOM is updated, React runs synchronous layout effects (`useLayoutEffect`).
-- The browser paints the updated pixels onto the physical screen.
-- React schedules and executes asynchronous side effects (`useEffect`).
+- Once the DOM is updated, React runs `useLayoutEffect` synchronously before the browser can paint. This is the place for layout reads and an immediate measurement-dependent adjustment; it can delay paint, so it should stay small.
+- The browser can then paint the updated pixels.
+- React runs `useEffect` after the commit and generally after paint, but an interaction-triggered effect may run before paint so the interaction can observe its result. There is no universal after-paint guarantee or fixed wall-clock delay. Effects are for synchronizing with systems outside React—such as subscriptions, timers, network requests, or browser APIs—not for deriving values that can be calculated during render. The dependency array says which reactive values the synchronization uses: no array means after every commit, `[]` means after the initial mount (and cleanup on unmount), and `[roomId]` means clean up the old subscription and set up the new one when `roomId` changes. Cleanup also runs before the effect is re-run because of changed dependencies. Development Strict Mode may deliberately perform an extra setup/cleanup cycle to expose missing cleanup, so effect code must tolerate that.
 
-### 4. The Fiber Engine: Prioritization and Concurrency
+**Fiber enables prioritization and concurrency.**
 
 In early versions of React (versions 15 and below), the reconciliation process was recursive and synchronous—once React started rendering a component tree, it could not stop until it finished the entire tree. If an app had thousands of components, rendering would block the main JavaScript thread for 50–100 milliseconds, causing dropped frames, janky animations, and unresponsive text inputs.
 
@@ -136,18 +142,18 @@ In React 16, the entire core engine was rewritten from the ground up into **Reac
 
 Fiber reimagined the call stack as a virtual stack frame. Instead of relying on JavaScript's native execution stack, React creates a **Fiber node** for every component instance. A Fiber node is a JavaScript object that maintains:
 - The component's current state and props.
-- Pointers to its `child`, its next `sibling`, and its `return` (parent) Fiber.
+- Pointers to its first `child`, its next `sibling`, and its `return` (parent) Fiber. The `child` pointer descends into the first child; `sibling` moves across to the next child of the same parent; and `return` walks back to the parent. Together these pointers let React traverse the component tree without storing the whole traversal in the native call stack.
 - A work priority level.
 
-Because fibers are linked together as a singly-linked list rather than a rigid call stack, React can:
-1. Work on a fiber for 5 milliseconds.
-2. Pause execution and check if the browser has pending user input or animation frames.
-3. Yield control back to the browser main thread.
-4. Resume rendering right where it left off, or scrap the work if the state has changed again.
+Because rendering is represented as separate units of work rather than one uninterruptible recursive call, React can:
+1. Process some units of fiber work.
+2. Yield at a scheduler-chosen boundary when more urgent browser work needs attention.
+3. Let the browser handle input, animation, or other work.
+4. Resume the render later, or abandon the unfinished render if newer work makes it obsolete.
 
-This cooperative scheduling engine is what powers React's Concurrent Features, such as `useTransition` and Suspense.
+The exact amount of work before yielding is an implementation and scheduling detail, not a fixed five-millisecond guarantee. This cooperative scheduling model supports React's concurrent features, such as `useTransition` and Suspense; it does not make the commit phase interruptible.
 
-### 5. Unidirectional (One-Way) Data Flow
+**Unidirectional (one-way) data flow.**
 
 In React, data flows in one single direction: downwards from parent to child through `props`.
 
@@ -159,80 +165,116 @@ This strict downward flow guarantees predictability. When a bug appears on scree
 
 ## 4. Real Code — See It Working
 
-### The Imperative Nightmare vs. The Declarative React Model
+**The imperative nightmare versus the declarative React model.**
 
 Here is the exact contrast between manual DOM manipulation and React's declarative state model.
 
-#### The Imperative Approach (Vanilla JS / jQuery Style)
-Notice how many individual DOM references we must manually track, query, and coordinate:
+**Imperative approach (vanilla JS / jQuery style).**
+This complete browser example still has to coordinate each affected DOM node, but it avoids interpolating data into HTML strings. Save it as an HTML file and open it in a browser:
 
-```javascript
-// State variables stored in loose memory
-let cart = [];
-let subtotal = 0;
+```html
+<!doctype html>
+<html lang="en">
+  <body>
+    <span>🛒</span>
+    <span id="nav-cart-badge" hidden></span>
+    <button id="add-keyboard" type="button">Add Keyboard ($129.99)</button>
+    <ul id="cart-items-tbody"></ul>
+    <p>Subtotal: <span id="sidebar-subtotal">$0.00</span></p>
+    <button id="checkout-button" type="button" disabled>Checkout</button>
 
-// Every single action requires manual DOM manipulation across multiple elements
-function handleAddItem(product) {
-  // 1. Mutate data
-  cart.push(product);
-  subtotal += product.price;
+    <script>
+      const cart = [];
+      const badge = document.getElementById('nav-cart-badge');
+      const list = document.getElementById('cart-items-tbody');
+      const subtotalEl = document.getElementById('sidebar-subtotal');
+      const checkoutBtn = document.getElementById('checkout-button');
+      let nextId = 1;
 
-  // 2. Manually find and update the cart badge
-  const badge = document.getElementById('nav-cart-badge');
-  badge.textContent = cart.length;
-  badge.classList.remove('hidden');
+      function renderCart() {
+        const subtotal = cart.reduce((sum, item) => sum + item.price, 0);
+        badge.textContent = String(cart.length);
+        badge.hidden = cart.length === 0;
+        subtotalEl.textContent = `$${subtotal.toFixed(2)}`;
+        checkoutBtn.disabled = cart.length === 0;
+        list.replaceChildren();
 
-  // 3. Manually create and insert table rows
-  const tableBody = document.getElementById('cart-items-tbody');
-  const row = document.createElement('tr');
-  row.id = `cart-item-${product.id}`;
-  row.innerHTML = `
-    <td>${product.name}</td>
-    <td>$${product.price.toFixed(2)}</td>
-    <td><button onclick="handleRemoveItem(${product.id})">Remove</button></td>
-  `;
-  tableBody.appendChild(row);
+        for (const product of cart) {
+          const row = document.createElement('li');
+          const name = document.createElement('span');
+          const removeButton = document.createElement('button');
 
-  // 4. Manually update sidebar subtotal
-  const subtotalEl = document.getElementById('sidebar-subtotal');
-  subtotalEl.textContent = `$${subtotal.toFixed(2)}`;
+          // textContent keeps a product name from becoming executable markup.
+          name.textContent = `${product.name} — $${product.price.toFixed(2)}`;
+          removeButton.type = 'button';
+          removeButton.textContent = 'Remove';
+          removeButton.addEventListener('click', () => handleRemoveItem(product.id));
+          row.append(name, removeButton);
+          list.append(row);
+        }
+      }
 
-  // 5. Manually enable checkout button
-  const checkoutBtn = document.getElementById('checkout-button');
-  checkoutBtn.disabled = false;
-  
-  // If ANY of these selectors fail, or if someone removes a DOM element,
-  // the data and the UI permanently drift out of sync.
-}
+      function handleAddItem(product) {
+        cart.push(product);
+        renderCart();
+      }
+
+      function handleRemoveItem(productId) {
+        const index = cart.findIndex(product => product.id === productId);
+        if (index !== -1) cart.splice(index, 1);
+        renderCart();
+      }
+
+      document.getElementById('add-keyboard').addEventListener('click', () => {
+        handleAddItem({ id: nextId++, name: 'Mechanical Keyboard', price: 129.99 });
+      });
+
+      renderCart();
+    </script>
+  </body>
+</html>
 ```
 
-#### The Declarative React Approach
+**Declarative React approach.**
 In React, the entire UI is derived automatically from the `cart` state array. We write zero manual DOM queries:
 
 ```tsx
 import React, { useState } from 'react';
 
 interface Product {
-  id: number;
+  id: string;
   name: string;
   price: number;
 }
 
+interface CartLine extends Product {
+  cartLineId: string;
+}
+
+const keyboardProduct: Product = {
+  id: 'mechanical-keyboard',
+  name: 'Mechanical Keyboard',
+  price: 129.99
+};
+
 export function ShoppingCartApp() {
   // Single source of truth: all UI branches derive from this array
-  const [cart, setCart] = useState<Product[]>([]);
+  const [cart, setCart] = useState<CartLine[]>([]);
 
   // Derived state: computed during render, impossible to get out of sync
   const subtotal = cart.reduce((sum, item) => sum + item.price, 0);
   const isCartEmpty = cart.length === 0;
 
   const addItem = (product: Product) => {
-    // We update state immutably; React handles all screen updates
-    setCart(prevCart => [...prevCart, product]);
+    // Each add is a distinct cart line, even when the same product is added twice
+    setCart(prevCart => [
+      ...prevCart,
+      { ...product, cartLineId: crypto.randomUUID() }
+    ]);
   };
 
-  const removeItem = (productId: number) => {
-    setCart(prevCart => prevCart.filter(item => item.id !== productId));
+  const removeItem = (cartLineId: string) => {
+    setCart(prevCart => prevCart.filter(item => item.cartLineId !== cartLineId));
   };
 
   return (
@@ -253,7 +295,7 @@ export function ShoppingCartApp() {
         <section className="catalog">
           <h3>Products</h3>
           <button 
-            onClick={() => addItem({ id: Date.now(), name: 'Mechanical Keyboard', price: 129.99 })}
+            onClick={() => addItem(keyboardProduct)}
           >
             Add Keyboard ($129.99)
           </button>
@@ -267,9 +309,9 @@ export function ShoppingCartApp() {
           ) : (
             <ul className="item-list">
               {cart.map(item => (
-                <li key={item.id} className="cart-row">
+                <li key={item.cartLineId} className="cart-row">
                   <span>{item.name} — ${item.price.toFixed(2)}</span>
-                  <button onClick={() => removeItem(item.id)}>Remove</button>
+                  <button onClick={() => removeItem(item.cartLineId)}>Remove</button>
                 </li>
               ))}
             </ul>
@@ -293,7 +335,7 @@ export function ShoppingCartApp() {
 }
 ```
 
-### Why This Code Is Robust
+**Why this code is robust.**
 1. **Zero DOM Queries:** There are no `document.getElementById` calls. If you rename a CSS class or change the HTML structure, the data binding never breaks.
 2. **Deterministic Derived State:** `subtotal` and `isCartEmpty` are calculated synchronously on each render. It is physically impossible for the cart to contain 3 items while the subtotal displays $0.00.
 3. **Automatic Cleanup:** When items are removed, React unmounts the corresponding elements and cleans up their event listeners automatically.
@@ -339,7 +381,7 @@ In practical engineering:
 React splits UI updates into two distinct phases to keep user interactions smooth:
 
 - **The Render Phase (Pure & Interruptible):** React executes the component functions from the top of the dirty subtree down, creates new React element trees, and runs the reconciliation algorithm to diff them against the previous tree. This phase is pure JavaScript calculation with zero side effects. In modern React (Fiber/Concurrent Mode), React can pause, resume, or throw away the render phase if higher-priority events (like user typing) occur.
-- **The Commit Phase (Synchronous & Mutating):** React takes the list of DOM changes calculated during the Render phase and applies them to the real browser DOM. This phase is always synchronous and uninterrupted to prevent visual tearing on screen. Immediately after the DOM is updated, `useLayoutEffect` runs synchronously, the browser paints the pixels, and `useEffect` executes asynchronously.
+- **The Commit Phase (Synchronous & Mutating):** React takes the list of DOM changes calculated during the Render phase and applies them to the real browser DOM. This phase is always synchronous and uninterrupted to prevent visual tearing on screen. Immediately after the DOM is updated, `useLayoutEffect` runs synchronously. Passive `useEffect` callbacks run after the commit and generally after paint, although an interaction-triggered effect may run before paint; React does not promise one universal after-paint ordering.
 
 **Q: What is React Fiber and what problem did it solve?**
 
@@ -367,71 +409,100 @@ When these functions execute in the browser, they return plain JavaScript object
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Assuming the Virtual DOM Is Faster Than Native DOM Manipulation
+**Trap 1 — Assuming the Virtual DOM is faster than native DOM manipulation.**
 - **The Wrong Assumption:** Many developers believe the Virtual DOM exists because it is faster than the real browser DOM.
 - **Why It's Wrong:** The Virtual DOM is pure overhead compared to optimal native JavaScript. If you know ahead of time that only one specific paragraph text changed, writing `p.textContent = "New"` in vanilla JavaScript is the absolute theoretical maximum speed. React must allocate React elements, traverse the Fiber tree, diff props, generate an effect list, and *then* run `p.textContent = "New"`.
 - **What Actually Happens:** React was never built to be faster than hand-optimized vanilla JavaScript. It was built to make large applications **maintainable, predictable, and fast enough by default** without forcing human developers to manually write fragile, error-prone DOM diffing algorithms.
 
-### Trap 2: Directly Mutating State Objects
+**Trap 2 — Directly mutating state objects.**
 - **The Wrong Assumption:** Modifying a property on an existing state object or array will update the data and re-render the screen.
 - **Why It's Wrong:**
 
 ```tsx
-// ❌ WRONG: Mutating state directly
-const [user, setUser] = useState({ name: 'Alex', role: 'Viewer' });
+import { useState } from 'react';
 
-const handlePromote = () => {
-  user.role = 'Admin'; // Directly mutated the object in place
-  setUser(user);       // Passed the EXACT same object reference
-};
+// ❌ WRONG: Mutating state directly
+function MutatingStateExample() {
+  const [user, setUser] = useState({ name: 'Alex', role: 'Viewer' });
+
+  const handlePromote = () => {
+    user.role = 'Admin'; // Directly mutated the object in place
+    setUser(user);       // Passed the EXACT same object reference
+  };
+
+  return <button onClick={handlePromote}>{user.role}</button>;
+}
 ```
 
-- **What Actually Happens:** React uses shallow reference equality (`Object.is`) during the Render phase to check if state has changed. Because `user` points to the exact same memory address as before, React assumes nothing changed and bails out of re-rendering. The UI remains stuck on "Viewer" even though the underlying object changed.
+- **What Actually Happens:** React compares the new state value with the previous value using `Object.is`. Because `user` points to the exact same object reference as before, React has no new reference that signals a changed state value. The current UI may therefore stay on "Viewer" until some other render happens, while the object behind that rendered snapshot now says `role: 'Admin'`.
+- **The Nuance:** For a direct `setUser(user)` update, React can eagerly compare the new value with the current value and skip scheduling work immediately. Even when an update is scheduled and a later render happens for another reason, the mutated object can still be observed through the current snapshot or other references, producing inconsistent results rather than a guaranteed permanent freeze. The bug is that the old snapshot was changed behind React's back; React's equality check cannot detect a new value because there is no new reference.
 - **The Fix:** Always pass a fresh object or array reference:
 
 ```tsx
+import { useState } from 'react';
+
 // ✅ CORRECT: Immutable update with new object reference
-const handlePromote = () => {
-  setUser(prevUser => ({
-    ...prevUser,
-    role: 'Admin'
-  }));
-};
+function ImmutableStateExample() {
+  const [user, setUser] = useState({ name: 'Alex', role: 'Viewer' });
+
+  const handlePromote = () => {
+    setUser(prevUser => ({
+      ...prevUser,
+      role: 'Admin'
+    }));
+  };
+
+  return <button onClick={handlePromote}>{user.role}</button>;
+}
 ```
 
-### Trap 3: Expecting State to Update Synchronously on the Next Line
+**Trap 3 — Expecting state to update synchronously on the next line.**
 - **The Wrong Assumption:** Calling a state updater immediately updates the variable in the current function execution scope.
 - **Why It's Wrong:**
 
 ```tsx
-// ❌ WRONG: Expecting synchronous state updates
-const [count, setCount] = useState(0);
+import { useState } from 'react';
 
-const handleClick = () => {
-  setCount(count + 1);
-  console.log(count); // Expects 1, but prints 0!
-};
+// ❌ WRONG: Expecting synchronous state updates
+function SynchronousStateExample() {
+  const [count, setCount] = useState(0);
+
+  const handleClick = () => {
+    setCount(count + 1);
+    console.log(count); // Expects 1, but prints 0!
+  };
+
+  return <button onClick={handleClick}>{count}</button>;
+}
 ```
 
 - **What Actually Happens:** Calling `setCount` schedules a re-render for the *next* render cycle. The `count` variable in the current function execution is a `const` captured within the closure of the current render snapshot. It will remain `0` until the component function is invoked again on the next render.
 - **The Fix:** If you need the next value immediately in the same handler, compute it into a local variable first or use an effect/callback:
 
 ```tsx
+import { useState } from 'react';
+
 // ✅ CORRECT: Compute value locally
-const handleClick = () => {
-  const nextCount = count + 1;
-  setCount(nextCount);
-  console.log(nextCount); // Prints 1
-};
+function LocalNextValueExample() {
+  const [count, setCount] = useState(0);
+
+  const handleClick = () => {
+    const nextCount = count + 1;
+    setCount(nextCount);
+    console.log(nextCount); // Prints 1
+  };
+
+  return <button onClick={handleClick}>{count}</button>;
+}
 ```
 
-### Trap 4: Treating Component Bodies as Static Scripts Instead of Recurring Functions
+**Trap 4 — Treating component bodies as static scripts instead of recurring functions.**
 - **The Wrong Assumption:** Assuming code written directly in the component body runs only once when the component appears on screen.
 - **Why It's Wrong:** A component function re-executes on **every single render cycle**. If a component re-renders 20 times, every line in the function body runs 20 times.
 - **What Actually Happens:** Placing side effects (such as `fetch()`, WebSocket subscriptions, or `localStorage` writes) directly in the component body causes network request storms, duplicated listeners, and infinite render loops.
 - **The Fix:** Keep the component render body pure. Put side effects into event handlers or wrap them in `useEffect` with explicit dependency arrays.
 
-### Trap 5: Confusing React Core, React DOM, and Meta-Frameworks
+**Trap 5 — Confusing React core, React DOM, and meta-frameworks.**
 - **The Misconception:** Believing that installing `react` gives you a web server, a router, and browser rendering capabilities out of the box.
 - **The Reality:** 
   - `react`: Contains only the component model, hooks, and reconciliation logic. It has zero knowledge of browsers, HTML, or DOM nodes.
@@ -441,27 +512,26 @@ const handleClick = () => {
 
 ## 7. Compare With Related Concepts
 
-### React vs. Vanilla JS (Direct DOM Manipulation)
+**React versus vanilla JS (direct DOM manipulation).**
 - **The Core Difference:** Vanilla JS is imperative; you manually instruct the browser on how to create, traverse, and mutate DOM elements step-by-step. React is declarative; you describe what the UI should look like for a given state, and React handles the mutations.
 - **Maintenance Tradeoff:** Vanilla JS has zero runtime library overhead and is optimal for single, isolated widgets. However, as UI state expands, vanilla JS requires $O(N \times M)$ manual synchronization points, causing state drift bugs. React adds a small library runtime but provides predictable, bug-free state synchronization at scale.
 - **Rule of Thumb:** Use Vanilla JS for tiny static landing pages or hyper-custom WebGL/Canvas pipelines; use React for applications with multiple interactive states, user sessions, or complex data models.
 
-### React vs. Angular
+**React versus Angular.**
 - **The Core Difference:** Angular is a comprehensive, batteries-included **framework** built around TypeScript, dependency injection, RxJS streams, and two-way template data binding. React is a focused UI **library** centered on functional components, unidirectional data flow, and immutable state.
 - **Architectural Tradeoff:** Angular enforces strict enterprise patterns and includes built-in routing, HTTP clients, and form architectures, making large corporate codebases look uniform. React provides unmatched flexibility, letting teams assemble their own tech stack (Vite, React Router, TanStack Query, Zustand) from a massive open-source ecosystem.
 - **Rule of Thumb:** Choose Angular if your organization requires an all-in-one prescribed architecture; choose React if you want lightweight flexibility, functional composition, and the largest ecosystem in web development.
 
-### React vs. Vue
+**React versus Vue.**
 - **The Core Difference:** Vue uses a fine-grained **reactivity system** based on JavaScript Proxies that automatically tracks dependencies at the individual property level during rendering. React uses explicit **immutability and top-down component diffing**, re-executing component functions when state updates occur and optimizing via Fiber.
 - **Developer Experience:** Vue provides Single File Components (`.vue`) with dedicated `<template>`, `<script>`, and `<style>` blocks that feel familiar to traditional web development. React uses JSX, treating HTML markup as first-class JavaScript expressions.
 - **Rule of Thumb:** Choose Vue for gentle learning curves and rapid template-driven development; choose React for deep TypeScript integration, functional programming patterns, and maximum architectural scalability across web and mobile.
 
-### React vs. Next.js
+**React versus Next.js.**
 - **The Core Difference:** React is the foundational UI library that runs in client or server environments. Next.js is a full-stack **meta-framework** built on top of React.
 - **Feature Separation:** React gives you components, hooks, and the Virtual DOM. Next.js adds file-system routing, Server-Side Rendering (SSR), Static Site Generation (SSG), React Server Components (RSC), image optimization, API endpoints, and production build tooling.
 - **Rule of Thumb:** You do not choose between React and Next.js—Next.js *is* React. Use standalone React (via Vite) for authenticated Single-Page Apps (dashboards, portals) where SEO is irrelevant; use Next.js for consumer-facing websites, e-commerce, and content platforms requiring search engine indexing and fast initial page loads.
 
-## 8. 🧠 The Memory Hook
+## 8. 🧠 The Memory Hook — What Sticks
 
 React is an **automated blueprint engine**: you declare what the screen should look like for any snapshot of data ($UI = f(\text{state})$), and React diffs the blueprints and moves the physical bricks so you never have to pick up the hammer.
-
