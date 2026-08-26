@@ -524,3 +524,38 @@ Process 50 leaf pages under `src/full-stack/backend/fastapi/` as Type E in SUMMA
 49. [ ] queued — `src/full-stack/backend/fastapi/rollback-transactions.md` — Type E
 50. [ ] queued — `src/full-stack/backend/fastapi/pagination.md` — Type E
 
+## Phase 10 — SQLAlchemy
+
+Process 30 leaf pages under `src/full-stack/backend/sqlalchemy/` as Type E/A in SUMMARY order. Skip `index.md`.
+
+1. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy.md` — Type A
+2. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-orm.md` — Type A
+3. [ ] assigned — `src/full-stack/backend/sqlalchemy/orm-vs-raw-sql.md` — Type A
+4. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy-core.md` — Type A
+5. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-sqlalchemy-orm.md` — Type A
+6. [ ] assigned — `src/full-stack/backend/sqlalchemy/what-is-declarative-model.md` — Type A
+7. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-session-in-sqlalchemy.md` — Type A
+8. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-create-a-database-session.md` — Type A
+9. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-manage-session-lifecycle.md` — Type A
+10. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-connection-pool.md` — Type A
+11. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-define-relationships.md` — Type A
+12. [ ] queued — `src/full-stack/backend/sqlalchemy/one-to-one-relationship.md` — Type A
+13. [ ] queued — `src/full-stack/backend/sqlalchemy/one-to-many-relationship.md` — Type A
+14. [ ] queued — `src/full-stack/backend/sqlalchemy/many-to-many-relationship.md` — Type A
+15. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-lazy-loading.md` — Type A
+16. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-eager-loading.md` — Type A
+17. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-n-1-query-problem.md` — Type A
+18. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-solve-n-1-query-problem.md` — Type A
+19. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-joinedload.md` — Type A
+20. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-selectinload.md` — Type A
+21. [ ] queued — `src/full-stack/backend/sqlalchemy/what-is-transaction-handling-in-sqlalchemy.md` — Type A
+22. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-rollback-transactions.md` — Type A
+23. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-use-alembic.md` — Type A
+24. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-create-migrations.md` — Type A
+25. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-handle-schema-changes.md` — Type A
+26. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-write-raw-sql-in-sqlalchemy.md` — Type A
+27. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-do-bulk-inserts.md` — Type A
+28. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-optimize-sqlalchemy-queries.md` — Type A
+29. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-handle-soft-deletes.md` — Type A
+30. [ ] queued — `src/full-stack/backend/sqlalchemy/how-do-you-implement-audit-columns.md` — Type A
+
