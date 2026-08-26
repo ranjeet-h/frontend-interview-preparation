@@ -367,15 +367,9 @@ Process MERN leaf pages under `src/full-stack/backend/mern/` as Type E.
 6. [x] rewritten — `src/full-stack/backend/mern/how-do-you-protect-frontend-routes.md` — Type E
 7. [x] rewritten — `src/full-stack/backend/mern/how-do-you-store-jwt-securely-in-mern.md` — Type E
 8. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-cors-in-mern.md` — Type E
-9. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-file-uploads-in-mern.md` — Type E
+9. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-file-uploads-in-mern.md` — Type E
 10. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-pagination-in-mern.md` — Type E
-11. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-api-errors-in-mern.md` — Type E
-12. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-form-validation-from-react-to-backend.md` — Type E
-13. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-loading-error-states.md` — Type E
-14. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-optimistic-ui-with-backend.md` — Type E
-15. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-permissions.md` — Type E
-16. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-race-conditions-in-search.md` — Type E
-11. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-api-errors-in-mern.md` — Type E
+11. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-api-errors-in-mern.md` — Type E
 12. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-form-validation-from-react-to-backend.md` — Type E
 13. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-loading-error-states.md` — Type E
 14. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-optimistic-ui-with-backend.md` — Type E
@@ -395,3 +389,48 @@ Process MERN leaf pages under `src/full-stack/backend/mern/` as Type E.
 28. [ ] assigned — `src/full-stack/backend/mern/should-files-be-stored-in-mongodb-or-object-storage.md` — Type E
 29. [ ] assigned — `src/full-stack/backend/mern/why-is-frontend-route-protection-not-enough.md` — Type E
 30. [ ] assigned — `src/full-stack/backend/mern/how-do-you-avoid-duplicate-api-calls.md` — Type E
+
+## Phase 9 — Backend Core Concepts
+
+Process 39 leaf pages under `src/full-stack/backend/concepts/` as Type A in SUMMARY order. Skip `index.md`.
+
+1. [ ] assigned — `src/full-stack/backend/concepts/http-request-lifecycle.md` — Type A
+2. [ ] assigned — `src/full-stack/backend/concepts/http-vs-https.md` — Type A
+3. [ ] assigned — `src/full-stack/backend/concepts/rest.md` — Type A
+4. [ ] assigned — `src/full-stack/backend/concepts/http-methods.md` — Type A
+5. [ ] assigned — `src/full-stack/backend/concepts/put-vs-patch.md` — Type A
+6. [ ] assigned — `src/full-stack/backend/concepts/idempotency.md` — Type A
+7. [ ] queued — `src/full-stack/backend/concepts/http-status-codes.md` — Type A
+8. [ ] queued — `src/full-stack/backend/concepts/401-vs-403.md` — Type A
+9. [ ] queued — `src/full-stack/backend/concepts/400-vs-422.md` — Type A
+10. [ ] queued — `src/full-stack/backend/concepts/stateless-apis.md` — Type A
+11. [ ] queued — `src/full-stack/backend/concepts/api-versioning.md` — Type A
+12. [ ] queued — `src/full-stack/backend/concepts/offset-pagination.md` — Type A
+13. [ ] queued — `src/full-stack/backend/concepts/cursor-pagination.md` — Type A
+14. [ ] queued — `src/full-stack/backend/concepts/cursor-vs-offset-pagination.md` — Type A
+15. [ ] queued — `src/full-stack/backend/concepts/api-filtering-sorting.md` — Type A
+16. [ ] queued — `src/full-stack/backend/concepts/backend-file-uploads.md` — Type A
+17. [ ] queued — `src/full-stack/backend/concepts/rate-limiting.md` — Type A
+18. [ ] queued — `src/full-stack/backend/concepts/request-throttling.md` — Type A
+19. [ ] queued — `src/full-stack/backend/concepts/backend-debouncing.md` — Type A
+20. [ ] queued — `src/full-stack/backend/concepts/request-validation.md` — Type A
+21. [ ] queued — `src/full-stack/backend/concepts/response-serialization.md` — Type A
+22. [ ] queued — `src/full-stack/backend/concepts/middleware.md` — Type A
+23. [ ] queued — `src/full-stack/backend/concepts/backend-framework-request-lifecycle.md` — Type A
+24. [ ] queued — `src/full-stack/backend/concepts/cors.md` — Type A
+25. [ ] queued — `src/full-stack/backend/concepts/preflight-request.md` — Type A
+26. [ ] queued — `src/full-stack/backend/concepts/same-origin-policy.md` — Type A
+27. [ ] queued — `src/full-stack/backend/concepts/backend-caching.md` — Type A
+28. [ ] queued — `src/full-stack/backend/concepts/cache-headers.md` — Type A
+29. [ ] queued — `src/full-stack/backend/concepts/etag.md` — Type A
+30. [ ] queued — `src/full-stack/backend/concepts/cache-control.md` — Type A
+31. [ ] queued — `src/full-stack/backend/concepts/cdn-caching.md` — Type A
+32. [ ] queued — `src/full-stack/backend/concepts/server-side-caching.md` — Type A
+33. [ ] queued — `src/full-stack/backend/concepts/reverse-proxy.md` — Type A
+34. [ ] queued — `src/full-stack/backend/concepts/load-balancing.md` — Type A
+35. [ ] queued — `src/full-stack/backend/concepts/horizontal-scaling.md` — Type A
+36. [ ] queued — `src/full-stack/backend/concepts/vertical-scaling.md` — Type A
+37. [ ] queued — `src/full-stack/backend/concepts/graceful-shutdown.md` — Type A
+38. [ ] queued — `src/full-stack/backend/concepts/health-check-endpoint.md` — Type A
+39. [ ] queued — `src/full-stack/backend/concepts/observability.md` — Type A
+
