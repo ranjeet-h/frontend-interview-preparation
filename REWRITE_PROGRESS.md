@@ -84,11 +84,21 @@ The three original collection files remain unchanged by design. Each puzzle is b
 | Part 2 | 100 | 5 | 95 (Questions 5, 6, and 8–100; Question 7 is accepted) |
 | Part 3 | 203 | 5 | 198 (Questions 6–203) |
 
-### React focused chapters outside `concepts/`
+### React focused chapters outside `concepts/` — complete
 
-These seven standalone notes are not part of the completed 66-page core-concepts queue and still use the old template:
+These seven standalone notes are now rewritten, independently reviewed, structurally verified, and committed:
 
-`component-design`, `forms`, `routing`, `security-build-platform`, `senior-scenarios`, `server-state`, `typescript-react`
+| Page | Commit |
+|---|---|
+| `src/react/server-state.md` | `854030a` |
+| `src/react/routing.md` | `6900159` |
+| `src/react/forms.md` | `809df15` |
+| `src/react/typescript-react.md` | `c22808e` |
+| `src/react/component-design.md` | `c22808e` |
+| `src/react/security-build-platform.md` | `f9fba1a` |
+| `src/react/senior-scenarios.md` | `a53ae65` |
+
+The seven pages each have exactly eight numbered H2 sections, no H3 sections, no forbidden template headings, and no direct `useEffect(` examples. The 66-page `src/react/concepts/` queue remains complete. The React question-bank wrappers are intentionally preserved for later one-question-per-file Type B work.
 
 ### Backend sections still using the old template
 
@@ -128,7 +138,7 @@ MERN has 30 leaf pages. Eight are accepted in the detailed tracker, 22 unique pa
 
 MongoDB (35 leaf pages) and Mongoose (30 leaf pages) are marked complete in the detailed tracker. The JavaScript and React core-concept queues are also complete.
 
-The marker-based audit excludes indexes, wiring pages, and the intentionally preserved question-bank wrappers. It finds 655 old-template leaf pages across the seven React focused notes and the remaining backend/database sections.
+The marker-based audit excludes indexes, wiring pages, and the intentionally preserved question-bank wrappers. After removing the seven completed React focused notes, 648 old-template leaf pages remain across the outstanding backend/database sections.
 
 ## Cross-project synchronization
 
