@@ -21,12 +21,14 @@ In React, the component function is the stage manager calculating which set piec
 
 ## 3. How It Actually Works — The Full Explanation
 
-In React, JSX is syntactic sugar for `React.createElement` (or the modern JSX runtime `_jsx`). Because JSX compiles down to standard JavaScript function calls and objects, React does not need custom templating syntax like `*ngIf` or `v-if`. Any standard JavaScript control flow mechanism—`if/else`, ternary expressions, logical operators, `switch` statements, or object lookup tables—executes during the component render phase to produce the next Virtual DOM (Fiber) tree.
+In React, JSX is syntactic sugar for `React.createElement` (or the modern JSX runtime `_jsx`). JSX creates React elements: plain JavaScript descriptions of the UI. Reconciliation then compares those elements with the previous ones and schedules Fiber work; a React element is not itself a Fiber node. Because JSX compiles down to standard JavaScript function calls and objects, React does not need custom templating syntax like `*ngIf` or `v-if`. Any standard JavaScript control flow mechanism—`if/else`, ternary expressions, logical operators, `switch` statements, or object lookup tables—executes during the component render phase to produce the next element tree.
 
-### Core Rendering Patterns
+**Core rendering patterns.**
 
-**1. Early Return Guard Clauses**
+**Early return guard clauses.**
 When a component cannot or should not render its primary UI due to prerequisites (such as loading spinners, network errors, or missing authentication), the function exits early:
+
+This is a contextual fragment: it assumes `status`, `data`, `Spinner`, `ErrorMessage`, `error`, `EmptyPlaceholder`, and `MainContent` are defined by the surrounding component.
 
 ```tsx
 if (status === 'loading') return <Spinner />;
@@ -37,8 +39,10 @@ return <MainContent data={data} />;
 
 This flattens component architecture, eliminating nested indentation and making guard logic readable from top to bottom.
 
-**2. Inline Ternary Operators (`condition ? <A /> : <B />`)**
+**Inline ternary operators (`condition ? <A /> : <B />`).**
 Ternaries handle mutually exclusive binary branches inside JSX expressions where an `if` statement cannot be placed inline:
+
+This is a contextual fragment: it assumes `isSubmitting` is a boolean and `Spinner` is an available component.
 
 ```tsx
 <button className={isSubmitting ? 'opacity-50' : 'opacity-100'}>
@@ -46,13 +50,17 @@ Ternaries handle mutually exclusive binary branches inside JSX expressions where
 </button>
 ```
 
-**3. Short-Circuit Logical Operators (`condition && <Element />` / `condition || <Fallback />`)**
-JavaScript's `&&` evaluates left-to-right, returning the first falsy operand or the last truthy operand. React interprets `false`, `null`, and `undefined` as instructions to render nothing. However, if the left-hand side evaluates to `0` or `""` (empty string), JavaScript returns that value, and React renders the literal `0` or empty text node directly into the DOM.
+**Short-circuit logical operators (`condition && <Element />` / `condition || <Fallback />`).**
+JavaScript's `&&` evaluates left-to-right, returning the first falsy operand or the last truthy operand. React interprets `false`, `null`, and `undefined` as instructions to render nothing. A numeric `0` is different: `0 && <Badge />` evaluates to `0`, and React renders that number as text. An empty string is also falsy, but React treats `""` as empty text and does not create a visible blank or text leak.
+
+This is a contextual fragment: it assumes `items`, `user`, `List`, and `Profile` are defined by the surrounding component.
 
 To use `&&` safely, ensure the left operand is strictly boolean: `items.length > 0 && <List />` or `Boolean(user) && <Profile />`.
 
-**4. Record / Map Lookup Tables for Multi-State Machines**
+**Record / map lookup tables for multi-state machines.**
 When a UI transitions between three or more states, chaining nested ternaries causes unreadable code. An explicit lookup object or switch statement maps status keys directly to their respective view components:
+
+This is a contextual fragment: it assumes `TabState`, `OverviewTab`, `AnalyticsTab`, `SettingsTab`, and `FallbackTab` are defined by the surrounding feature.
 
 ```tsx
 const VIEW_MAP: Record<TabState, React.ComponentType> = {
@@ -67,25 +75,29 @@ function TabContainer({ activeTab }: { activeTab: TabState }) {
 }
 ```
 
-### Reconciliation, Mounting, and State Destruction
+**Reconciliation, mounting, and state destruction.**
 
-React's reconciliation engine tracks components by their position in the Fiber tree and their element `type`. When conditional rendering changes the returned element tree between renders, React applies strict reconciliation rules:
+React's reconciliation engine compares element `type`, position among siblings, and `key` when present. When conditional rendering changes the returned element tree between renders, React applies identity rules to decide which existing Fiber work can be updated and which must be removed or created:
 
-**Falsy Node Handling**
-When an element evaluates to `null`, `undefined`, `false`, or `true`, React leaves the position intact in the Virtual DOM hierarchy as an empty slot without creating an underlying DOM node.
+**Falsy node handling.**
+When an element expression evaluates to `null`, `undefined`, `false`, or `true`, React renders no node for that value. The surrounding tree can still contain other siblings; this does not mean React preserves a component instance that was removed.
 
-**Same Type at the Same Position (Preserved State)**
+**Same type at the same position (preserved state).**
 When a condition changes props on the same component type at the exact same tree location:
+
+This is a contextual fragment: it assumes `isVIP` is a boolean and `ProfileCard` is a defined component.
 
 ```tsx
 // Render 1
 <div>{isVIP ? <ProfileCard badge="gold" /> : <ProfileCard badge="silver" />}</div>
 ```
 
-React inspects the Fiber node at child index 0. The element type is `ProfileCard` on both renders. React does not unmount the component; it retains the existing Fiber node, keeps all internal `useState` and `useRef` values, and triggers a re-render with updated props.
+React compares the element at that sibling position. The element type is `ProfileCard` on both renders. React does not unmount the component; it retains the existing Fiber node, keeps all internal `useState` and `useRef` values, and triggers a re-render with updated props.
 
-**Different Type at the Same Position (State Destroyed)**
+**Different type at the same position (state destroyed).**
 When a condition returns a different component or HTML tag at that tree location:
+
+This is a contextual fragment: it assumes `isAdmin` is a boolean and both dashboard components are defined.
 
 ```tsx
 // Render 1: <AdminDashboard /> -> Render 2: <UserDashboard />
@@ -94,8 +106,10 @@ When a condition returns a different component or HTML tag at that tree location
 
 React sees that the element type changed from `AdminDashboard` to `UserDashboard`. It completely unmounts `AdminDashboard`, runs all `useEffect` cleanup functions, deletes its entire subtree and internal state from memory, and mounts `UserDashboard` with fresh initial state.
 
-**Explicit State Resets with Keys**
+**Explicit state resets with keys.**
 If two branches render the same component type but represent fundamentally distinct entities whose internal state should never leak across transitions, assign unique `key` props:
+
+This is a contextual fragment: it assumes `isEditingProfile`, `profileData`, `settingsData`, and `Form` are defined.
 
 ```tsx
 {isEditingProfile ? (
@@ -107,9 +121,11 @@ If two branches render the same component type but represent fundamentally disti
 
 Because the `key` changes, React treats them as two distinct elements, destroying the old form's uncommitted draft state and initializing the new form cleanly.
 
-### Discriminated Unions for Impossible States
+**Discriminated unions for impossible states.**
 
 Managing asynchronous lifecycle with scattered booleans leads to invalid UI states:
+
+This is a contextual fragment: it assumes `useState` is imported and `User` is a domain type declared elsewhere.
 
 ```tsx
 // Antipattern: 8 possible permutations (e.g. isLoading=true AND isError=true)
@@ -118,7 +134,7 @@ const [isError, setIsError] = useState(false);
 const [data, setData] = useState<User[] | null>(null);
 ```
 
-Modeling state as a TypeScript discriminated union enforces compile-time and runtime guarantees:
+Modeling state as a TypeScript discriminated union gives TypeScript compile-time narrowing. It does not validate untrusted runtime data or guarantee that a JavaScript value actually matches the union unless a runtime parser or validator checks it:
 
 ```tsx
 type FetchState =
@@ -129,6 +145,8 @@ type FetchState =
 ```
 
 TypeScript narrows the type in each conditional branch, ensuring `data` cannot be accessed during loading and `error` cannot be accessed during success.
+
+**Effects and Strict Mode boundaries.** Rendering should remain a pure calculation: it reads the current state and returns elements. Event handlers are where user actions cause updates. An Effect is for synchronizing with something outside React—such as a subscription, timer, browser API, or network connection—not for deriving JSX or handling a click that can be handled directly in an event handler. When an Effect has dependencies, React runs its cleanup before the next setup whose dependencies changed, and it runs cleanup when the component is removed. In development, `<StrictMode>` intentionally performs an extra setup-cleanup cycle for Effects on initial mount, and may call render logic more than once, to expose impure code; this is a development check, not a claim that production mounts twice.
 
 ## 4. Real Code — See It Working
 
@@ -305,7 +323,7 @@ Because component rendering is simply JavaScript execution, you have full access
 
 This occurs because of JavaScript's logical AND (`&&`) evaluation rules combined with React's JSX rendering behavior. JavaScript's `&&` operator evaluates expressions left to right. When the left operand is falsy, JavaScript short-circuits and returns the exact value of the left operand—not a boolean `false`.
 
-When `count` is `0`, the expression `0 && <Badge />` evaluates directly to the number `0`. In React, booleans (`false`, `true`), `null`, and `undefined` are ignored during rendering and produce zero DOM nodes. However, numbers and strings are valid renderable values. React converts the returned `0` into a text node and renders it to the screen.
+When `count` is `0`, the expression `0 && <Badge />` evaluates directly to the number `0`. In React, booleans (`false`, `true`), `null`, `undefined`, and an empty string render no visible content. Numbers and non-empty strings are valid renderable values, so React converts the returned `0` into a text node and renders it to the screen.
 
 The three production fixes are:
 1. **Explicit boolean conversion:** `{Boolean(count) && <Badge />}`
@@ -321,9 +339,11 @@ When a component is conditionally removed from the element tree (for example, sw
 
 When the condition later flips back to true and `<Editor />` returns to the tree, React creates a brand-new Fiber node. The component executes its initialization lifecycle from scratch, resetting all `useState` variables to their initial arguments. If you need state to persist across visibility toggles, lift that state up to a parent component, store it in an external cache/store, or hide the element visually using CSS (`display: none`).
 
+This is a contextual fragment: it assumes `Editor` is a defined component and that its effects have cleanup functions where external resources need releasing.
+
 **Q: How does React decide whether to preserve or reset state when switching between two branches of a ternary?**
 
-React determines whether to preserve or reset state by inspecting the **element type** and the **tree position** (key index) in the Fiber hierarchy:
+React determines whether to preserve or reset state by inspecting the **element type** and the element's **position among its siblings**. A `key` refines sibling identity; an array index is only one possible key value (often an unsafe one when items reorder):
 
 1. **Different element type at the same position:**
    `{isAdmin ? <AdminPanel /> : <UserPanel />}`
@@ -340,7 +360,7 @@ React determines whether to preserve or reset state by inspecting the **element 
 **Q: What are the architectural trade-offs between conditionally unmounting a component versus hiding it with CSS (`display: none`)?**
 
 - **Conditional Unmounting (`{isOpen && <Modal />}`):**
-  - *Pros:* Conserves browser memory and CPU by destroying inactive DOM nodes, stopping background timers, and canceling active subscriptions.
+  - *Pros:* Conserves browser memory and CPU by destroying inactive DOM nodes; unmounting invokes each Effect's returned cleanup, which can stop timers and subscriptions when it correctly calls APIs such as `clearInterval`, `unsubscribe`, or `abort`. Unmounting alone does not magically stop an underlying resource, so missing or incorrect cleanup can still leak.
   - *Cons:* Incurs mount/unmount overhead (creating DOM nodes, running layout effects) whenever toggled. State is completely reset unless lifted to a parent.
   - *When to use:* Modals, heavy dashboards, large lists, or features accessed infrequently.
 
@@ -355,6 +375,8 @@ Using independent boolean flags (such as `const [isLoading, setIsLoading] = useS
 
 A discriminated union models async status as mutually exclusive objects tagged with a common discriminant field:
 
+This is a contextual fragment: it assumes `User` is a domain type declared elsewhere.
+
 ```tsx
 type AsyncState<T> =
   | { status: 'idle' }
@@ -363,14 +385,16 @@ type AsyncState<T> =
   | { status: 'error'; error: string };
 ```
 
-This guarantees that only one state exists at any time. Inside conditional blocks (`if (state.status === 'success')`), TypeScript's control flow analysis automatically narrows the type, providing type-safe access to `state.data` while preventing runtime access to undefined properties.
+The union describes the states that well-typed application code is allowed to construct. Inside conditional blocks (`if (state.status === 'success')`), TypeScript's control flow analysis narrows the type, providing type-safe access to `state.data`. This is static checking, not runtime validation: API responses or casts can still contain invalid values, so validate untrusted input at the boundary.
 
 ## 6. The Traps — What Goes Wrong
 
 **Trap 1: The Falsy Number and Empty String Leak**
 - *The Mistake:* Writing `{notifications.length && <Badge count={notifications.length} />}` or `{user.nickname && <span>{user.nickname}</span>}`.
-- *Why It Breaks:* In JavaScript, `0 && <Component />` evaluates to `0`, and `"" && <Component />` evaluates to `""`. React renders both numbers and strings as visible DOM text nodes, outputting an accidental `0` or blank gap on the page.
+- *Why It Breaks:* In JavaScript, `0 && <Component />` evaluates to `0`, and React renders that number as visible text. `"" && <Component />` evaluates to the empty string, which React renders as no visible content; it does not create a visible blank or text leak.
 - *The Fix:* Always cast to a boolean: `{notifications.length > 0 && <Badge />}` or `{Boolean(user.nickname) && <span>{user.nickname}</span>}`.
+
+This is a contextual fragment: it assumes `notifications`, `user`, `Badge`, and React rendering are supplied by the surrounding component.
 
 **Trap 2: Violating the Rules of Hooks with Conditional Early Returns**
 - *The Mistake:* Placing a hook call after a conditional early return:
@@ -386,6 +410,10 @@ This guarantees that only one state exists at any time. Inside conditional block
 - *Why It Breaks:* React relies on the exact invocation order of hooks across renders to maintain internal state indices on the Fiber node. If an early return executes before all hooks are declared, hook counts differ between renders, corrupting internal fiber state and throwing a fatal runtime invariant error.
 - *The Fix:* Always declare all hooks at the very top level of the component before any conditional early returns.
 
+This is a contextual fragment: it assumes `EmptyState`, `Profile`, `useState`, and `useEffect` are imported or defined. The exact failure occurs when a later render reaches a different number or order of hook calls.
+
+Strict Mode does not make conditional hooks valid. Its extra development checks can make impure render logic or missing Effect cleanup easier to notice, but event handlers and Effects remain separate from render-time branching.
+
 **Trap 3: Accidental State Leakage Across Conditional Branches**
 - *The Mistake:* Conditionally rendering the same component type for two distinct entities without keys:
   ```tsx
@@ -396,11 +424,16 @@ This guarantees that only one state exists at any time. Inside conditional block
     <UserForm initialRole="member" />
   )}
   ```
-- *Why It Breaks:* Because both branches return `<UserForm />` at the exact same index in the parent's JSX, React updates the existing component instance instead of remounting. Any dirty local input state typed into Alice's form remains inside Bob's form.
+- *Why It Breaks:* Because both branches return `<UserForm />` at the same sibling position in the parent's JSX, React updates the existing component instance instead of remounting. Any dirty local input state typed into Alice's form remains inside Bob's form.
 - *The Fix:* Add a unique `key` prop: `<UserForm key={selectedUser.id} />`.
+
+This is a contextual fragment: it assumes `selectedUser` and `UserForm` are defined and that the two branches occupy the same sibling position.
 
 **Trap 4: The Nested Ternary "Pyramid of Doom"**
 - *The Mistake:* Nesting ternaries three or four levels deep inside JSX expressions:
+
+  This is a contextual fragment: it assumes `isLoading`, `isError`, `data`, `Spinner`, `Error`, `List`, and `Empty` are defined.
+
   ```tsx
   return (
     <div>
@@ -423,15 +456,17 @@ This guarantees that only one state exists at any time. Inside conditional block
 - *Why It Breaks:* The application flashes a false "Unauthorized" error or prematurely redirects the user to the login page for 100ms before the authentication token finishes validating.
 - *The Fix:* Explicitly handle the pending authentication status: `if (authStatus === 'loading') return <AuthSkeleton />`.
 
+This is a contextual fragment: it assumes `useAuth`, `Navigate`, `AuthSkeleton`, and `AdminDashboard` are defined by the application.
+
 ## 7. Compare With Related Concepts
 
 | Concept | Primary Purpose | Lifecycle & DOM Impact | Rule of Thumb |
 | :--- | :--- | :--- | :--- |
-| **Conditional Rendering** | Returning different JSX structures based on runtime state snapshots. | Completely mounts or unmounts component subtrees; destroys unmounted fiber state and DOM nodes. | Use for distinct application states (loading, error, empty), access control, and modal popups. |
+| **Conditional Rendering** | Returning different JSX structures based on runtime state snapshots. | React mounts, updates, or unmounts only the branches whose element identity and presence require it; removed subtrees lose their DOM and Fiber state. | Use for distinct application states (loading, error, empty), access control, and modal popups. |
 | **Conditional CSS (`display: none`)** | Toggling visual visibility of elements already mounted in the DOM. | DOM nodes and component state remain fully intact in memory; effects continue running. | Use for tabs, accordions, and media players where state and scroll positions must persist. |
-| **Client-Side Routing (`react-router`)** | Conditionally rendering entire page trees based on the browser URL path. | Unmounts old route layout, mounts new route layout, manages browser history and parameters. | Use for top-level navigation, deep-linkable URLs, and screen transitions. |
+| **Client-Side Routing (`react-router`)** | Conditionally rendering route elements based on the browser URL path. | A route's page segment may unmount while a shared layout remains mounted when the route configuration keeps that layout at the same identity; other route changes can replace the layout too. | Use for top-level navigation, deep-linkable URLs, and screen transitions. |
 | **`React.lazy` & Suspense** | Conditionally loading and rendering code-split component bundles on demand. | Defers script download until condition is triggered; renders fallback during network fetch. | Use for heavy, infrequently visited routes or complex widgets (e.g. rich text editors, charts). |
 
-## 8. 🧠 The Memory Hook
+## 8. 🧠 The Memory Hook — What Sticks
 
-React conditional rendering is not template magic—it is pure JavaScript executed against a state snapshot. If you return `0`, it prints `0`; if you swap component types, React tears down the set and burns the state; if you keep the same component type at the same position, state survives unless you brand it with a `key`.
+React conditional rendering is not template magic—it is pure JavaScript executed against a state snapshot. JSX creates element descriptions, and reconciliation turns the comparison into Fiber work. If you return `0`, it prints `0`; if you remove or swap identities, React tears down the affected subtree; if you keep the same element type at the same sibling position, state survives unless a changed `key` deliberately gives it a new identity.
