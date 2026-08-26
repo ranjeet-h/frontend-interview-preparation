@@ -1,123 +1,314 @@
 # Stale Closures
 
-## Detailed explanation
-A stale closure happens when a function captures an old value from a previous render and later runs with that outdated value. This often appears in timers, event listeners, async callbacks, effects with missing dependencies, and memoized callbacks.
+## 1. Why This Exists — The Problem First
 
-React components are functions. Each render creates a new scope with its own props and state values. Closures created during that render see those values forever unless recreated with updated dependencies or written using functional updates/refs.
+The dashboard says there are 12 unread messages. You click “mark one read” three times, but the count becomes 11 instead of 9. Or an interval that should refresh a token keeps sending the token that existed when the component first mounted. The UI is rendering newer state, while a delayed callback is still reasoning from an older render.
 
-## 1. One-line mental model
-A stale closure is a callback reading values from an old render.
+That mismatch is a stale closure. It is not React losing state, and it is not a browser timer bug. It is a JavaScript function retaining access to the variables from the render that created it, combined with work that runs later.
 
-## 2. Problem it solves
-The concept explains bugs where handlers, timers, or async code seem to use old state even after the UI updated.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Every render has its own values.
-- Functions close over the values from their render.
-- Missing dependencies keep old closures alive.
-- Functional updates avoid stale previous state.
-- Refs can store latest mutable values when appropriate.
+Think of each render as a printed work order handed to a delivery driver. The order says, “deliver to room 401” and “the customer has 12 unread messages.” The driver keeps that paper even if the hotel later moves the customer to room 902 or the unread count changes to 9.
 
-## 4. Visual / analogy
-A stale closure is like reading yesterday's newspaper to know today's weather.
+The render is the work order, the local variables are the values printed on it, and the callback is the driver carrying the order into the future. A new render prints a new order; it does not edit every old order already handed out. A timer, DOM listener, promise continuation, or subscription can keep an old driver alive. When that driver acts, it follows its own paper.
+
+Sometimes the order should be replaced whenever a value changes. That is what an effect dependency describes. Sometimes the instruction is naturally “take whatever number is current and add one”; a functional state update is that instruction. Sometimes a long-lived driver genuinely needs to look at a shared whiteboard; a ref can provide that, but the whiteboard is mutable and therefore needs stricter discipline than a render snapshot.
+
+## 3. How It Actually Works — The Full Explanation
+
+A React component is called again for every render. Each call has its own bindings for values such as `count`, `roomId`, and `onSave`. If render A has `count = 0` and render B has `count = 5`, those are not one variable changing from 0 to 5. They are two different `count` bindings created by two different function calls.
+
+JavaScript functions retain the lexical environment in which they were created. That retained environment is the closure. Therefore, a callback created during render A continues to read render A’s `count`, even after render B has committed. The callback is stale only relative to the state the user now sees; its captured value itself is behaving correctly.
+
+The timing usually looks like this:
 
 ```mermaid
-flowchart LR
-  Render1["Render count=0"] --> Callback["setTimeout callback captures 0"]
-  Render2["Render count=5"] --> Later["Callback runs later with 0"]
+sequenceDiagram
+  participant R1 as Render A
+  participant T as Timer / listener / promise
+  participant R2 as Render B
+  R1->>T: callback captures count = 0
+  R1->>R2: state update schedules a new render
+  R2->>R2: UI now displays count = 5
+  T->>T: callback still resolves count as 0
 ```
 
-## 5. Minimal example
+The important distinction is between reading state and enqueuing a state update. `setCount(count + 1)` reads `count` from the callback’s closure first, computes a value, and asks React to set that value. If the closure captured 0, it enqueues 1. `setCount(current => current + 1)` does not read the captured `count`. It enqueues an updater function; when React processes the update queue, it supplies the latest state at that point. Several updater functions can therefore compose in order.
+
+Dependency arrays are not a general “make values live” switch. For `useEffect`, they tell React when the effect’s synchronization should be torn down and established again. For `useCallback` and `useMemo`, they tell React when to return a new memoized result. Every reactive value read by the callback belongs in the dependency list unless the code has been changed so that value is no longer a reactive read. An empty array means “this setup uses the values from its initial render”; it does not mean “run once but always see current values.”
+
+This is why an interval effect often has one of two correct shapes. If the interval only updates from prior state, keep the interval stable and use a functional update. If it needs the current `delay` or another changing resource, include that value so the old interval is cleaned up and a new one is installed. Cleanup matters: otherwise every render or dependency change can leave another live callback behind.
+
+Refs are different from state. `useRef` returns one stable object across renders, and changing `ref.current` does not trigger a render. Old and new callbacks that captured that object can all observe its latest property. This is useful for imperative integrations such as a WebSocket callback or a timer that must stay subscribed while consulting the latest configuration. It is not a substitute for declaring a real dependency, because a ref can hide data flow from React and can be read at times when the UI has not been updated to match it.
+
+Async work adds a second problem. A request callback can close over an old query or request-specific state, and two requests can complete out of order. The stale closure explains which render’s values the callback reads; the race condition explains why an older response is allowed to win. Cancellation, request identity, or a data-fetching library solves the race. Adding a dependency alone does not make an already-started request’s response arrive in the right order.
+
+## 4. Real Code — See It Working
+
+The first example is plain JavaScript, so it can run with `node stale-closure.js`. It shows the closure mechanism without React. The `message` binding used by `logLater` remains the one from the call that created the function.
+
+```js
+function makeLogger(message) {
+  return function logLater() {
+    console.log(message);
+  };
+}
+
+const logInitialStatus = makeLogger("queued");
+const currentStatus = "sent";
+
+// This logs "queued": currentStatus is a different binding and cannot rewrite
+// the message captured by logInitialStatus.
+logInitialStatus();
+console.log(currentStatus); // sent
+```
+
+Here is a self-contained React + TypeScript example. It assumes a normal React 18+ application and can be rendered as `<Counter />`. The interval is created once, but it never gets stuck at 1 because the updater receives the current state from React.
 
 ```tsx
-setTimeout(() => {
-  setCount(count + 1);
-}, 1000);
+import { useEffect, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+
+function useCounterInterval(setCount: Dispatch<SetStateAction<number>>) {
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      // Do not read `count` from this old callback. Ask React for the latest
+      // state when it processes the update.
+      setCount((current) => current + 1);
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+}
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+  useCounterInterval(setCount);
+
+  return <output aria-live="polite">{count}</output>;
+}
 ```
 
-If `count` changes before timeout runs, this callback may use the old value.
-
-## 6. Real-world example
+The common broken form captures the initial value. With `count = 0`, every tick computes `0 + 1`, so React receives `1` repeatedly. This is a complete component so the contrast can be copied into a React + TypeScript app and run:
 
 ```tsx
-setCount((current) => current + 1);
+import { useEffect, useState } from "react";
+
+export function BrokenCounter() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCount(count + 1); // `count` is from the render that installed the interval
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  return <output aria-live="polite">{count}</output>;
+}
 ```
 
-Functional update reads the latest state React provides instead of captured `count`.
+An ordinary React event handler is different from a long-lived external listener. React attaches the handler for the committed render, so a later render replaces it with a new closure that sees that render's snapshot. Inside one click, though, the handler still sees one snapshot: two direct updates both calculate from the same `count`, while two functional updates are processed in sequence.
 
-## 7. Common interview questions
-#### What is a stale closure?
-- **The Engine Mechanism (Why it behaves this way):** A stale closure is a function that captures (closes over) variables from a specific render's scope and later executes with those outdated values. In React, each render creates a new execution context with its own props and state values. When a function is created during render — an event handler, effect callback, or timer — it captures the values from that render's context. If the function executes later (after a timeout, async response, or event), and the component has re-rendered with new values in the meantime, the function still sees the old captured values. The closure is "stale" because it references a snapshot of state from a previous render.
-- **The Unforgettable Mental Model:** The **Photograph vs. the Live Feed**. A closure is a photograph — it captures a moment in time. State updates are a live video feed — they keep changing. When you look at the photograph later, you see what was true then, not what's true now.
-- **The Trap:** Thinking closures are a React-specific problem. They're a fundamental JavaScript concept — React just makes them more visible because each render is a new function invocation with new variable bindings.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A stale closure is a function that captures values from a previous render and later executes with those outdated values. In React, each render creates a new scope with its own props and state. Functions created during that render close over those specific values. If the function runs later — after a timeout, async callback, or event — and the component has re-rendered with new values, the function still sees the old captured values. This is a JavaScript closure behavior that becomes particularly visible in React's render-per-update model."
+```tsx
+import { useState } from "react";
 
-#### Why do stale closures happen in React?
-- **The Engine Mechanism (Why it behaves this way):** React components are functions. Each render is a new function invocation with new local variables for props and state. When you create a function inside a component — whether it's an event handler, an effect callback, or a `setTimeout` callback — that function captures the current render's variables in its closure scope. React doesn't update existing closures when state changes; it creates new closures on the next render. If an old closure is still referenced (by a timer, event listener, or promise), it continues to reference the old render's variables. This is by design — it's what makes React's snapshot-based rendering model predictable.
-- **The Unforgettable Mental Model:** The **Snapshot Camera**. Every time React renders, it takes a snapshot of all values. Functions created during that render hold onto that snapshot. When state changes, React takes a new snapshot, but the old functions still hold the old snapshot.
-- **The Trap:** Assuming that `count` inside a callback always reflects the current state. It reflects the state at the time the callback was created, not the current state.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Stale closures happen because React's rendering model creates a new scope on every render. Each render has its own props and state values, and functions created during that render capture those specific values in their closure. When state changes, React creates a new render with new values, but any functions from the previous render still reference the old values. This is fundamental to how JavaScript closures work — React just makes it more visible because every render is a new function call. The solution is to either recreate the function with new dependencies, use functional state updates, or use refs to access the latest values."
+export function EventHandlerSnapshots() {
+  const [count, setCount] = useState(0);
 
-#### How do dependency arrays relate?
-- **The Engine Mechanism (Why it behaves this way):** Dependency arrays control when React recreates a function or re-runs an effect. When all dependencies are listed, React recreates the function with fresh values from the current render whenever any dependency changes. When a dependency is missing, React doesn't recreate the function, so it continues to use the closure from the render when it was originally created. The dependency array is React's mechanism for keeping closures fresh — it tells React which values, when changed, should trigger the creation of a new closure with updated values.
-- **The Unforgettable Mental Model:** The **Subscription Renewal**. The dependency array is your subscription auto-renewal list. When any item on the list changes, your subscription (closure) renews with the latest information. If you remove an item from the list, you stop getting updates about it — you're stuck with old information.
-- **The Trap:** Removing dependencies to stop an effect from re-running. This "fixes" the re-run problem but creates a stale closure — the effect now uses outdated values.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Dependency arrays are the primary mechanism for preventing stale closures. When you list all reactive values as dependencies, React recreates the function or re-runs the effect whenever any of those values change, ensuring the closure always has fresh values. When you omit a dependency, React doesn't recreate the function, so it keeps using the old closure with stale values. The ESLint exhaustive-deps rule enforces this by flagging missing dependencies. The fix for stale closures is almost always to add the missing dependency or restructure the code so the dependency isn't needed."
+  function addTwiceDirectly() {
+    setCount(count + 1);
+    setCount(count + 1); // Both calls read this handler's same snapshot.
+  }
 
-#### How do functional updates fix stale state?
-- **The Engine Mechanism (Why it behaves this way):** Functional updates pass a function to the state setter: `setState(prev => prev + 1)`. React stores this function in the hook's update queue. When processing updates during the render phase, React calls the function with the most recent state value — not the value captured in the closure. This works because React's update queue processes functions sequentially, passing the result of each update as the input to the next. Even if the closure captured an old state value, the functional update receives the current state from React's internal `memoizedState`, bypassing the stale closure entirely.
-- **The Unforgettable Mental Model:** The **Conveyor Belt Recipe**. Instead of saying "add 1 to the number on the table" (which might be outdated), you hand the worker a recipe card: "take whatever is currently on the belt and add 1." The worker always uses the freshest item on the belt.
-- **The Trap:** Thinking functional updates only matter for batched updates. They also matter for any closure that captures an old state value — timers, async callbacks, and event handlers.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Functional updates fix stale state by bypassing the closure entirely. Instead of reading a captured state value, you pass a function to the setter that receives the latest state as an argument. React calls this function during update processing with the current `memoizedState`, so you always get the freshest value. This is essential for timers, intervals, and async callbacks where the closure might capture an old render's state. `setCount(prev => prev + 1)` always increments from the latest count, regardless of what `count` was when the callback was created."
+  function addTwiceFunctionally() {
+    setCount((current) => current + 1);
+    setCount((current) => current + 1); // Each updater receives the latest queued value.
+  }
 
-#### When should refs be used for latest values?
-- **The Engine Mechanism (Why it behaves this way):** A ref can store the latest value of a prop or state by updating `ref.current` on every render. Because the ref object is stable across renders, any closure that references the ref always reads from the same object. When you update `ref.current` during render, all closures — even old ones — see the new value because they all reference the same object. This is useful when you need the latest value inside a callback but can't or don't want to include the value as a dependency (e.g., to avoid re-creating a timer or re-subscribing).
-- **The Unforgettable Mental Model:** The **Shared Whiteboard**. Every render writes the current value on the same whiteboard (ref). Any callback, no matter when it was created, can look at the whiteboard and see the latest value. The whiteboard is shared across all renders.
-- **The Trap:** Using refs for everything to avoid dependency arrays. This defeats React's declarative model and makes code harder to reason about. Refs should be a targeted solution, not a blanket workaround.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use refs for latest values when I need access to current state or props inside a callback but can't include them as dependencies without causing problems — like re-creating a timer or re-subscribing to an event. The pattern is: update `ref.current` on every render, then read from the ref inside the callback. This gives the callback access to the latest value without recreating it. Common use cases are interval callbacks, WebSocket message handlers, and event listeners that need current state but should only be set up once."
+  return (
+    <div>
+      <output aria-live="polite">{count}</output>
+      <button onClick={addTwiceDirectly}>Direct: add 1</button>
+      <button onClick={addTwiceFunctionally}>Functional: add 2</button>
+    </div>
+  );
+}
+```
 
-#### How do timers create stale closures?
-- **The Engine Mechanism (Why it behaves this way):** When you call `setTimeout` or `setInterval` inside a component or effect, the callback captures the state values from the render when the timer was created. If the component re-renders before the timer fires, the timer callback still references the old state values. For `setInterval`, this is especially problematic — the callback fires repeatedly, always with the same stale values from the initial render, because the interval was set up once and never recreated. The timer's callback closure is frozen at creation time.
-- **The Unforgettable Mental Model:** The **Delayed Mail**. You write a letter (timer callback) with today's news (current state) and mail it with a 5-day delay (setTimeout). If the news changes during those 5 days, the letter still contains the old news when it arrives.
-- **The Trap:** Using `setInterval` with state: `setInterval(() => setCount(count + 1), 1000)`. The `count` is captured from the initial render and never updates, so the interval sets the same value repeatedly.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Timers create stale closures because the callback captures state values from the render when the timer was created. If the component re-renders before the timer fires, the callback still sees the old values. For `setInterval`, this is especially bad — the callback fires repeatedly with the same stale values. The fix is to use functional state updates: `setCount(prev => prev + 1)` instead of `setCount(count + 1)`. Or, use a ref to store the latest value and read from the ref inside the timer callback. For intervals, I also make sure to clear and restart the interval when relevant dependencies change."
+After either click causes a render, React recreates these functions and the next click uses the new `count` snapshot. A listener registered directly on `window`, a timer, or a subscription is different: if it is installed once, it can keep the old handler indefinitely. Recreate that external listener when its dependencies change, or use a deliberate latest-value mechanism such as a ref or effect event when the subscription itself must stay stable.
 
-#### How do async requests create stale closures?
-- **The Engine Mechanism (Why it behaves this way):** When you make an async request (fetch, API call) inside an effect, the response callback captures state values from the render when the request was initiated. If the component re-renders before the response arrives — because props changed, the user navigated, or the component unmounted — the response callback still references the old state. This can cause race conditions where an older request's response overwrites a newer request's result, or state updates on an unmounted component. The async callback's closure is frozen at the time of the request, not the time of the response.
-- **The Unforgettable Mental Model:** The **Out-of-Order Delivery**. You order Package A, then Package B. Package B arrives first, but Package A's delivery person still shows up later and tries to deliver to the old address. The deliveries arrive out of order, and the old one might overwrite the new one.
-- **The Trap:** Not handling component unmount or request cancellation. If the component unmounts before the response arrives, calling `setState` in the callback causes a memory leak warning and potentially crashes.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Async requests create stale closures because the response callback captures state from when the request was made, not when it completes. If the component re-renders or unmounts before the response arrives, the callback uses outdated values or tries to update an unmounted component. I handle this with three patterns: first, use `AbortController` to cancel in-flight requests on cleanup. Second, use a flag or ref to check if the component is still mounted before updating state. Third, for race conditions, I track the latest request with a ref or use a library like TanStack Query that handles caching and cancellation automatically."
+This listener stays registered while `label` changes, but it still uses the latest label because the handler reads the shared ref at event time. The cleanup removes the exact function that was added, so the listener does not survive unmounting:
 
-## 8. Active recall test
-1. **What does a closure capture?**
-   - **Explanation:** The values of variables from the render's execution scope at the time the function was created. These values are frozen — they don't update when the component re-renders with new values.
-2. **Why does each render have different values?**
-   - **Explanation:** Each render is a new function invocation. Props and state are local variables in that function call. A new invocation creates new local variables with new values, independent of previous renders.
-3. **How does functional update help?**
-   - **Explanation:** It bypasses the closure by passing a function to the setter that receives the latest state from React's internal queue. `setState(prev => prev + 1)` always uses the freshest state, not the captured value.
-4. **How can missing dependencies create stale closures?**
-   - **Explanation:** When a dependency is omitted, React doesn't recreate the function when that value changes. The function continues to use the closure from the render when it was created, reading outdated values.
-5. **Give one timer example.**
-   - **Explanation:** `setInterval(() => setCount(count + 1), 1000)` — `count` is captured from the initial render and never updates. Fix: `setInterval(() => setCount(prev => prev + 1), 1000)` uses functional update to always increment from the latest value.
+```tsx
+import { useEffect, useRef, useState } from "react";
 
-## 9. Mistakes / traps
-- Disabling exhaustive-deps.
-- Assuming state variables mutate in place.
-- Using old state inside delayed callbacks.
-- Adding refs everywhere instead of fixing dependencies.
-- Not canceling async work.
+export function WindowKeyLogger({ label }: { label: string }) {
+  const [lastKey, setLastKey] = useState("");
+  const latestLabel = useRef(label);
+  latestLabel.current = label;
 
-## 10. Compare with related concepts
-- **Stale closure vs stale server data:** closure is old render value; server data is old backend snapshot.
-- **Functional update vs dependency update:** functional update fixes previous-state updates; dependencies recreate logic.
-- **Ref vs closure:** ref can hold latest mutable value; closure holds render-time value.
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      setLastKey(`${latestLabel.current}: ${event.key}`);
+    }
 
-## 11. Summary from memory
-Explain why `setInterval` often shows stale state and how to fix it.
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
-## 12. Spaced revision prompts
-- After 1 day: Define stale closure.
-- After 3 days: Fix stale timeout state.
-- After 7 days: Explain closure per render.
-- After 14 days: Compare refs and functional updates.
+  return <output aria-live="polite">{lastKey}</output>;
+}
+```
 
+When a long-lived callback needs the latest value rather than the latest previous state, a ref makes that intent explicit. This hook keeps one interval while the callback reads the current `onTick` function. It is a targeted escape hatch for an imperative subscription; ordinary render logic should still use props and state directly.
+
+```tsx
+import { useEffect, useRef } from "react";
+
+export function useStableInterval(
+  onTick: () => void,
+  delayMs: number | null,
+) {
+  const latestOnTick = useRef(onTick);
+  latestOnTick.current = onTick;
+
+  useEffect(() => {
+    if (delayMs === null) return;
+
+    const intervalId = window.setInterval(() => {
+      latestOnTick.current();
+    }, delayMs);
+
+    return () => window.clearInterval(intervalId);
+  }, [delayMs]);
+}
+```
+
+For an async search, the dependency keeps the effect aligned with the query. `AbortController` is best-effort: it asks the browser to stop work, but it cannot guarantee that the server stopped processing or that a response already resolved will be undone. The request identity check is the correctness guard, so an older response cannot replace results for the latest query even if abort is too late. The exact fetch API assumes a browser environment.
+
+```tsx
+import { useEffect, useRef, useState } from "react";
+
+function useSearchResults(query: string) {
+  const [results, setResults] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const latestRequestId = useRef(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    const requestId = ++latestRequestId.current;
+    setError(null);
+
+    fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{ items: string[] }>;
+      })
+      .then((data) => {
+        // Abort may be too late, so only the newest request may publish results.
+        // `active` independently blocks publication after unmount if abort fails.
+        if (!active || requestId !== latestRequestId.current) return;
+        setResults(data.items);
+      })
+      .catch((error: unknown) => {
+        // Abort is expected when a newer query replaces this request.
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        // Surface real failures only while this effect is still current and mounted.
+        if (!active || requestId !== latestRequestId.current) return;
+        setError(error instanceof Error ? error.message : "Search failed");
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [query]);
+
+  return { results, error };
+}
+
+export function SearchResults({ query }: { query: string }) {
+  const { results, error } = useSearchResults(query);
+  return (
+    <>
+      {error && <p role="alert">{error}</p>}
+      <ul>{results.map((result) => <li key={result}>{result}</li>)}</ul>
+    </>
+  );
+}
+```
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is a stale closure, and why is it especially visible in React?**
+
+A stale closure is a callback that later reads values from the lexical environment where it was created, even though newer values now exist. React makes this easy to see because a function component runs again on every render. Each run creates a new set of bindings, while timers, listeners, promises, and subscriptions may still retain callbacks from older runs. This is ordinary JavaScript closure behavior interacting with React’s snapshot-style rendering model.
+
+**Q: Does React mutate the `count` variable after `setCount`?**
+
+No. `count` is a binding belonging to one particular render. Calling `setCount` schedules another render; it does not rewrite the already-running function call or its closures. The next render gets a new `count` binding. This is why logging `count` immediately after `setCount` prints the old render’s value.
+
+**Q: Why does `setCount(count + 1)` fail in an interval, while `setCount(current => current + 1)` works?**
+
+The first form evaluates `count + 1` inside the callback, so it uses the callback’s captured value. An interval installed during the initial render can keep using 0 forever and repeatedly request 1. The functional form gives React an updater function. React calls it while processing the queue and passes the latest state, so each tick derives the next value from the state that actually exists then.
+
+**Q: What do dependency arrays have to do with stale closures?**
+
+An effect dependency list controls when React replaces an effect’s setup and cleanup. If an effect reads `roomId` but declares `[]`, it remains connected using the room from the render that installed it. Declaring `[roomId]` lets React clean up the old connection and create a callback from the new render. The list must describe the values the effect reads; it should not be edited merely to silence reruns. For `useCallback` or `useMemo`, the same dependency principle controls whether the memoized function or value is replaced, not whether JavaScript closures become mutable.
+
+**Q: How do you fix a stale closure?**
+
+First identify what the callback needs. Use a functional updater when it only needs to calculate new state from previous state. Include a reactive value in the dependency list when the external work should be recreated for that value. Move user-triggered work into the event handler when it is not synchronization. Use a ref only when a stable imperative callback must consult the latest value without recreating the subscription. For async work, also handle cancellation or request identity, because freshness and response ordering are separate concerns.
+
+**Q: When should a ref hold the latest value?**
+
+Use a ref when the callback’s identity or subscription should remain stable, but its imperative behavior must consult a changing value. Examples include a browser event listener, a WebSocket connection, or a timer that should not be torn down whenever a callback prop changes. Update the ref on each render and read `ref.current` at callback time. Do not use this pattern to hide a dependency that should cause synchronization or to mirror state that the UI needs to render.
+
+**Q: Are stale closures the same as a race condition in data fetching?**
+
+No. A stale closure is about which render’s bindings a callback can read. A race condition is about multiple operations completing in an order different from the order they were started. A request can have a fresh closure and still race with an older request. Abort the obsolete request, associate responses with a request ID, or use a data-fetching library that manages this lifecycle.
+
+**Q: Can `useCallback` prevent stale closures?**
+
+Not by itself. `useCallback(fn, dependencies)` returns the same function identity until a dependency changes, so an incomplete dependency list can preserve a stale closure deliberately. A complete list lets React return a function created from the render containing the new values. If the callback only updates state from prior state, a functional updater may let it have fewer dependencies because it no longer reads the state variable.
+
+**Q: Why does adding a dependency sometimes cause a loop?**
+
+Usually because the effect is doing work that should not be an effect, or because it creates a new dependency each render. For example, an effect that sets derived state from props creates unnecessary render cycles; calculate the value during render instead. If an effect subscribes to an external system, the right fix is to make setup and cleanup correct, stabilize only genuinely stable inputs, and keep user-event logic in the event handler. Removing the dependency hides the loop while risking stale behavior.
+
+## 6. The Traps — What Goes Wrong
+
+**Treating state as a mutable variable.** `setCount` schedules a render; it does not change the `count` binding inside an already-created callback. Read the new value during the next render, or use a functional updater when the callback needs to derive state.
+
+**Using an empty dependency list as “run once with live values.”** `[]` gives the effect the values from its setup render. It is appropriate only when the setup truly does not depend on changing reactive values, or when the callback uses a deliberate stable interface such as a functional updater or a carefully scoped ref.
+
+**Fixing a stale interval by removing cleanup.** Reinstalling the interval can refresh the closure, but without cleanup every old interval keeps firing. The result is accelerated updates, duplicate requests, and callbacks that survive after the component is gone. Every subscription setup needs a matching cleanup.
+
+**Putting every value in a ref.** A ref is invisible to React’s rendering and dependency analysis. It can solve a stable-subscription problem, but it can also make the UI and imperative code disagree. Prefer state and dependencies when a value should participate in rendering or synchronization.
+
+**Confusing stale state with stale server data.** A closure may read an old local render snapshot; a cache may contain an old server response. They need different fixes. Functional updates do not invalidate a cache, and cache revalidation does not change what an old callback captured.
+
+**Calling an old request’s response “just a stale closure.”** If search for `rea` returns after search for `react`, the old response can overwrite the new one. The closure may explain why the callback labels the response, but cancellation or latest-request checking is what enforces the winning response.
+
+**Disabling exhaustive-deps to stop an effect from rerunning.** The rerun is often evidence that the effect is coupled to a changing value. Investigate whether the effect needs that value, whether the work belongs in an event handler, or whether the external resource needs proper cleanup. A linter suppression turns a visible lifecycle problem into a hidden data bug.
+
+## 7. Compare With Related Concepts
+
+**Stale closure vs. stale server/cache data:** A stale closure is an old JavaScript render environment retained by a callback. Stale server data is an old response held by a cache or client store. Use closure techniques for callbacks; use invalidation, revalidation, or cache policies for server data.
+
+**Functional updater vs. dependency refresh:** A functional updater is best when the operation is “derive the next state from the previous state,” such as incrementing a counter. A dependency refresh is best when an external resource or callback must be rebuilt around a new prop or state value. Use the updater to avoid reading state; use dependencies to synchronize an external system.
+
+**Ref vs. state:** State is a render input and updates the UI when changed. A ref is a stable mutable cell and changing it does not render. Use state for declarative UI; use a ref for an imperative value that a stable callback must inspect.
+
+**Closure vs. `useCallback`:** A closure is the JavaScript mechanism that retains lexical bindings. `useCallback` is a React optimization that may reuse a function identity. `useCallback` does not remove closure semantics; use a complete dependency list or avoid reading a changing value through a functional updater.
+
+**Stale closure vs. lost update:** A stale closure computes from an old captured value. A lost update happens when multiple writes are computed from the same old value, such as two `setCount(count + 1)` calls producing only one increment. Functional updates address both when the intended operation is based on previous state.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Every render hands its callbacks a paper snapshot; React never edits yesterday’s paper. When future work needs “whatever is current,” either ask React with a functional updater, replace the subscription through dependencies, or deliberately read a shared ref—each choice says exactly where freshness comes from.
