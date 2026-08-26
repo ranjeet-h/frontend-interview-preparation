@@ -1,130 +1,202 @@
 # Mounted State Tracking
 
-## Detailed explanation
-Mounted state tracking means knowing whether a component is still mounted before applying asynchronous results. Older React code often used `isMounted` flags to avoid setting state after unmount.
+## 1. Why This Exists — The Problem First
 
-Modern React usually prefers cleanup, cancellation, and correct async ownership instead of broad mounted flags. Use AbortController, query libraries, and effect cleanup when possible. Mounted refs can still be useful for integrating with non-cancelable APIs.
+A screen starts a request for a profile, the user navigates away, and the request finishes a few hundred milliseconds later. The callback still exists because the promise or SDK owns it, even though the component that created it no longer does. If that callback updates local state, older React versions could warn about an update after unmount; even without a warning, the result is now useless and the work may have consumed bandwidth, CPU, or a scarce subscription slot.
 
-## 1. One-line mental model
-Mounted tracking checks whether a component still exists before using async results.
+That is the problem mounted-state tracking tries to answer: “Does this component still own the right to consume this result?” It is a narrow defensive technique, not a general replacement for cancelling work or managing server state correctly.
 
-## 2. Problem it solves
-Async callbacks may finish after the component that started them has unmounted.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Track mounted status in a ref.
-- Set true on mount and false on cleanup.
-- Check before state updates from non-cancelable async work.
-- Prefer cancellation when possible.
-- Avoid hiding architecture problems.
+Imagine a hotel guest ordering room service. The kitchen writes the room number on the order, but the guest may check out before the delivery arrives. At the door, staff can check the hotel’s current occupancy board. If the room is still occupied, deliver the meal; if it is empty, do not hand the meal to nobody.
 
-## 4. Visual / analogy
-It is like checking whether someone still lives at an address before delivering a package.
+The component is the guest, the asynchronous operation is the kitchen preparing the meal, and the ref is the live occupancy board. React’s cleanup marks the room empty when the component unmounts. The callback checks the board immediately before using the result.
 
-```mermaid
-flowchart LR
-  Async["Async result"] --> Mounted{"Still mounted?"}
-  Mounted -->|Yes| SetState["Apply result"]
-  Mounted -->|No| Ignore["Ignore"]
-```
+The analogy also exposes the limitation: checking the board does not stop the kitchen. The meal was still prepared. A cancellation signal is closer to cancelling the order at the kitchen; mounted tracking only rejects delivery at the door.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+React renders a component, commits it to the UI, and then runs its effect setup. A custom hook can place a mutable boolean in a ref, set that boolean to `true` during setup, and return cleanup that sets it to `false`. The ref object survives re-renders, and its `.current` property can be read by a callback long after the render that created the callback has finished. For an effect that can run again, though, the safest guard is scoped to that effect setup so a callback from an older setup cannot borrow a later setup’s `true` value.
+
+The important sequence is:
+
+1. A component mounts. The hook’s effect setup marks `mounted.current = true`.
+2. Some non-cancelable work starts, such as a legacy SDK request or callback registration.
+3. React unmounts the component. Before the instance is discarded, effect cleanup runs and marks the ref false.
+4. The external operation eventually invokes its callback. The callback reads the current ref value, not a copied boolean from an old render.
+5. If the value is false, the callback ignores the result. If it is true, it may update local state—provided the result is also the current result the component wants.
+
+`useRef` matters because changing `.current` does not schedule a render. That is exactly what this flag needs: the callback needs a live coordination value, not a piece of UI state. A state variable would create another render and, more importantly, a callback can close over the state value from the render in which it was created. A ref gives the callback a stable object whose property can be changed later.
+
+Unmounting does not rewind JavaScript. Promises, timers, browser APIs, and third-party libraries are not children of React’s Fiber tree. React can remove a component and run its cleanup, but it cannot automatically cancel arbitrary work that was started elsewhere. React 18 removed the noisy warning for many post-unmount state updates; that did not make network requests, timers, subscriptions, or SDK work cancel themselves. It only made the particular update less visible.
+
+Mounted tracking is also not enough for changing inputs. Suppose a search box starts request A for `rea`, then request B for `react`. Both callbacks can run while the component is mounted. The mounted flag is true for both, so it cannot prevent request A from overwriting the newer result. That is a request-identity or cancellation problem, solved with an abort signal, a sequence/request ID, or a data-fetching library—not with an occupancy flag.
+
+Development Strict Mode deserves a precise mention. React may run setup, cleanup, and setup again to expose missing cleanup. An effect-scoped guard tolerates that sequence: the first cleanup sets the first setup’s `active` variable false, and the second setup creates a separate variable set to true. A callback from the first setup therefore stays rejected even after the second setup begins. The guard is a lifecycle check; it is not a license to hide an effect that should not exist.
+
+## 4. Real Code — See It Working
+
+This first example is a complete custom hook plus component. It uses `useEffect` inside the reusable hook, where the request’s lifecycle belongs. The fake client deliberately has no cancellation API, which is the case where an effect-scoped guard can still be justified.
 
 ```tsx
-function useIsMounted() {
-  const mounted = React.useRef(false);
-  React.useEffect(() => {
-    mounted.current = true;
+import { useEffect, useState } from "react";
+
+type Profile = { id: string; name: string };
+
+function loadFromLegacySdk(id: string, onSuccess: (profile: Profile) => void) {
+  const timer = window.setTimeout(() => {
+    onSuccess({ id, name: `User ${id}` });
+  }, 500);
+
+  // This legacy client exposes no cancel method to the caller.
+  void timer;
+}
+
+function useLegacyProfile(id: string) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+
+  useEffect(() => {
+    // Each setup owns its guard, so Strict Mode cannot revive an older callback.
+    let active = true;
+
+    loadFromLegacySdk(id, (nextProfile) => {
+      // Cleanup rejects unmounts, Strict Mode's first setup, and older ids.
+      if (!active) return;
+      setProfile(nextProfile);
+    });
+
     return () => {
-      mounted.current = false;
+      active = false;
     };
-  }, []);
-  return mounted;
+  }, [id]);
+
+  return profile;
+}
+
+export function ProfileCard({ id }: { id: string }) {
+  const profile = useLegacyProfile(id);
+
+  return <p>{profile ? profile.name : "Loading..."}</p>;
 }
 ```
 
-## 6. Real-world example
+In an application, the better fetch path is cancellation. This example is self-contained apart from the normal browser `fetch` API and handles both unmounting and a changed `id`. `AbortController` is best-effort: the response may already have settled, server work may continue, or an API may not stop immediately. The cleanup aborts the old request, while the `AbortError` branch treats expected cancellation as non-failure; the signal and request-identity checks are the final protection before committing a result.
 
 ```tsx
-const mounted = useIsMounted();
-legacyApi.load().then((result) => {
-  if (mounted.current) setResult(result);
-});
+import { useEffect, useRef, useState } from "react";
+
+type Profile = { id: string; name: string };
+
+function useCancellableProfile(id: string) {
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+
+    setProfile(null);
+    setError(null);
+
+    fetch(`/api/profiles/${encodeURIComponent(id)}`, {
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<Profile>;
+      })
+      .then((nextProfile) => {
+        // Abort is best-effort, so check both cancellation and request identity.
+        if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+        setProfile(nextProfile);
+      })
+      .catch((cause: unknown) => {
+        // Aborting during cleanup is expected, not a user-visible failure.
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        if (controller.signal.aborted || requestId !== requestIdRef.current) return;
+        setError(cause instanceof Error ? cause : new Error("Request failed"));
+      });
+
+    return () => {
+      // Abort usually stops fetch, but it cannot undo work already delivered.
+      controller.abort();
+    };
+  }, [id]);
+
+  return { profile, error };
+}
+
+export function CancellableProfile({ id }: { id: string }) {
+  const { profile, error } = useCancellableProfile(id);
+
+  if (error) return <p role="alert">{error.message}</p>;
+  return <p>{profile ? profile.name : "Loading..."}</p>;
+}
 ```
 
-## 7. Common interview questions
-#### What is mounted state tracking?
-- **The Engine Mechanism (Why it behaves this way):** Mounted state tracking uses a `useRef` to store a boolean indicating whether the component is currently mounted in the DOM. The ref is set to `true` in a `useEffect` that runs on mount (empty dependency array), and set to `false` in the cleanup function that runs on unmount. Async callbacks check `ref.current` before calling `setState` to avoid updating an unmounted component. This pattern emerged before React 18's automatic handling of unmounted state updates, but is still useful for non-cancelable async operations.
-- **The Unforgettable Mental Model:** The **Occupancy Sensor**. Like a hotel room's occupancy light — it tells the housekeeping staff whether someone is still in the room before they deliver fresh towels. If the room is empty, they skip the delivery.
-- **The Trap:** Using mounted tracking as a band-aid for poor async architecture. The better solution is usually to cancel the async work (AbortController) or delegate to a query library, rather than checking a flag before every state update.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Mounted state tracking uses a ref to track whether a component is still in the DOM. The ref is set to true on mount and false on unmount via effect cleanup. Async callbacks check this ref before updating state to avoid setting state on unmounted components. While React 18 no longer warns about this, the pattern is still useful for non-cancelable async APIs where you can't abort the work."
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### Why can async work finish after unmount?
-- **The Engine Mechanism (Why it behaves this way):** Async operations (fetch, setTimeout, WebSocket messages, third-party SDK callbacks) run in the browser's event loop and Web APIs, completely independent of React's Fiber tree. When a component unmounts, React removes its Fiber node from the tree, but any pending async operations continue running. When they complete, their callbacks fire and may reference the component's state setters via closure. In React 18, this is a no-op (React silently ignores the update), but it still wastes resources and can mask architectural issues.
-- **The Unforgettable Mental Model:** The **Phone Call After Moving**. You moved out of your apartment (unmounted), but someone still calls your old number (async callback). The call goes through, but nobody's home to answer it.
-- **The Trap:** Assuming React 18's silent handling means the problem is solved. While React no longer warns, the async work still runs, consumes resources, and the closure still holds references preventing garbage collection.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Async operations run in the browser's event loop, independent of React's rendering cycle. When a component unmounts, React removes it from the Fiber tree, but pending async operations continue. Their callbacks still fire and may try to update state. React 18 silently ignores these updates, but the work still runs and closures still hold memory. The proper fix is to cancel the async work, not just ignore its results."
+**Q: What does mounted state tracking solve?**
 
-#### Why prefer cancellation?
-- **The Engine Mechanism (Why it behaves this way):** Cancellation (via AbortController, cleanup flags, or library APIs) stops the async work at its source, preventing it from consuming network bandwidth, CPU, or memory. Mounted tracking only prevents the state update — the async work still completes, its callback still fires, and the closure still holds references. Cancellation is more efficient because it stops the work entirely, freeing resources and eliminating the race condition at the root.
-- **The Unforgettable Mental Model:** The **Cancel Order vs. Refuse Delivery**. Mounted tracking is refusing the delivery at the door — the package still arrives. Cancellation is cancelling the order — the package is never sent.
-- **The Trap:** Thinking mounted tracking is "good enough" because React 18 doesn't warn. It's not — the async work still runs, the closure still prevents garbage collection, and the race condition still exists (you're just ignoring the result).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Cancellation is better than mounted tracking because it stops the async work at the source. Mounted tracking only prevents the state update — the request still completes, the callback still fires, and the closure still holds memory. With AbortController, the network request is cancelled, bandwidth is saved, and the closure can be garbage collected. I always prefer cancellation when the API supports it."
+It prevents a callback from applying a result after its component instance has unmounted. The usual implementation stores a boolean in a ref, sets it true during effect setup, sets it false in cleanup, and checks it before a state update. It does not cancel the underlying operation and it does not prove that a result belongs to the latest request.
 
-#### How do refs help?
-- **The Engine Mechanism (Why it behaves this way):** `useRef` provides a stable, mutable container that persists across renders without triggering re-renders. The mounted ref's `.current` property is set to `true` on mount and `false` on unmount. Async callbacks read `ref.current` synchronously — since refs are synchronous, the callback gets the current mounted status at the exact moment it executes. If state were used instead, the async callback would capture a stale boolean from its closure, defeating the purpose.
-- **The Unforgettable Mental Model:** The **Live Switchboard**. A ref is like a live switchboard — anyone who checks it sees the current position. State is like a printed memo — it shows the position at the time it was printed, not the current position.
-- **The Trap:** Using state for mounted tracking. `useState` would capture the value in the async callback's closure, making it stale. The callback would always see the value from when it was created, not the current mounted status.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Refs are essential for mounted tracking because they provide a live, mutable value that async callbacks can read at execution time. If I used state, the callback would capture a stale boolean from its closure — always seeing the value from when the callback was created. Refs give the callback access to the current mounted status, regardless of when the callback was defined."
+**Q: Why can an async callback run after unmount?**
 
-#### Is `isMounted` always a good pattern?
-- **The Engine Mechanism (Why it behaves this way):** No. The `isMounted` pattern is a defensive check that masks the real problem: async work that should have been cancelled. Modern React best practices favor cancellation (AbortController), proper effect cleanup, and server-state libraries over mounted flags. The `isMounted` pattern can hide race conditions, prevent proper error handling, and encourage a "check everywhere" approach that clutters code. It's acceptable only for non-cancelable APIs where you truly have no other option.
-- **The Unforgettable Mental Model:** The **Smoke Detector vs. the Fire Extinguisher**. `isMounted` is a smoke detector that alerts you to the problem. Cancellation is a fire extinguisher that stops the problem. You want the extinguisher, not just the alarm.
-- **The Trap:** Making `isMounted` the default pattern for all async effects. This becomes a code smell — if every effect needs a mounted check, the architecture needs restructuring.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: `isMounted` is not a good default pattern. It's a defensive check that masks the real issue — async work that should have been cancelled. Modern React favors AbortController for fetch, cleanup for subscriptions, and query libraries for server state. I only use mounted tracking for non-cancelable APIs where I truly have no other option, like certain third-party SDKs or legacy WebSocket implementations."
+Because the operation is owned by a promise, timer, browser API, or external library rather than by React. Unmounting removes the component from React’s tree and runs cleanup, but JavaScript does not delete callbacks already registered with those systems. When the operation settles, its callback can still run and its closure can still refer to the old setter.
 
-#### How do query libraries avoid this?
-- **The Engine Mechanism (Why it behaves this way):** Query libraries like TanStack Query manage the entire request lifecycle externally to the component. When a component unmounts, the library detects this and either cancels the in-flight request or marks the component as no longer interested in the result. The library's cache persists independently, so if the component remounts, it can retrieve the cached data without re-fetching. The component never needs to track its own mounted status because the library handles lifecycle management.
-- **The Unforgettable Mental Model:** The **Valet Parking Service**. Instead of parking your own car (managing your own requests), you hand the keys to a valet (query library). When you leave the restaurant (unmount), the valet parks the car properly. When you return (remount), the valet has it waiting.
-- **The Trap:** Thinking query libraries eliminate all mounted tracking needs. They handle server state well, but local async operations (like non-cancelable third-party SDKs) may still need mounted checks.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Query libraries avoid mounted tracking by managing the request lifecycle externally. When a component unmounts, the library cancels in-flight requests or stops delivering results to that component. The cache persists independently, so remounted components get cached data instantly. This eliminates the need for manual mounted checks because the library handles cancellation, lifecycle, and cache consistency automatically."
+**Q: Why use a ref instead of state for the mounted flag?**
 
-#### Mounted tracking vs AbortController?
-- **The Engine Mechanism (Why it behaves this way):** Mounted tracking is a passive check — it reads a boolean before updating state but doesn't stop the async work. AbortController is an active cancellation — it stops the request at the network level. Mounted tracking works with any async API (even non-cancelable ones). AbortController only works with APIs that support the signal pattern. Mounted tracking prevents stale state updates; AbortController prevents stale state updates AND saves network resources.
-- **The Unforgettable Mental Model:** The **Umbrella vs. the Roof**. Mounted tracking is an umbrella — it keeps you dry (prevents bad state updates) but the rain still falls (request still runs). AbortController is a roof — it stops the rain entirely (cancels the request).
-- **The Trap:** Using mounted tracking when AbortController is available. If the API supports cancellation, use it — it's more efficient and cleaner.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Mounted tracking is a passive check that prevents state updates on unmounted components but doesn't stop the async work. AbortController actively cancels the request at the network level, saving bandwidth and freeing resources. I prefer AbortController for fetch requests since it's more complete. I only use mounted tracking for non-cancelable APIs where AbortController isn't an option."
+The callback needs a mutable value that can be read at callback time without causing another render. A ref object has stable identity across renders, and `.current` can be changed during cleanup. State is for values that drive rendering; using it for this coordination flag adds a render and makes closure timing easier to misunderstand. The ref is not magic cancellation—it is simply a live cell shared by the hook and its callbacks.
 
-## 8. Active recall test
-1. **What does the mounted ref store?**
-   - **Explanation:** A boolean indicating whether the component is currently mounted. It's `true` after the mount effect runs and `false` after the cleanup runs on unmount. Async callbacks check this before calling `setState` to avoid updating an unmounted component.
-2. **When is it set to false?**
-   - **Explanation:** In the cleanup function of the `useEffect` that sets it to `true`. This cleanup runs when the component unmounts, ensuring the ref accurately reflects the component's mounted status at any point in time.
-3. **Why not use state for mounted tracking?**
-   - **Explanation:** State values are captured in closures at the time the callback is created. An async callback would always see the state value from when it was defined, not the current value. Refs provide a live, mutable value that callbacks can read at execution time.
-4. **What is better than mounted tracking for fetch?**
-   - **Explanation:** AbortController. It cancels the fetch request at the network level, preventing the response from ever arriving. This is more efficient than mounted tracking because it saves bandwidth, frees the connection, and eliminates the race condition entirely.
-5. **Name one non-cancelable API case.**
-   - **Explanation:** Third-party SDK callbacks that don't support cancellation, like certain analytics libraries, payment gateway SDKs, or legacy WebSocket implementations. These fire callbacks independently and can't be aborted, making mounted tracking a reasonable defensive pattern.
+**Q: Is setting state after unmount still a React memory leak?**
 
-## 9. Mistakes / traps
-- Using mounted flags instead of canceling fetch.
-- Treating mounted tracking as a default pattern.
-- Forgetting cleanup.
-- Updating state after unmount from async work.
-- Hiding race conditions.
+Not automatically. React 18 removed the warning that often led developers to call every post-unmount update a leak. A late update is generally ignored, but the operation that produced it may still waste resources, and subscriptions or timers may continue indefinitely if they were never cleaned up. The correct diagnosis is to ask whether the external resource remains active, not to equate one ignored setter call with a heap leak.
 
-## 10. Compare with related concepts
-- **Mounted tracking vs AbortController:** check-before-update vs cancel work.
-- **Mounted tracking vs cleanup:** mounted tracking is one cleanup-driven flag pattern.
-- **Mounted tracking vs query library:** query library manages lifecycle and cache externally.
+**Q: Why is cancellation usually better than mounted tracking?**
 
-## 11. Summary from memory
-Explain when mounted tracking is acceptable and why cancellation is usually better.
+Mounted tracking waits for the work to finish and then discards the answer. Cancellation asks the source to stop, which can save network bandwidth, parsing, server work, battery, and connection slots. It also expresses ownership clearly: when the component no longer needs the request, its cleanup revokes the request’s lifetime. Use `AbortController` for APIs that support it, and use the library’s unsubscribe/dispose method for subscriptions.
 
-## 12. Spaced revision prompts
-- After 1 day: Define mounted tracking.
-- After 3 days: Build `useIsMounted`.
-- After 7 days: Compare with aborting fetch.
-- After 14 days: Identify overuse of mounted flags.
+**Q: Can a mounted flag prevent stale search results?**
 
+No. If request A and request B both finish while the component remains mounted, the flag is true for both. The UI can still show A after B. Use cancellation where possible, or associate each request with an incrementing ID and accept a response only if its ID is still current. TanStack Query and similar libraries solve this broader server-state lifecycle with caching, deduplication, cancellation, and observer ownership.
+
+**Q: When is mounted tracking reasonable in production?**
+
+When an external API genuinely cannot be cancelled or unsubscribed from, and ignoring a late callback is safer than allowing it to touch local state. Keep the guard close to that integration, document why cancellation is unavailable, and still clean up every resource that the API does expose. It should be an exception around a boundary, not a standard wrapper around every fetch.
+
+**Q: What happens in React Strict Mode?**
+
+In development, React can perform an extra setup-and-cleanup cycle. A correct lifecycle guard becomes true, then false, then true for the active setup. This is useful because it reveals effects that fail to clean up. Code that “works” only when setup runs once is not correctly modeling ownership.
+
+## 6. The Traps — What Goes Wrong
+
+- **Using a mounted flag instead of aborting a cancellable request.** The flag suppresses the final setter but lets the request complete. Prefer `AbortController` for `fetch`, and treat abort as expected cleanup.
+
+- **Assuming React 18 solved async cleanup.** The removed warning changed diagnostics, not the lifetime of timers, subscriptions, sockets, or requests. Inspect the external resource and give it an explicit cleanup path.
+
+- **Using the flag to solve “latest request wins.”** Mounted status answers whether the component exists, not whether this response is current. Add request cancellation or a request-generation check when inputs can change.
+
+- **Forgetting that cleanup must run for the exact resource created by setup.** If setup registers a listener, cleanup must remove that listener; if it starts an interval, cleanup must clear that interval. A boolean does not unsubscribe anything.
+
+- **Treating every post-unmount callback as a memory leak.** A settled promise callback usually becomes collectible once nothing retains it. A never-removed event listener, timer, or SDK subscription can keep firing and retain objects. Measure and inspect the retaining resource instead of relying on the warning’s presence or absence.
+
+- **Creating a reusable `useIsMounted` helper and checking it everywhere.** That spreads a passive workaround through business logic and can hide unclear ownership. Keep lifecycle management in the effect or data-fetching abstraction that owns the operation.
+
+- **Ignoring errors because the component unmounted.** Cancellation is expected, but real server errors still matter to logs, retries, and observability. Distinguish an intentional abort from an HTTP failure or a parsing failure.
+
+## 7. Compare With Related Concepts
+
+- **Mounted tracking vs `AbortController`:** mounted tracking ignores a late result; `AbortController` requests that the operation stop. Use cancellation for `fetch` and mounted tracking only for a non-cancelable boundary.
+
+- **Mounted tracking vs effect cleanup:** mounted tracking is one value changed by cleanup. Cleanup is the broader lifecycle obligation: abort, unsubscribe, disconnect, clear timers, and release resources. Use cleanup even when you also need a guard.
+
+- **Mounted tracking vs request identity:** mounted status is component-level ownership; request identity is version-level ownership. Use a generation/request ID or cancellation when multiple requests can overlap.
+
+- **Mounted tracking vs state:** state describes UI data and schedules renders; a ref is a mutable coordination cell that does not render. Use state to display the profile and a ref only when an external callback needs a live value.
+
+- **Mounted tracking vs a query library:** a query library owns server-state lifetime outside one component, often adding cache, deduplication, retries, stale-time policy, and observer tracking. Use it for application server state; reserve a local guard for an integration the library cannot own.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Mounted tracking is the hotel’s occupancy board: it can refuse a late delivery, but it cannot stop the kitchen. Ask two separate questions every time—“does this component still exist?” and “is this still the newest work?”—then use cleanup, cancellation, or request identity for the question you actually need to solve.
