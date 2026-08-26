@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (478 pages complete)
+## Completed Sections Summary (508 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -17,6 +17,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **Backend Core Concepts** (`src/full-stack/backend/concepts/`) | 39 / 39 | Complete |
 | **Backend System Design** (`src/full-stack/backend/system-design/`) | 30 / 30 | Complete |
 | **Node.js Core Concepts** (`src/full-stack/backend/nodejs/`) | 30 / 30 | Complete |
+| **Express Core Concepts** (`src/full-stack/backend/express/`) | 30 / 30 | Complete |
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
 | **SQLAlchemy Core Concepts** (`src/full-stack/backend/sqlalchemy/`) | 30 / 30 | Complete |
@@ -24,7 +25,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **478** | **100% Done** |
+| **Total Completed Concept & Practice Pages** | **508** | **100% Done** |
 
 ---
 
@@ -47,8 +48,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Authentication | 30 | 0 | 0 | 30 |
 | Coding practice | 30 | 0 | 0 | 30 |
 | Deployment | 25 | 0 | 0 | 25 |
-| **Express** (in rewrite now) | **30** | **24** | **6** | **0** |
-| **FastAPI** (in rewrite now) | **50** | **0** | **2** | **48** |
+| **FastAPI** (in rewrite now) | **50** | **2** | **0** | **48** |
 | Full-stack integration | 20 | 0 | 0 | 20 |
 | Observability | 25 | 0 | 0 | 25 |
 | Performance | 25 | 0 | 0 | 25 |
@@ -59,9 +59,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Senior scenarios | 25 | 0 | 0 | 25 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **440** | **24** | **8** | **408** |
-
-Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `EXP-n` / `FA-n`). Express waves 1–3 (24 pages) are committed and reviewed; wave 4 (Express global error handling, pagination, search, transactions, testing, deployment + FastAPI what-is / why-fast pages) is in flight. Counts refresh after every completed wave.
+| **Total Backend** | **410** | **2** | **0** | **408** |
 
 ### MERN Status
 
@@ -72,7 +70,7 @@ Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `E
 ### Database Sections Status (135/135 Complete)
 
 | Section | Total Pages | Completed | Status |
-|---|---:|---:|---|
+|---|---:|---|
 | **SQL Core** | 40 | 40 | **Complete** |
 | **PostgreSQL** | 35 | 35 | **Complete** |
 | **MySQL** | 30 | 30 | **Complete** |
@@ -83,7 +81,7 @@ Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `E
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **478**
+- **Total Completed Concept/System Pages:** **508**
 - **Total Completed Output Question Puzzles:** **15**
 - **Database Remaining:** **0** (All 135 database pages complete!)
-- **Backend Remaining:** **416** (408 not started + 8 in flight)
+- **Backend Remaining:** **408** (FastAPI 48 + other backend sections 360)
