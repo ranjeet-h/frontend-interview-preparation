@@ -1,127 +1,277 @@
 # Debouncing With Hooks
 
-## Detailed explanation
-Debouncing delays an action until input has stopped changing for a specified time. In React hooks, this is commonly implemented with `useEffect`, `setTimeout`, and cleanup.
+## 1. Why This Exists — The Problem First
 
-Debouncing is useful for search inputs, validation, autosave, resize handling, and expensive calculations. The cleanup cancels the previous timer whenever the value changes again.
+Imagine a product search box that sends a request for every keypress. Typing `headphones` can create ten requests, even though the user usually wants one result for the finished word. That wastes network and server capacity, makes the UI noisy, and can expose a second bug: an older request may finish after a newer one and replace fresh results with stale ones.
 
-## 1. One-line mental model
-Debouncing waits for quiet time before running an action.
+The same shape appears in validation, autosave, filtering, and expensive calculations. The UI needs to react to every input immediately, but the expensive downstream work should wait until the burst of changes has gone quiet. Debouncing is the timing policy that creates that quiet period.
 
-## 2. Problem it solves
-Without debouncing, expensive work can run on every keystroke or rapid event.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Start a timer when value changes.
-- Clear the old timer in cleanup.
-- Run action only after delay.
-- Return debounced value or callback.
-- Keep dependencies correct.
+Think of a receptionist taking a message for a busy manager. Every time the caller adds another sentence, the receptionist throws away the unfinished note and starts a short waiting period again. Only after the caller has been silent for, say, 300 milliseconds does the receptionist deliver the final note.
 
-## 4. Visual / analogy
-Debouncing is like waiting until someone stops typing before responding.
+The caller is the stream of browser events. The unfinished note is the pending timer. Throwing away the old note is `clearTimeout`, and the silence window is the debounce delay. The manager receives one message containing the latest value, not one message for every sentence.
 
-```mermaid
-flowchart LR
-  Type1["Type"] --> Reset["Reset timer"]
-  Type2["Type again"] --> Reset
-  Reset --> Quiet["No changes"]
-  Quiet --> Run["Run action"]
-```
+This analogy also shows what debouncing does not do. Once the receptionist delivers the note, the manager's work is already in progress; a later note does not magically cancel it. In a search UI, debouncing reduces how many requests start, but request cancellation or response identity is still needed if requests can overlap.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+The core invariant is simple: for one debounce stream, there is at most one pending timer, and that timer represents the latest input.
+
+For a debounced value hook, the sequence is:
+
+1. The component renders with the immediate value, such as `query = "head"`.
+2. After the render commits, the hook's effect schedules a timer for the configured delay.
+3. If `query` changes before the timer fires, React runs the previous effect's cleanup. Cleanup clears that timer.
+4. The hook starts a new timer for the new value, so the quiet-time countdown begins again.
+5. If no further change arrives, the timer callback updates the debounced state to the latest value. That state update causes a render, and consumers can use it for expensive work.
+
+`setTimeout` does not block JavaScript for the delay. It registers a callback with the browser's timer system and returns immediately. When the delay has elapsed, the callback becomes eligible to run on a later event-loop turn; it still waits behind currently running JavaScript and other queued work. A 300 ms debounce is therefore a minimum quiet period, not a guarantee that the callback runs at exactly 300 ms.
+
+React effects are the right place for a custom hook's timer because a timer is an external resource owned by that effect instance. Cleanup runs before the effect is re-run for changed dependencies and when the component unmounts. The cleanup is what prevents old timers from surviving into a newer render. In development Strict Mode, React may mount, clean up, and mount again to expose unsafe side effects; a correct timer cleanup makes that sequence harmless.
+
+There are two common APIs:
+
+- A debounced value returns a delayed copy. The controlled input keeps using the immediate value, while a search hook reads the delayed copy.
+- A debounced callback returns a function whose invocation is delayed. This is useful when the caller wants to pass arguments at event time, but it must preserve a stable function identity and define what happens when the callback changes.
+
+Debouncing is normally trailing-edge behavior: run once after the final event in a burst. A leading-edge variant runs immediately on the first event and suppresses further calls until the quiet window ends. Some production utilities support both leading and trailing execution, plus `maxWait` so continuous activity cannot postpone work forever. Those are policies, not consequences of `setTimeout` alone, and should be named explicitly in an API.
+
+Debouncing a value does not cancel a fetch. If the debounced query changes from `head` to `headphones` after the first request has started, both requests can still be in flight. Use `AbortController`, a request ID check, or a server-state library to prevent an older response from winning. Debounce controls when work starts; cancellation controls already-started work.
+
+## 4. Real Code — See It Working
+
+The following hook is a complete value-debouncing implementation. It uses the global timer functions so it works in browsers and in test environments without requiring `window`.
 
 ```tsx
-function useDebounce<T>(value: T, delay: number) {
-  const [debounced, setDebounced] = React.useState(value);
+import * as React from "react";
+
+export function useDebounce<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = React.useState(value);
+
   React.useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(id);
-  }, [value, delay]);
-  return debounced;
+    // A new effect run gets a new timer for the newest value.
+    const timerId = setTimeout(() => {
+      setDebouncedValue(value);
+    }, Math.max(0, delayMs));
+
+    // React runs this before the next run, so only the newest timer remains.
+    return () => clearTimeout(timerId);
+  }, [value, delayMs]);
+
+  return debouncedValue;
 }
 ```
 
-## 6. Real-world example
+Here is a consumer plus its request hook. Assume the app serves `GET /api/products?q=...` and returns a JSON array of `{ id, name }` objects. The input is intentionally immediate; only the request-driving value is delayed.
 
 ```tsx
-const debouncedQuery = useDebounce(query, 300);
-const results = useSearchQuery(debouncedQuery);
+import * as React from "react";
+import { useDebounce } from "./useDebounce";
+
+type Product = { id: string; name: string };
+
+async function searchProducts(query: string, signal: AbortSignal): Promise<Product[]> {
+  const response = await fetch(`/api/products?q=${encodeURIComponent(query)}`, { signal });
+  if (!response.ok) throw new Error(`Search failed: ${response.status}`);
+  return response.json() as Promise<Product[]>;
+}
+
+function useProductSearch(debouncedQuery: string) {
+  const [products, setProducts] = React.useState<Product[]>([]);
+  const [error, setError] = React.useState<string | null>(null);
+  const latestRequestId = React.useRef(0);
+
+  React.useEffect(() => {
+    const requestId = ++latestRequestId.current;
+
+    if (!debouncedQuery.trim()) {
+      setProducts([]);
+      setError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    searchProducts(debouncedQuery, controller.signal)
+      .then((nextProducts) => {
+        // Abort is cooperative; identity also blocks an already-resolved stale request.
+        if (requestId === latestRequestId.current && !controller.signal.aborted) {
+          setProducts(nextProducts);
+        }
+      })
+      .catch((reason: unknown) => {
+        // Aborting an obsolete search is expected, not a user-visible error.
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        if (requestId === latestRequestId.current && !controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : "Unknown search error");
+        }
+      });
+
+    return () => controller.abort();
+  }, [debouncedQuery]);
+
+  return { products, error };
+}
+
+export function ProductSearch() {
+  const [query, setQuery] = React.useState("");
+  const debouncedQuery = useDebounce(query, 300);
+  const { products, error } = useProductSearch(debouncedQuery);
+
+  return (
+    <section>
+      <label>
+        Search products
+        <input value={query} onChange={(event) => setQuery(event.target.value)} />
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <ul>
+        {products.map((product) => <li key={product.id}>{product.name}</li>)}
+      </ul>
+    </section>
+  );
+}
 ```
 
-## 7. Common interview questions
-#### What is debouncing?
-- **The Engine Mechanism (Why it behaves this way):** Debouncing is a timing pattern that delays execution of a function until a specified period of inactivity has passed. Each new event resets the timer. In React, this is implemented with `setTimeout` inside `useEffect` and `clearTimeout` in the cleanup. The browser's timer API manages the delay, and React's effect lifecycle ensures the timer is cancelled and restarted when the debounced value changes.
-- **The Unforgettable Mental Model:** The **Patient Listener**. A debouncer is like a friend who waits until you finish your entire sentence before responding. If you keep talking, they keep waiting. Only when you stop do they finally reply.
-- **The Trap:** Confusing debounce with throttle. Debounce waits for quiet; throttle fires at regular intervals during activity. They solve different problems.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Debouncing delays an action until input has stopped changing for a specified duration. Each new event resets the timer, so the action only fires after a period of inactivity. In React, I implement it with `useEffect`, `setTimeout`, and cleanup — the effect starts a timer when the value changes, and cleanup clears the previous timer, ensuring only the last value triggers the action."
+The search effect is separate from the debounce hook because the concerns are different: the first hook delays the start, while the second effect owns request cancellation. In an application already using TanStack Query or another server-state library, the debounced query can be part of the query key and the library can manage caching, deduplication, and stale-result handling.
 
-#### How do you build `useDebounce`?
-- **The Engine Mechanism (Why it behaves this way):** The hook accepts a value and a delay. It stores a `debounced` state initialized to the input value. A `useEffect` watches the input value and delay — when either changes, it starts a `setTimeout` that updates `debounced` after the delay. The cleanup function calls `clearTimeout` to cancel the previous timer. The hook returns the `debounced` state, which lags behind the input by the delay duration.
-- **The Unforgettable Mental Model:** The **Delayed Mirror**. A normal mirror reflects instantly. A debounced mirror waits a moment before showing your reflection — if you keep moving, it keeps waiting. Only when you still does it finally show you.
-- **The Trap:** Not including `delay` in the dependency array. If the delay prop changes, the effect must restart with the new delay. Missing this dependency causes the old delay to persist.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: `useDebounce` takes a value and delay, stores a debounced state, and uses `useEffect` to start a `setTimeout` that updates the debounced value after the delay. The cleanup clears the previous timer. Dependencies are the input value and delay. The hook returns the debounced state, which consumers can use to trigger expensive operations only after the user stops changing the input."
+For a callback API, a small implementation can expose cancellation. This example has trailing behavior and deliberately documents that changing the callback does not cancel a timer already scheduled for the same invocation; the callback reference is read when the timer fires.
 
-#### Why is cleanup needed?
-- **The Engine Mechanism (Why it behaves this way):** Without cleanup, each value change would start a new `setTimeout` without cancelling the previous one. This means multiple timers would be running concurrently, and each would eventually fire, updating the debounced state multiple times — defeating the purpose of debouncing. The cleanup's `clearTimeout` ensures only the most recent timer survives, which is the core mechanism of debouncing.
-- **The Unforgettable Mental Model:** The **Single-Track Railway**. Only one train (timer) should be on the track at a time. When a new train departs (new value), the previous one must be pulled off the track (cleared), or you'll have multiple trains arriving at the destination.
-- **The Trap:** Forgetting cleanup causes the exact opposite of debouncing — every keystroke eventually triggers an action after the delay, just staggered. This is worse than no debounce because it creates a flood of delayed actions.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Cleanup is the core mechanism of debouncing. Without `clearTimeout` in cleanup, each value change starts a new timer without cancelling the previous one, so every input eventually triggers an action — just delayed. The cleanup ensures only the latest timer survives, which is what makes debouncing work: only the final value after a pause triggers the action."
+```tsx
+import * as React from "react";
 
-#### Debounce vs throttle?
-- **The Engine Mechanism (Why it behaves this way):** Debounce delays execution until there's a gap of inactivity — it fires once after the last event. Throttle limits execution to at most once per time window — it fires repeatedly during activity but at a controlled rate. Debounce is ideal for search inputs (wait until user stops typing). Throttle is ideal for scroll handlers (update continuously but not on every pixel).
-- **The Unforgettable Mental Model:** The **Elevator vs. the Escalator**. Debounce is an elevator — it waits until everyone stops pressing the button, then goes. Throttle is an escalator — it keeps moving at a steady pace as long as people are on it.
-- **The Trap:** Using debounce for scroll tracking. Debounce won't fire until the user stops scrolling, which means no updates during the scroll — defeating the purpose of tracking scroll position.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Debounce waits for a period of inactivity before firing — it's for 'do this after the user stops.' Throttle fires at most once per time window — it's for 'do this regularly during activity.' I use debounce for search inputs, form validation, and autosave. I use throttle for scroll tracking, resize handling, and pointer move events."
+export function useDebouncedCallback<Args extends unknown[]>(
+  callback: (...args: Args) => void,
+  delayMs: number,
+) {
+  const callbackRef = React.useRef(callback);
+  callbackRef.current = callback;
+  const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingArgs = React.useRef<Args | null>(null);
 
-#### Where is debounce useful?
-- **The Engine Mechanism (Why it behaves this way):** Debounce is useful anywhere rapid, repeated events should trigger a single delayed action. Search inputs: avoid API calls on every keystroke. Form validation: validate after the user finishes typing, not during. Autosave: save after the user pauses, not on every character. Window resize: recalculate layout after resize stops. These patterns reduce network requests, computation, and jank.
-- **The Unforgettable Mental Model:** The **Pause Button**. Debounce hits pause on every event and only presses play when there's been silence. It turns a rapid-fire machine gun into a single, well-aimed shot.
-- **The Trap:** Debouncing the controlled input value itself instead of a derived debounced value. If you debounce the input's `value` prop, the input becomes laggy and unresponsive to typing.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Debounce is useful for search inputs to avoid excessive API calls, form validation to check after the user finishes typing, autosave to batch saves during pauses, and resize handlers to recalculate after the window settles. The key pattern is: keep the immediate UI responsive (input value updates instantly) but delay the expensive downstream action (API call, validation, save) until the user pauses."
+  const clearTimer = React.useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
 
-#### How do dependencies work?
-- **The Engine Mechanism (Why it behaves this way):** The `useEffect` inside `useDebounce` depends on the input value and the delay. When the value changes, the effect re-runs: cleanup clears the previous timer, and setup starts a new one. When the delay changes, the same happens — the old timer is cleared and a new one starts with the new delay. If either dependency is missing, the debounce behavior breaks: missing value means the timer never restarts; missing delay means the old delay persists.
-- **The Unforgettable Mental Model:** The **Two Dials**. The value dial controls what gets delayed; the delay dial controls how long to wait. Turn either dial, and the machine resets its countdown.
-- **The Trap:** Adding unnecessary dependencies like the setter function. `setDebounced` is stable across renders, so including it is harmless but misleading. Only include values that actually affect the timer logic.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The effect in `useDebounce` depends on the input value and the delay. When the value changes, cleanup clears the old timer and setup starts a new one. When the delay changes, the same reset happens. Both dependencies are required — without the value, the timer never restarts on new input; without the delay, changes to the delay prop are ignored."
+  const cancel = React.useCallback(() => {
+    clearTimer();
+    pendingArgs.current = null;
+  }, [clearTimer]);
 
-#### How do you test debounce?
-- **The Engine Mechanism (Why it behaves this way):** Testing debounce requires controlling time. Real `setTimeout` would make tests slow and flaky. Test frameworks provide fake timers (`vi.useFakeTimers()` in Vitest, `jest.useFakeTimers()` in Jest) that replace the browser's timer APIs with mock implementations. You advance time manually with `vi.advanceTimersByTime(delay)` to trigger the debounced action instantly. This makes tests deterministic and fast.
-- **The Unforgettable Mental Model:** The **Time Machine**. Fake timers let you fast-forward through the debounce delay without actually waiting. You type, then jump 300ms into the future to see if the action fired.
-- **The Trap:** Forgetting to restore real timers after the test (`vi.useRealTimers()` or `afterEach` cleanup). Fake timers leak into other tests and cause mysterious timeout failures.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I test debounce with fake timers. I enable them with `vi.useFakeTimers()`, trigger the input, then advance time by the delay with `vi.advanceTimersByTime(300)`. This instantly fires the debounced action without waiting. I assert the expected result after advancing time. I always restore real timers in an `afterEach` hook to prevent fake timers from affecting other tests."
+  const schedule = React.useCallback((delay: number) => {
+    clearTimer();
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      const currentArgs = pendingArgs.current;
+      pendingArgs.current = null;
+      if (currentArgs !== null) callbackRef.current(...currentArgs);
+    }, Math.max(0, delay));
+  }, [clearTimer]);
 
-## 8. Active recall test
-1. **What resets the timer?**
-   - **Explanation:** Each new value change triggers the effect to re-run. The cleanup clears the previous `setTimeout`, and the setup starts a fresh timer. This means the countdown restarts from zero every time the input changes, ensuring the action only fires after a period of no changes.
-2. **What does cleanup clear?**
-   - **Explanation:** The previous `setTimeout` timer ID via `clearTimeout(id)`. This cancels the pending debounced action, ensuring that only the most recent timer — the one started after the latest value change — is allowed to complete and update state.
-3. **Why debounce search?**
-   - **Explanation:** Search inputs fire an event on every keystroke. Without debouncing, each keystroke triggers an API call, causing excessive network traffic, server load, and potential race conditions. Debouncing waits for the user to pause, then fires a single request with the final query.
-4. **What is returned from `useDebounce`?**
-   - **Explanation:** The debounced state value — a lagging copy of the input that only updates after the delay period of inactivity. Consumers use this debounced value (not the raw input) to trigger expensive operations like API calls or heavy computations.
-5. **How is throttle different?**
-   - **Explanation:** Throttle fires at most once per time window during continuous activity, while debounce fires only once after activity stops. Throttle is for "keep updating during action" (scroll tracking); debounce is for "wait until action stops" (search input).
+  const run = React.useCallback((...args: Args) => {
+    pendingArgs.current = args;
+    schedule(delayMs);
+  }, [delayMs, schedule]);
 
-## 9. Mistakes / traps
-- Forgetting cleanup.
-- Debouncing controlled input value itself and making typing lag.
-- Missing delay dependency.
-- Creating timers during render.
-- Not testing with fake timers.
+  React.useEffect(() => {
+    if (pendingArgs.current !== null) {
+      schedule(delayMs);
+    }
+    return clearTimer;
+  }, [clearTimer, delayMs, schedule]);
 
-## 10. Compare with related concepts
-- **Debounce vs throttle:** debounce waits for quiet; throttle limits frequency.
-- **Debounced value vs debounced callback:** value delays state output; callback delays function execution.
-- **Debounce vs deferred value:** debounce uses time; deferred value uses React scheduling.
+  React.useEffect(() => () => {
+    clearTimer();
+    pendingArgs.current = null;
+  }, [clearTimer]);
 
-## 11. Summary from memory
-Explain how a debounced search avoids API calls on every keystroke.
+  return { run, cancel };
+}
+```
 
-## 12. Spaced revision prompts
-- After 1 day: Define debounce.
-- After 3 days: Build `useDebounce`.
-- After 7 days: Compare debounce and throttle.
-- After 14 days: Test debounce with fake timers.
+The callback ref keeps `run` stable when the callback function is recreated by a render, while still invoking the latest callback when the timer fires. The delay is a real dependency: changing it clears the old timer but keeps the pending arguments, then the new effect re-arms that invocation using the new delay. Calling `cancel` or unmounting deliberately drops those arguments. A production version may also return `flush`, support `leading`, or enforce `maxWait`, but each addition needs explicit tests for its timing contract.
 
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is debouncing, and why is it useful in React?**
+
+Debouncing delays trailing work until no new event has arrived during a quiet window. Each new event cancels the previous pending timer and starts the window again. In React, this is useful when state must update immediately for responsive rendering but an expensive consequence—such as a search request or validation—should happen only after the user pauses.
+
+**Q: How would you implement `useDebounce`?**
+
+Keep a delayed state value, schedule `setDebouncedValue(value)` inside an effect, and return a cleanup that calls `clearTimeout` on the timer ID. The effect depends on both `value` and `delayMs`, because either change changes the timer's meaning. Initialize the delayed value from the current value so consumers do not see an unnecessary empty state on the first render.
+
+**Q: Why must the cleanup clear the timer?**
+
+Without cleanup, every render that changes the value leaves its timer alive. All those callbacks eventually run, so the code produces a sequence of delayed updates rather than one update after quiet time. Cleanup enforces the invariant that only the timer for the newest value can remain pending. It also prevents a timer from trying to update state after the component unmounts.
+
+**Q: Should the input itself be debounced?**
+
+Usually no. A controlled input should use the immediate `query` state so typing, caret movement, and validation of the local field remain responsive. Keep `query` immediate and derive `debouncedQuery` for the expensive consumer. Debouncing the `value` prop makes the field visually lag behind what the user typed.
+
+**Q: What is the difference between a debounced value and a debounced callback?**
+
+A debounced value delays state propagation: `useDebounce(query, 300)` returns a value that changes after quiet time. A debounced callback delays an imperative function call: `run(query)` schedules the function and replaces an earlier scheduled call. The value form composes naturally with render-time consumers and query keys; the callback form is useful for event-driven work such as autosave, but must define identity, cancellation, and callback freshness.
+
+**Q: How is debounce different from throttle?**
+
+Debounce waits for the burst to stop and normally runs once afterward. Throttle allows work at most once per interval while the burst continues. Use debounce for “search after the user stops typing” and throttle for “update scroll position at a controlled rate while scrolling.” Using debounce for scroll progress makes updates stop until the user stops, which is usually the wrong user experience.
+
+**Q: Does debouncing prevent race conditions in search?**
+
+No. It reduces the number of requests, but a request that already started is independent of the timer. A request for an earlier query can still finish after a later request. Pair debouncing with `AbortController`, an increasing request token checked before committing results, or a query library that manages request identity. The rule is: debounce start time; cancel or ignore stale completion.
+
+**Q: What happens if the delay changes?**
+
+The timer should be recreated using the new delay. Including the delay in the effect dependency array causes React to run cleanup for the old timer and schedule a new one. If a delay change is intentionally not supposed to affect an already-scheduled callback, that is a different API contract and should be implemented and documented explicitly rather than achieved by omitting a dependency accidentally.
+
+**Q: What does Strict Mode change about a debounced hook?**
+
+In development, Strict Mode can perform an extra setup-and-cleanup cycle to reveal effects that are not safely reversible. A correct hook schedules one timer and clears it during cleanup, so the temporary timer cannot leak or produce an extra lasting update. Strict Mode does not mean production should receive two requests; if it appears to, inspect missing cleanup or a separate request effect that is not idempotent.
+
+**Q: How would you test debouncing?**
+
+Use fake timers so the test controls time without sleeping. Render the hook, change the input, assert that the delayed value has not changed before the delay, advance timers by just under the delay and assert again, then advance through the remaining time and assert the new value. Change the input twice before advancing and verify only the final value is committed. Restore real timers after each test, and wrap timer advancement in the test renderer's `act` helper when the test framework requires it.
+
+**Q: What should a production debounce API consider besides a delay?**
+
+It should make trailing versus leading behavior clear, provide cancellation when work should be discarded, and consider `maxWait` for continuously active inputs. It should define what happens on unmount, how callback identity is handled, whether changing the delay affects pending work, and whether an invocation returns a promise or errors through another channel. A 300 ms timer alone is not a complete product contract.
+
+## 6. The Traps — What Goes Wrong
+
+The first trap is forgetting cleanup. Clearing the timer is not optional bookkeeping; it is the operation that replaces the previous candidate with the newest candidate. Without it, typing five characters schedules five callbacks, and “debounced” work still runs five times after staggered delays.
+
+The second trap is putting the delayed value into the controlled input. That makes the DOM receive updates only after the quiet period, so fast typing feels broken. Keep separate immediate and delayed values.
+
+The third trap is creating a timer during render. Render must stay a repeatable calculation; it can run more than once and can be abandoned before commit. A timer created there has no React cleanup lifecycle and may fire for a render the user never saw. Schedule it in the custom hook's effect instead.
+
+The fourth trap is hiding a dependency. Omitting `value` means new input may never restart the timer. Omitting `delayMs` means a changed delay can leave old timing behavior in place. If a callback is involved, blindly adding an unstable callback to dependencies can recreate and cancel the timer on every render; use a deliberate callback-ref design or a stable callback contract, and test it.
+
+The fifth trap is treating debounce as cancellation. Once the timer calls `fetch`, the timer is finished. Calling `clearTimeout` later cannot undo bytes already sent or a response already being processed. Abort the request or reject stale results at the point where they are committed.
+
+The sixth trap is assuming exact timing. Timers are not real-time interrupts. A busy main thread, background-tab throttling, rendering work, and event-loop queues can make a callback run later than the requested delay. Use the delay as a lower bound for quiet time, not as a scheduling guarantee.
+
+The seventh trap is using debounce for every high-frequency event. For scroll, drag, and pointer tracking, users often need periodic feedback while activity continues; throttle or `requestAnimationFrame` may fit better. For autosave, also decide whether dropping intermediate states is safe and whether the final save must be flushed before navigation.
+
+The eighth trap is reporting aborted requests as failures. Cancellation is expected when a newer query supersedes an older one. Filter the abort error from user-facing error state while still surfacing real network and server failures.
+
+## 7. Compare With Related Concepts
+
+**Debounce vs throttle:** Debounce waits for silence and usually emits once after the burst. Throttle emits at a bounded rate during the burst. Choose debounce when the final state matters; choose throttle when intermediate progress matters.
+
+**Debounced value vs debounced callback:** A value hook returns delayed data and works well with declarative consumers such as query keys. A callback hook delays an imperative invocation and must handle function identity, argument retention, cancellation, and callback freshness. Choose the value API when the delayed thing is data; choose the callback API when the delayed thing is an action.
+
+**Debounce vs `useDeferredValue`:** Debounce is wall-clock policy: it intentionally waits for a quiet period and is useful for limiting requests. `useDeferredValue` is a React scheduling hint: it lets a lower-priority render lag when the main thread is busy, but it does not promise a 300 ms wait and does not reduce network calls by itself. Choose debounce to control side-effect frequency; choose deferred rendering to keep urgent UI responsive.
+
+**Debounce vs `useTransition`:** A transition marks state updates as non-urgent and lets React schedule their rendering. It does not delay an event until silence and does not cancel a fetch. Choose a transition for render priority; choose debounce for burst aggregation.
+
+**Debounce vs request cancellation:** Debounce prevents some work from starting. Cancellation stops eligible work that has already started, while an ignore/token check allows it to finish but prevents stale results from being committed. Search often needs both: debounce the input, then cancel or ignore obsolete requests.
+
+**Debounced autosave vs batching:** Debounce intentionally drops intermediate saves and keeps the latest state. Batching groups multiple updates for processing but may preserve every event or operation. Choose debounce only when intermediate states are replaceable; never use it to collapse independent payments, audit events, or inventory mutations.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Debouncing is a receptionist who keeps throwing away the unfinished message until the caller goes quiet; only the final message reaches the manager. Remember the boundary: the timer controls when work starts, but once work starts, cancellation or stale-result protection controls whether it is still allowed to finish.
