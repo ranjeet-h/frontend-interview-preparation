@@ -52,10 +52,10 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Redis | 20 |
 | Security | 30 |
 | Senior scenarios | 25 |
-| SQLAlchemy | 30 |
+| SQLAlchemy | 24 (6 / 30 completed) |
 | Testing | 20 |
 | WebSockets | 20 |
-| **Total Backend Remaining** | **470** |
+| **Total Backend Remaining** | **464** |
 
 ### MERN Status
 
@@ -77,6 +77,6 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **313**
+- **Total Completed Concept/System Pages:** **319**
 - **Total Completed Output Question Puzzles:** **15**
-- **Total Outstanding Leaf Pages:** **605** (470 Backend + 135 Database)
+- **Total Outstanding Leaf Pages:** **599** (464 Backend + 135 Database)
