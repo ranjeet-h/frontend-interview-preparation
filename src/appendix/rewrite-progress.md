@@ -60,4 +60,4 @@ Backend question banks follow the same in-place rule when rewritten.
 ## Tracker file
 
 Live checklist: `docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`  
-Project root snapshot: [`REWRITE-PROGRESS.md`](../../REWRITE-PROGRESS.md)
+Project root snapshot: [`REWRITE_PROGRESS.md`](../../REWRITE_PROGRESS.md)

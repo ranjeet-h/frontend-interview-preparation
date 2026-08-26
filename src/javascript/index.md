@@ -3,7 +3,7 @@
 JavaScript is the language layer that powers the browser, your algorithms, and the reusable
 patterns interviewers probe from multiple angles.
 
-Rewrite progress: [`REWRITE-PROGRESS.md`](../../REWRITE-PROGRESS.md) (project root) and the per-topic tracker in `docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`.
+Rewrite progress: [`REWRITE_PROGRESS.md`](../../REWRITE_PROGRESS.md) (project root) and the per-topic tracker in `docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`.
 
 ## Concept chapters (Type A study format)
 

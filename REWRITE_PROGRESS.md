@@ -2,7 +2,7 @@
 
 Updated: 2026-08-25
 
-This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-page status remains in [`docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`](docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md), and the broader project rollup remains in [`REWRITE-PROGRESS.md`](REWRITE-PROGRESS.md).
+This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-page status remains in [`docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`](docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md).
 
 ## Current JavaScript concept queue
 
@@ -73,5 +73,5 @@ None; all 56 JavaScript concept pages have passed scoped review and been committ
 ## Cross-project synchronization
 
 - The detailed tracker currently has 288 page rows marked `rewritten` and 28 rows marked `assigned`.
-- The broader rollup in `REWRITE-PROGRESS.md` includes the other completed frontend, React, system-design, Node.js, MongoDB, Mongoose, and MERN work.
+- This file is the shared rollup for completed frontend, React, system-design, Node.js, MongoDB, Mongoose, and MERN work.
 - Update the detailed tracker only after a page has passed its scoped review and target-only commit.
