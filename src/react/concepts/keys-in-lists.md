@@ -48,7 +48,7 @@ React steps through both the old Fibers and the new Elements simultaneously at i
 1. Does the element type match (e.g., is it still an `<li>` or `<TodoItem>`)?
 2. Does the `key` match?
 
-If both match, React reuses the existing Fiber node, copies over the new props, and schedules an update if needed. The existing DOM node and all associated component state (`useState`, `useRef`, input focus) remain intact.
+Only when both the key and element type match does React reuse the existing Fiber node, copy over the new props, and schedule an update if needed. The existing DOM node and all associated component state (`useState`, `useRef`, input focus) remain intact. A matching key with a different element or component type is not a match: React unmounts the old tree and mounts the new type, so its state resets and its effect cleanups run.
 
 The moment React encounters a key mismatch (for example, a new item was inserted at index 0, shifting all old items to the right), the sequential scan stops immediately.
 
@@ -75,6 +75,10 @@ Keys are not limited to `map()` loops. You can place a `key` on any standalone c
 
 If you have a `<UserProfile key={userId} />` component with internal draft state, changing `userId` changes the `key`. When React sees a different key on the same component type at the same position, it treats the old component as destroyed. React unmounts the old Fiber (resetting all `useState` variables and running effect cleanups) and mounts a brand new Fiber with fresh initial state. This eliminates the need for messy `useEffect` sync logic.
 
+Think of each render as a snapshot of the UI at one moment. The parent owns the list data; a key tells React which child instance owns the local state for each snapshot, so that state follows the data item instead of its temporary position. Effects are for synchronizing that instance with external systems, such as subscriptions or network connections—not for copying every prop into state. A key change can intentionally replace the instance and therefore clean up and recreate those external synchronizations.
+
+Stable keys also matter when Strict Mode replays work in development or concurrent rendering starts, pauses, and abandons a render. React may render more than once before committing, so keys must be deterministic and side-effect-free. Abandoned render work does not change the committed state; unstable keys cause remounts and state loss only when that unstable-key result is committed, while replay can expose the nondeterminism before commit.
+
 Keys in React Fragments:
 When rendering lists where each item needs to output multiple top-level elements (for example, a `<dt>` and `<dd>` pair inside a `<dl>`), you cannot use the shorthand fragment syntax `<>...</>` because it does not accept attributes. You must use `<React.Fragment key={item.id}>...</React.Fragment>`.
 
@@ -86,6 +90,8 @@ React strips `key` and `ref` during `createElement` or JSX transformation. They 
 Here is a complete demonstration contrasting broken index keys with correct stable keys, followed by the key-based reset pattern.
 
 Example 1: The Index Key Bug vs Stable Key Fix
+
+Runtime/context: React 18+ in a browser client component, using TypeScript with JSX in a `.tsx` file. The example assumes the standard React DOM renderer and `crypto.randomUUID()` support.
 
 ```tsx
 import React, { useState } from "react";
@@ -109,8 +115,8 @@ export function TodoListDemo() {
 
   const addTop = () => {
     const newItem: Todo = {
-      // Generate ID at creation time, not during render
-      id: `todo-${Date.now()}`,
+      // Generate the ID once at ingestion, not during render; production data would normally provide this ID.
+      id: crypto.randomUUID(),
       text: "New urgent task",
     };
     setTodos((prev) => [newItem, ...prev]);
@@ -120,7 +126,7 @@ export function TodoListDemo() {
     <div style={{ display: "flex", gap: "2rem", fontFamily: "sans-serif" }}>
       {/* BROKEN IMPLEMENTATION */}
       <div>
-        <h3>Broken: key={`{index}`}</h3>
+        <p><strong>Broken: key={index}</strong></p>
         <p style={{ fontSize: "0.85rem", color: "#666" }}>
           Type notes in the input, then click "Delete First Item".
         </p>
@@ -142,7 +148,7 @@ export function TodoListDemo() {
 
       {/* CORRECT IMPLEMENTATION */}
       <div>
-        <h3>Correct: key={`{todo.id}`}</h3>
+        <p><strong>Correct: key={todo.id}</strong></p>
         <p style={{ fontSize: "0.85rem", color: "#666" }}>
           Type notes here, then click "Delete First Item".
         </p>
@@ -167,6 +173,8 @@ export function TodoListDemo() {
 
 Example 2: The Key-Based Reset Pattern for Standalone Components
 
+Runtime/context: React 18+ in a browser client component, using TypeScript with JSX in a `.tsx` file and the standard React DOM renderer.
+
 ```tsx
 import React, { useState } from "react";
 
@@ -181,7 +189,7 @@ function CommentEditor({ commentId, initialText }: CommentEditorProps) {
 
   return (
     <div style={{ border: "1px solid #ccc", padding: "1rem", margin: "1rem 0" }}>
-      <h4>Editing Comment #{commentId}</h4>
+      <p><strong>Editing Comment #{commentId}</strong></p>
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -227,6 +235,8 @@ export function CommentManager() {
 ```
 
 Example 3: Fragment Keys in Definition Lists
+
+Runtime/context: React 18+ in a browser client component, using TypeScript with JSX in a `.tsx` file and the standard React DOM renderer.
 
 ```tsx
 import React from "react";
@@ -319,6 +329,8 @@ When you assign a `key` to a standalone component (like `<Form key={selectedUser
 
 React unmounts the old Fiber instance, destroying all its internal state and running effect cleanups, and mounts a fresh Fiber with clean initial state. This provides a declarative, bug-free way to reset forms or complex editors when switching entities without writing manual `useEffect` cleanup routines.
 
+The reset is about component identity, not data ownership: keep durable entity data in the parent or a store, and use the key only when this child should receive a new local-state lifetime. In Strict Mode and concurrent rendering, render work can be replayed or discarded without changing committed state; if an unstable key is committed, React can instead treat the child as new and lose its local state. Replay may reveal that nondeterminism even when the particular render is later abandoned.
+
 **Q: How do you attach a key when mapping an array to a list of React Fragments?**
 
 The short fragment syntax `<>...</>` cannot receive any props or keys.
@@ -327,41 +339,66 @@ To provide a key to a fragment, you must import React and use the explicit synta
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: The "Ghost State" Bug with Form Inputs
+**Trap 1 — The "Ghost State" Bug with Form Inputs.**
 - The mistake: Using `key={index}` on a list of items that contain form inputs or local state.
 - Why it happens: Developers test the list by typing into the first item and deleting it. Because the keys are index-based (`0, 1, 2`), the second item becomes index `0`. React matches the new index `0` with the old index `0` Fiber and preserves the old input's DOM node and internal state.
 - The symptom: The typed text stays in the first input box while the text label changes to the next item's name. The bottom item disappears.
 - The fix: Always use a persistent unique identifier from your data: `key={item.id}`.
 
-### Trap 2: Generating Keys On The Fly During Render
+**Trap 2 — Generating Keys On The Fly During Render.**
 - The mistake: Writing `items.map(item => <Item key={crypto.randomUUID()} data={item} />)` or `key={Math.random()}` to satisfy the linter.
 - Why it happens: A developer sees a "Missing key prop" warning, doesn't have an ID on their raw objects, and uses a random generator inside JSX.
 - The symptom: Every state update causes the entire list to flash, inputs lose focus after every single typed character, and input state is constantly erased.
-- The fix: Generate the UUID once when the data item is created (when adding to state or fetching from API) and store it on the object: `item.id = crypto.randomUUID()`.
+- The fix: Generate the UUID once when the data item is created (when adding to state or fetching from the API) and store it immutably on a new object: `const itemsWithIds = items.map((item) => ({ ...item, id: crypto.randomUUID() }));`. Prefer a backend or persisted ID when one exists.
 
-### Trap 3: Placing the Key on the Inner Element
+**Trap 3 — Placing the Key on the Inner Element.**
 - The mistake: Putting the `key` prop on an inner element inside a child component rather than on the outermost element returned by the `map()` callback.
 - Why it happens: A developer extracts a list item into a `<ListItem />` component and leaves `key={item.id}` inside the `<ListItem>` definition on a `<div>`.
 - The symptom: React logs a warning that items in an iterator require a key, and reconciliation falls back to index-based matching.
 - The fix: The key must always be placed on the direct sibling element returned inside the `map()` iterator:
+
+Runtime/context: React 18+ with TypeScript and JSX in a `.tsx` file; this complete example defines the item type, component props, and containing component.
+
   ```tsx
+  import React from "react";
+
+  interface ListItemData {
+    id: string;
+    name: string;
+  }
+
+  interface ListItemProps {
+    item: ListItemData;
+  }
+
   // WRONG:
-  function ListItem({ item }) {
+  function ListItem({ item }: ListItemProps) {
     return <li key={item.id}>{item.name}</li>; // Invisible to the parent array diff!
   }
-  items.map(item => <ListItem item={item} />);
 
   // CORRECT:
-  items.map(item => <ListItem key={item.id} item={item} />);
+  export function Trap3Demo({ items }: { items: ListItemData[] }) {
+    return (
+      <>
+        <ul>
+          {items.map((item) => <ListItem item={item} />)}
+        </ul>
+        <ul>
+          {items.map((item) => <ListItem key={item.id} item={item} />)}
+        </ul>
+      </>
+    );
+  }
+
   ```
 
-### Trap 4: Duplicate Keys Among Siblings
+**Trap 4 — Duplicate Keys Among Siblings.**
 - The mistake: Using a non-unique property (like `item.category` or `item.status`) as a key.
 - Why it happens: Multiple items share the same category string.
-- The symptom: React outputs a warning: "Encountered two children with the same key". During reconciliation, React's map lookup will overwrite the first child with the second child, leading to dropped DOM nodes, incorrect updates, or runtime errors during deletion.
-- The fix: Combine fields if no single unique ID exists (e.g., `key={`${item.category}-${item.name}-${index}`}`) or generate unique IDs when ingesting the data.
+- The symptom: React outputs a warning: "Encountered two children with the same key". During reconciliation, duplicate keys can make React match the wrong child or leave a child out of the result, leading to dropped or incorrectly reused children when the list changes.
+- The fix: Prefer a persisted ID. If none exists, use a composite of fields guaranteed to be immutable and unique for the item's lifetime (e.g., `key={`${item.category}-${item.sku}`}`); never append the array index. Otherwise generate and persist a unique ID when ingesting the data.
 
-### Trap 5: Attempting to Read `props.key`
+**Trap 5 — Attempting to Read `props.key`.**
 - The mistake: Accessing `props.key` inside a child component to perform an API call or check identity.
 - Why it happens: Expecting `key` to behave like any other JSX prop.
 - The symptom: `props.key` evaluates to `undefined`, and React displays a console warning.
@@ -376,6 +413,6 @@ To provide a key to a fragment, you must import React and use the explicit synta
 | **`key` vs `ref`** | `key` identifies which element is which across renders; `ref` provides a direct reference to an underlying DOM node or persistent mutable container. | Use `key` when rendering collections or forcing component remounts; use `ref` to focus inputs, measure DOM layout, or hold mutable values without re-rendering. |
 | **Key Reset vs `useEffect` Sync** | Key-based reset (`key={id}`) destroys and remounts the component with fresh state; `useEffect` state syncing manually overwrites state variables after a prop change. | Use `key={id}` on components whenever you want a full, clean state reset on ID change; use `useEffect` (or preferably derived state) only when you need to preserve existing state and partially update it. |
 
-## 8. 🧠 The Memory Hook
+## 8. 🧠 The Memory Hook — What Sticks
 
 A key is a name tag, not a seat number. If you track items by their seat number (`index`), moving seats makes people inherit whatever junk was left on the desk. Give every item its own permanent name tag (`stable ID`), and its identity, local state, and focus travel with it wherever it moves.
