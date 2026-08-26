@@ -1,122 +1,337 @@
 # Hook Dependency Array
 
-## Detailed explanation
-The dependency array tells React when an effect, memo, or callback should be recomputed. Dependencies should include every reactive value used inside the hook callback: props, state, and variables/functions declared in the component scope.
+## 1. Why This Exists — The Problem First
 
-Missing dependencies create stale closures. Extra unstable dependencies can cause unnecessary re-runs or infinite loops. The goal is not to trick React; it is to write logic where dependencies honestly describe what the hook uses.
+An order screen shows the right customer, then quietly sends the request with the customer ID from the previous render. A polling timer keeps reading the first search term forever. Another effect reconnects on every keystroke because an options object is recreated during render, and the reconnect itself causes another render. These bugs are not random: a callback created during one render still sees that render's values, while React needs to know when that callback's work is no longer valid.
 
-## 1. One-line mental model
-The dependency array lists the reactive values a hook depends on.
+The dependency array is the small piece of information that lets React decide whether a hook's previous work still matches the current render. Used honestly, it keeps effects synchronized and keeps memoized values and function identities valid. Used as a performance wish or a way to silence a warning, it creates stale data, wasted work, or loops.
 
-## 2. Problem it solves
-React needs to know when hook logic should run again as component values change.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Include all reactive values used inside the callback.
-- Empty array means no reactive values are used.
-- No array means run after every render for effects.
-- Missing dependencies cause stale logic.
-- Stabilize values only when needed.
+Think of a restaurant ticket for one table. The ticket lists the facts that determine the meal: table number, allergy information, and the chosen dish. When one of those facts changes, the kitchen must prepare a new meal. If nothing on the ticket changes, the kitchen can keep the existing meal. A new ticket object does not automatically mean a new order; the kitchen compares the individual facts written on it.
 
-## 4. Visual / analogy
-Dependencies are ingredients for a recipe: when an ingredient changes, the recipe should be made again.
+In this analogy, the hook callback is the recipe, the dependency array is the ticket, and each render supplies the latest ticket values. A prop or state value read by the callback is an ingredient. `useEffect` uses the ticket to decide whether to tear down and re-establish an external synchronization. `useMemo` uses it to decide whether a derived result is still valid. `useCallback` uses it to decide whether the same function object can be handed to someone else.
 
-```mermaid
-flowchart LR
-  Deps["Dependencies"] --> Changed{"Changed?"}
-  Changed -->|Yes| Run["Run hook callback"]
-  Changed -->|No| Skip["Reuse previous"]
+The analogy also explains why an inline object is troublesome. Writing `{ customerId: "c-42" }` on every ticket creates a brand-new ticket ingredient by identity, even when its contents are the same. React compares that object reference, not its fields. A primitive such as the string `"c-42"` can remain equal by value, so it is often the more honest ingredient to list.
+
+## 3. How It Actually Works — The Full Explanation
+
+React components are called again to render new snapshots. Each call has its own `props`, state values, local variables, and closures. A dependency array does not make those variables mutate in place. It tells React which values should cause a hook's stored work to be replaced with work created by the latest render.
+
+For a hook call such as `useEffect(setup, [userId, token])`, React records the dependency values for that hook position. On a later render, it compares the current `userId` with the previous `userId`, and the current `token` with the previous `token`, using `Object.is` one position at a time. If every comparison is true, the dependencies are considered unchanged. If any comparison is false, the hook is considered changed.
+
+For `useEffect`, a changed dependency means React runs the cleanup returned by the previous effect, then runs the new setup after the commit. The new setup closes over the new render's values. Cleanup also runs when the component unmounts. With no dependency array, the effect is eligible after every commit. With `[]`, it is eligible on the first mount and then not again for that mounted instance; development Strict Mode may intentionally perform an extra setup-cleanup cycle to expose missing cleanup.
+
+For `useMemo`, a changed dependency makes React call the calculation again and return its new result. For `useCallback`, a changed dependency makes React return the function from the current render; unchanged dependencies let React return the previously stored function reference. Neither hook makes a calculation or function intrinsically faster. They only make reuse possible, and React may discard memoized caches when it needs to, so correctness must never depend on memoization.
+
+The rule for choosing dependencies is: include every reactive value read by the callback. Reactive values include props, state, context values, and variables or functions declared inside the component that are derived from them. A state setter returned by `useState` and a `dispatch` returned by `useReducer` have stable identities, so they do not need to be listed; including them is harmless and often keeps lint configuration straightforward. A ref object is stable, but changing `ref.current` does not trigger a render, so putting `ref.current` in a dependency list does not make an effect react to ref mutations.
+
+There are two different problems that are easy to mix up. A missing dependency means React keeps old work when the work actually depends on a changed value. An unstable dependency means React replaces work too often because a new object, array, or function reference is created on each render. The solution to the first is to add the dependency or restructure the code. The solution to the second is usually to move a constant outside the component, move a helper inside the effect, depend on the primitive fields actually used, or stabilize the identity only when that identity matters.
+
+The exhaustive-deps lint rule is useful because it statically inspects hook callbacks and points out values that appear to be missing. It cannot understand every domain invariant, and it is not a substitute for design. Treating every warning as “make the array smaller” is dangerous. First ask why the callback reads that value and whether the effect represents one coherent synchronization. If it does, the dependency list should describe that synchronization truthfully.
+
+One final boundary matters: dependency arrays do not control ordinary event handlers. A click handler runs because the user clicked. An effect runs because React committed a render and its synchronization became eligible. If the action is caused by the click itself, put it in the click handler. If the component must keep an external system aligned with current props or state, use an effect and list the values that system depends on.
+
+## 4. Real Code — See It Working
+
+The following complete browser example uses a local fake API so it can run without a backend. It demonstrates a production-shaped request, cancellation, and cleanup. The request for an old `customerId` cannot overwrite the screen for the new one.
+
+Save the following as `index.html` in a Vite React TypeScript app; the TSX block is that app's `src/main.tsx`.
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Customer panel</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
 ```
-
-## 5. Minimal example
 
 ```tsx
-React.useEffect(() => {
-  document.title = title;
-}, [title]);
+import { StrictMode, useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+
+type Customer = { id: string; name: string; plan: "Starter" | "Pro" };
+
+const customers: Record<string, Customer> = {
+  "c-42": { id: "c-42", name: "Maya Chen", plan: "Pro" },
+  "c-73": { id: "c-73", name: "Arun Das", plan: "Starter" },
+};
+
+function getCustomer(id: string, signal: AbortSignal): Promise<Customer> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      const customer = customers[id];
+      customer ? resolve(customer) : reject(new Error("Customer not found"));
+    }, id === "c-42" ? 500 : 80);
+
+    // The fixture mirrors fetch cancellation, so the example is runnable.
+    signal.addEventListener("abort", () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Request cancelled", "AbortError"));
+    }, { once: true });
+  });
+}
+
+function CustomerPanel({ customerId }: { customerId: string }) {
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCustomer(null);
+    setError(null);
+
+    getCustomer(customerId, controller.signal)
+      .then((nextCustomer) => setCustomer(nextCustomer))
+      .catch((reason: unknown) => {
+        // Cancellation is normal cleanup, not an error for the user.
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setError(reason instanceof Error ? reason.message : "Request failed");
+      });
+
+    // A customer change or unmount invalidates this request.
+    return () => controller.abort();
+  }, [customerId]);
+
+  if (error) return <p role="alert">{error}</p>;
+  if (!customer) return <p aria-busy="true">Loading {customerId}…</p>;
+  return <p>{customer.name} — {customer.plan}</p>;
+}
+
+function App() {
+  const [customerId, setCustomerId] = useState("c-42");
+  return (
+    <main>
+      <label>
+        Customer
+        <select value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
+          <option value="c-42">c-42</option>
+          <option value="c-73">c-73</option>
+        </select>
+      </label>
+      <CustomerPanel customerId={customerId} />
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode><App /></StrictMode>,
+);
 ```
 
-## 6. Real-world example
+This complete example keeps a window subscription for the lifetime of the mounted component. The callback does not read changing state, so `[]` is honest. The same function reference is passed to both `addEventListener` and `removeEventListener`, which is required for removal.
+
+Use the same local Vite React TypeScript setup, with this `index.html` fixture and the TSX block saved as `src/main.tsx`:
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reading progress</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+```
 
 ```tsx
-const filteredRows = React.useMemo(() => {
-  return rows.filter((row) => row.status === status);
-}, [rows, status]);
+import { StrictMode, useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+
+function ScrollProgress() {
+  const [percent, setPercent] = useState(0);
+
+  useEffect(() => {
+    function updateProgress() {
+      const remaining = document.documentElement.scrollHeight - window.innerHeight;
+      const next = remaining <= 0 ? 100 : (window.scrollY / remaining) * 100;
+      setPercent(Math.round(Math.min(100, Math.max(0, next))));
+    }
+
+    window.addEventListener("scroll", updateProgress, { passive: true });
+    updateProgress();
+    return () => window.removeEventListener("scroll", updateProgress);
+  }, []);
+
+  return <progress value={percent} max={100} aria-label="Reading progress" />;
+}
+
+function App() {
+  return <><ScrollProgress /><div style={{ minHeight: "200vh" }}>Article</div></>;
+}
+
+createRoot(document.getElementById("root")!).render(
+  <StrictMode><App /></StrictMode>,
+);
 ```
 
-## 7. Common interview questions
-#### What is a dependency array?
-- **The Engine Mechanism (Why it behaves this way):** The dependency array is the second argument to `useEffect`, `useCallback`, and `useMemo`. React stores the previous dependency values alongside the cached result (for `useMemo`/`useCallback`) or the effect registration (for `useEffect`). On each render, React iterates through the current and previous dependency arrays in parallel, comparing each pair with `Object.is()`. If all comparisons return `true`, React reuses the cached result or skips the effect. If any comparison returns `false`, React recomputes or re-runs the effect. The dependency array is React's mechanism for knowing when hook logic needs to update.
-- **The Unforgettable Mental Model:** The **Recipe Ingredient List**. The dependency array lists every ingredient the recipe uses. If any ingredient changes (new brand, different amount), you need to make the recipe again. If all ingredients are the same, the previous result is still valid.
-- **The Trap:** Thinking the dependency array is optional or advisory. It's a contract — if you lie to it (omit dependencies), React will use stale data.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The dependency array is how React knows when to re-run hook logic. It's an array of reactive values — props, state, derived variables — that the hook's callback depends on. React compares each value with its previous version using `Object.is()`. If any value changed, the hook re-runs. If all values are the same, React skips the work. The golden rule is: every reactive value used inside the hook callback must be listed as a dependency."
+Here is the identity problem and the smallest useful fixes. The first component reconnects whenever its parent re-renders because `options` is a new object. The second depends on the primitive it actually uses. The third memoizes the object because its identity is passed to the effect and changes only when its inputs change.
 
-#### What happens with `[]`?
-- **The Engine Mechanism (Why it behaves this way):** An empty dependency array `[]` tells React that the hook has no reactive dependencies. For `useEffect`, the effect runs once after mount and never re-runs (cleanup runs on unmount). For `useMemo`, the computation runs once and the result is cached forever. For `useCallback`, the function reference is created once and never changes. React still compares the empty array with the previous empty array — `Object.is()` on two empty arrays is `true` because the arrays themselves are stored internally and compared element-by-element (zero elements, so always equal).
-- **The Unforgettable Mental Model:** The **Time Capsule**. You seal something once (mount) and it stays exactly the same forever. No matter what happens outside, the contents never change.
-- **The Trap:** Assuming `[]` means "run once" is always safe. If the effect uses props or state that change over time, those values will be stale — captured from the initial render and never updated.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: An empty dependency array means the hook runs once on mount and never re-runs. For effects, this is like `componentDidMount` — the effect runs after the initial render and cleanup runs on unmount. For `useMemo` and `useCallback`, the value or function is computed once and cached forever. The danger is that if the hook's callback uses any props or state, those values will be frozen at their initial values. I only use `[]` when the callback genuinely uses no reactive values."
+Use the same local Vite React TypeScript setup, with this `index.html` fixture and the TSX block saved as `src/main.tsx`:
 
-#### What happens with no dependency array?
-- **The Engine Mechanism (Why it behaves this way):** Omitting the dependency array entirely means the hook runs after every render. For `useEffect`, the effect runs after every commit — the cleanup runs before each re-run and on unmount. For `useMemo`, the computation runs on every render (equivalent to not using `useMemo` at all). For `useCallback`, a new function is created on every render (equivalent to not using `useCallback`). This is the least restrictive mode and defeats the purpose of memoization hooks.
-- **The Unforgettable Mental Model:** The **Groundhog Day**. Every day is the same — the effect runs, the computation runs, the function is recreated. Nothing is cached, nothing is skipped. It's as if the hook doesn't exist.
-- **The Trap:** Accidentally omitting the dependency array when you meant to include one. This causes effects to fire on every render and memoization to be useless.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Without a dependency array, the hook runs after every render. For `useEffect`, the effect fires after every commit with cleanup before each re-run. For `useMemo` and `useCallback`, it's equivalent to not using them at all — the computation runs and the function is created on every render. This defeats the purpose of these hooks. I always include a dependency array, even if it's empty, to make my intent explicit."
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Room connection identities</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+```
 
-#### Why do missing dependencies cause stale closures?
-- **The Engine Mechanism (Why it behaves this way):** When a dependency is omitted from the array, React doesn't know that the hook's callback depends on that value. So when the value changes, React doesn't re-run the hook. The callback continues to reference the value from the render when it was created — a closure over that render's scope. For `useEffect`, the effect doesn't re-run with the new value. For `useCallback`, the function keeps the old captured value. For `useMemo`, the cached result was computed with the old value. The closure is "stale" because it reads from an outdated render scope.
-- **The Unforgettable Mental Model:** The **Old Map**. You're navigating with a map (closure) from last year. The roads have changed (state updated), but your map still shows the old routes. You end up in the wrong place because you didn't get the updated map (re-run with new dependencies).
-- **The Trap:** Omitting a dependency to "fix" an infinite loop. This silences the symptom but creates a stale closure bug that's harder to detect. The real fix is to stabilize the dependency or restructure the code.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Missing dependencies cause stale closures because React doesn't re-run the hook when the omitted value changes. The callback captures values from the render when it was created, and without the dependency in the array, it never gets recreated with the new values. So it reads outdated state or props. The ESLint exhaustive-deps rule catches this, but the real fix is understanding why the dependency is unstable — often it's an object or function recreated every render that should be memoized or moved inside the effect."
+```tsx
+import { StrictMode, useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
 
-#### How does the hooks ESLint rule help?
-- **The Engine Mechanism (Why it behaves this way):** The `eslint-plugin-react-hooks` plugin performs static analysis on your code. It parses the AST (Abstract Syntax Tree) of each hook callback, identifies every variable reference, and determines whether each reference is a reactive value (props, state, context, or a value derived from them). It then compares this list with the dependency array and flags any mismatches: missing dependencies that should be included, or unnecessary dependencies that could be removed. The rule runs at build time, catching bugs before they reach production.
-- **The Unforgettable Mental Model:** The **Spell-Checker for Dependencies**. Just as a spell-checker underlines misspelled words before you send an email, the ESLint rule underlines missing dependencies before you ship code. It catches mistakes you'd otherwise only discover through debugging.
-- **The Trap:** Disabling the rule with `// eslint-disable-next-line react-hooks/exhaustive-deps` without understanding why the warning fired. The warning is almost always correct — disabling it usually hides a real bug.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The hooks ESLint rule performs static analysis to identify every reactive value used inside a hook callback and compares it with the dependency array. It flags missing dependencies that would cause stale closures and unnecessary dependencies that could cause extra re-runs. I treat these warnings as errors — they catch real bugs before production. If I need to disable the rule, I first understand why it fired and verify that the omission is intentional and safe, which is rare."
+type Options = { roomId: string; highQuality: boolean };
 
-#### How do you handle function dependencies?
-- **The Engine Mechanism (Why it behaves this way):** Functions declared inside a component are recreated on every render, creating a new reference each time. If such a function is used as a dependency, the hook re-runs on every render. The solution is to stabilize the function reference. Options include: (1) Move the function inside the hook callback if it's only used there. (2) Wrap it in `useCallback` to maintain a stable reference. (3) Move it outside the component if it doesn't use component state/props. (4) Use a ref to store the latest version and read from the ref inside the hook.
-- **The Unforgettable Mental Model:** The **Revolving Door**. A function recreated every render is like a revolving door — every time you try to enter (use it as a dependency), it's a different door. Stabilizing it is like installing a regular door with a fixed frame.
-- **The Trap:** Wrapping every function in `useCallback` to satisfy the linter. This over-memoizes and makes code harder to read. The better approach is to restructure so the function doesn't need to be a dependency.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Function dependencies are tricky because functions declared in a component are new references every render. My approach is: first, try to move the function inside the hook callback if it's only used there — then it doesn't need to be a dependency. Second, if it's used elsewhere, wrap it in `useCallback` with its own dependencies. Third, if it doesn't use component state, move it outside the component entirely. Fourth, as a last resort, use a ref to store the latest function and read from the ref. The goal is to minimize dependencies, not to memoize everything."
+function connect(roomId: string, highQuality: boolean): () => void {
+  console.log(`Connected to ${roomId}; high quality: ${highQuality}`);
+  return () => console.log(`Disconnected from ${roomId}`);
+}
 
-#### When should dependencies be stabilized?
-- **The Engine Mechanism (Why it behaves this way):** Dependencies should be stabilized when they are objects, arrays, or functions that are recreated on every render but whose contents haven't meaningfully changed. An unstable dependency causes the hook to re-run unnecessarily because `Object.is()` sees a new reference. Stabilization techniques include `useMemo` for objects/arrays, `useCallback` for functions, and lifting the value outside the component if it doesn't depend on reactive data. However, not every dependency needs stabilization — primitives (strings, numbers, booleans) are compared by value, not reference, so they don't need memoization.
-- **The Unforgettable Mental Model:** The **ID Card Renewal**. If you renew your ID card every day (new object reference), security thinks you're a new person and re-checks you every time (hook re-runs). Keep the same ID card (stable reference), and security only checks when your actual details change.
-- **The Trap:** Stabilizing everything "just in case." This adds memoization overhead everywhere and makes code harder to read. Only stabilize when the unstable reference causes a real problem.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I stabilize dependencies when they're objects, arrays, or functions recreated every render that cause unnecessary hook re-runs. I use `useMemo` for objects and arrays, `useCallback` for functions, and I lift values outside the component when they don't depend on reactive data. But I don't stabilize everything by default — primitives don't need it, and over-memoization adds overhead and complexity. I stabilize only when profiling shows a problem or when an unstable dependency causes a specific bug like an infinite effect loop."
+export function RoomWithUnstableObject({ roomId }: { roomId: string }) {
+  const options: Options = { roomId, highQuality: true };
+  useEffect(() => connect(options.roomId, options.highQuality), [options]);
+  return <p>Room {roomId}</p>;
+}
 
-## 8. Active recall test
-1. **What values belong in dependencies?**
-   - **Explanation:** Every reactive value used inside the hook callback — props, state, context values, and variables/functions derived from them. If the hook reads it, it belongs in the array.
-2. **What does empty array mean?**
-   - **Explanation:** The hook runs once on mount and never re-runs. For effects, it's like `componentDidMount`. For memo/callback, the value/function is computed once and cached forever.
-3. **What does no array mean for `useEffect`?**
-   - **Explanation:** The effect runs after every render, with cleanup before each re-run and on unmount. It's equivalent to having no memoization at all.
-4. **Why is omitting dependencies risky?**
-   - **Explanation:** It creates stale closures — the hook's callback captures values from the render when it was created and never updates when those values change, leading to bugs with outdated data.
-5. **How can unstable objects cause loops?**
-   - **Explanation:** An object created inline (e.g., `{ id: userId }`) is a new reference every render. If it's a dependency, the hook re-runs every render. If the hook updates state, this triggers another render, creating an infinite loop.
+export function RoomWithPrimitiveDependencies({ roomId }: { roomId: string }) {
+  const highQuality = true;
+  useEffect(() => connect(roomId, highQuality), [roomId, highQuality]);
+  return <p>Room {roomId}</p>;
+}
 
-## 9. Mistakes / traps
-- Removing dependencies to silence lint.
-- Adding objects/functions that are recreated every render without restructuring.
-- Assuming empty array means "run once forever" safely.
-- Forgetting props used inside effects.
-- Depending on derived values inconsistently.
+function RoomWithMemoizedOptions({ roomId }: { roomId: string }) {
+  const [online, setOnline] = useState(true);
+  const options = useMemo(() => ({ roomId, highQuality: online }), [roomId, online]);
+  useEffect(() => connect(options.roomId, options.highQuality), [options]);
+  return <button onClick={() => setOnline((current) => !current)}>Toggle</button>;
+}
 
-## 10. Compare with related concepts
-- **Dependency array vs Rules of Hooks:** dependencies control re-run; rules control call order.
-- **Dependency vs state:** dependencies are watched values, not stored values.
-- **Dependency stabilization vs memoization:** stabilization can use memoization, but not every dependency needs it.
+function App() {
+  const [roomId, setRoomId] = useState("room-42");
+  return (
+    <main>
+      <label>
+        Room
+        <select value={roomId} onChange={(event) => setRoomId(event.target.value)}>
+          <option value="room-42">room-42</option>
+          <option value="room-73">room-73</option>
+        </select>
+      </label>
+      <RoomWithUnstableObject roomId={roomId} />
+      <RoomWithPrimitiveDependencies roomId={roomId} />
+      <RoomWithMemoizedOptions roomId={roomId} />
+    </main>
+  );
+}
 
-## 11. Summary from memory
-Explain how to decide the dependency array for an effect that uses `userId` and `token`.
+createRoot(document.getElementById("root")!).render(
+  <StrictMode><App /></StrictMode>,
+);
+```
 
-## 12. Spaced revision prompts
-- After 1 day: Define dependency array.
-- After 3 days: Explain empty vs missing array.
-- After 7 days: Fix missing dependency bug.
-- After 14 days: Explain stable function dependency.
+`RoomWithUnstableObject` is intentionally the bad version: it needs a new dependency design, not a lint suppression. The local `connect` fixture stands in for an external client and returns the cleanup function that a real subscription would need.
 
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is a dependency array, and how does React compare it?**
+
+It is a list of values that determine whether a particular hook's stored work is still valid. React compares the previous and current entries position by position with `Object.is`. If every entry is equal, an effect is skipped or a memoized result/function can be reused. If one entry differs, the effect is re-synchronized or the memoized calculation/function is replaced. The array is not a list of values React watches continuously; React checks it during renders.
+
+**Q: What is the difference between no array, `[]`, and `[value]`?**
+
+No array makes an effect eligible after every commit; for `useMemo` and `useCallback`, the calculation or function is not reused based on dependencies. `[]` says the callback has no reactive dependencies, so an effect sets up on the first mount and cleans up on unmount for that mounted instance. `[value]` makes the hook re-run or recalculate when `Object.is(previousValue, currentValue)` is false. In development Strict Mode, an extra setup and cleanup cycle can occur, so “once” should not be treated as “exactly one call in all environments.”
+
+**Q: Why does a missing dependency create a stale closure?**
+
+Each render creates a new scope. If an effect with `[]` reads `userId`, its callback closes over the `userId` from the first render. Later renders create new values, but React does not rewrite the old callback. Because `userId` was omitted, React does not replace that effect, so it continues to use the old snapshot. The fix is to list `userId`, or redesign the work so it genuinely does not need that changing value.
+
+**Q: Should every variable referenced in the callback be listed?**
+
+Every reactive value that the callback reads should be listed, including values derived from props or state. Stable React-provided setters and reducer dispatchers do not need to be listed. A module-level constant does not change because a component rendered again. For a function or object declared inside the component, first decide whether it really belongs in the synchronization: move a helper inside the effect, move a constant outside, depend on primitive fields, or stabilize the identity when another consumer actually needs that identity.
+
+**Q: Why can an object or function dependency cause repeated effects?**
+
+Objects, arrays, and functions are compared by reference. A new literal or function expression in the component body creates a new reference on every render, even if its contents or source text look identical. React sees a changed dependency every time. If the effect sets state, the cycle can become render → effect → state update → render. Memoizing the object can help, but extracting the primitive fields or moving the object outside the component is often simpler and more honest.
+
+**Q: When should a function be moved, memoized, or placed in a ref?**
+
+Move it inside the effect when it only supports that effect. Move it outside the component when it needs no props or state. Use `useCallback` when a stable function identity is itself useful, such as passing it to a memoized child or using it as a dependency, and list the callback's own reactive dependencies. A ref is a specialized escape hatch for a long-lived subscription or timer that must read the latest value without being recreated; it is not a general way to hide dependencies.
+
+**Q: How does the exhaustive-deps lint rule help, and when is suppression reasonable?**
+
+It performs static analysis of a hook callback and warns when a referenced reactive value appears to be missing from the dependency list. It catches many stale-closure bugs before runtime. It does not know every business invariant and it does not make an effect well-designed. Before suppressing a warning, make the synchronization boundary explicit and check whether the code should use a functional state update, a ref, a different effect, or an event handler. Suppression should be rare and documented by the invariant that makes the omission safe.
+
+**Q: Is `useMemo` or `useCallback` required for correctness?**
+
+No. They are performance and identity tools. A correct component must produce the right result even if React recalculates a memo or returns a new callback. Use `useMemo` when avoiding a genuinely expensive calculation or preserving an object/array identity has a measured downstream benefit. Use `useCallback` when a function identity affects a memoized child or another hook. Do not use either to make an invalid dependency list appear correct.
+
+**Q: Why is a dependency array different from an event trigger?**
+
+An effect responds to a committed render and synchronizes an external system with current values. A button handler responds to one user action. If a save request should happen because the user submitted a form, the submit handler is the clearest trigger. Watching `isSubmitted` in an effect makes the request happen for every cause of that state change and introduces another render into the flow. Dependencies describe what synchronization is valid, not what event a product feature should react to.
+
+## 6. The Traps — What Goes Wrong
+
+**Leaving out a value to stop re-runs.**
+
+The wrong assumption is that the dependency array is a throttle. Removing `token` from an effect that sends authenticated requests may stop reconnection, but the callback now keeps the token from an older render. Add the value and solve the reason for the extra work, or move the action to the event that owns it. Do not trade a visible re-run for an invisible stale-data bug.
+
+**Treating `[]` as a universal “run once” switch.**
+
+An empty list is correct only when the callback needs no changing reactive values. `useEffect(() => subscribe(userId), [])` subscribes to the initial user, not the current user. For a timer that increments state, use a functional update such as `setCount((current) => current + 1)` if the interval itself should remain stable; for a timer that reads other changing values, design its dependencies or latest-value ref deliberately.
+
+**Putting inline objects, arrays, or functions in the list.**
+
+`const filters = { status, limit: 20 }` gets a new identity on each render. Depending on `filters` makes the effect re-run for unrelated renders. Prefer `[status]` when `limit` is a constant, create the object inside the effect from `[status]`, or use `useMemo` when the object identity must be shared. Memoization is a tool for a real identity requirement, not a reflex.
+
+**Putting `ref.current` in the list and expecting ref changes to trigger work.**
+
+Mutating `ref.current` does not schedule a render, so React has no render in which to compare that value. A ref is appropriate when an existing long-lived callback must read mutable latest data. If attaching a DOM node should trigger logic, use a callback ref or state that changes during the attachment, depending on the requirement.
+
+**Using an effect to derive render data.**
+
+An effect such as `useEffect(() => setFullName(first + last), [first, last])` renders once with old `fullName`, then updates state and renders again. The value is already a pure calculation from current inputs. Use `const fullName = first + last` during render, and reserve effects for synchronization with something outside React.
+
+**Splitting one synchronization across dishonest dependencies.**
+
+If one effect both opens a room connection and writes an analytics event, a change to the analytics callback may tear down a perfectly valid connection. Keep separate synchronization concerns in separate effects with separate lists. The goal is not the fewest effects; it is a dependency list whose changes have one understandable meaning.
+
+**Assuming a memoized value is permanent.**
+
+React may discard memoization caches, and development behavior can mount, clean up, and mount effects again. Never store correctness-critical state in `useMemo` or rely on `useCallback` never changing. Write code that remains correct when the calculation runs again or the function identity changes, then use memoization to reduce measured work.
+
+## 7. Compare With Related Concepts
+
+**Dependency array vs. Rules of Hooks.** The dependency array controls when a hook's work is refreshed. The Rules of Hooks require hooks to be called in the same order on every render. Use dependencies to describe data relationships; use unconditional hook calls to preserve hook ordering.
+
+**Dependency array vs. state.** State stores a value and a setter that can schedule a render. A dependency list stores no application data; it tells React which render values invalidate a hook's previous work. Use state for UI-owned data, dependencies for declaring what a calculation or synchronization reads.
+
+**Dependency array vs. memoization.** The array is the invalidation policy. `useMemo` and `useCallback` are two consumers of that policy that may reuse work or identity. Use a truthful dependency list first; add memoization only when recalculation or identity changes have a concrete cost.
+
+**Dependency array vs. a ref.** Dependencies cause React to revisit a hook after a render when values differ. A ref gives callbacks a stable mutable container, and changing it does not re-render. Use dependencies for declarative synchronization; use a ref for narrowly scoped imperative state that must survive renders without itself driving rendering.
+
+**Dependency array vs. functional state update.** Dependencies decide when a callback or effect should be recreated. A functional update lets React apply a state transition to the latest queued state, so the transition does not need to read a captured previous value. Use `[count]` when the effect must re-run for a new count; use `setCount((current) => current + 1)` when only the transition needs the latest count.
+
+**Effect dependency vs. `React.memo` props.** An effect dependency comparison decides whether that effect's synchronization changes. `React.memo` compares a component's incoming props to decide whether to skip rendering that child. Both rely on identity comparisons, but optimizing a child prop does not make an effect dependency correct, and an effect re-run does not imply a child must re-render.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Treat the array like a validity ticket, not a speed limit: list every reactive value that makes the callback's work valid. If the ticket is incomplete, old render snapshots survive; if it contains a freshly recreated object, valid work looks new every time. Tell the truth about the ingredients, then React can keep the synchronization, result, or function aligned with the current render.
