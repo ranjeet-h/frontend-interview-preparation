@@ -30,14 +30,14 @@ The line cook (the child component) takes this ticket (props) and prepares the m
 
 ## 3. How It Actually Works — The Full Explanation
 
-### From JSX to Component Invocation
+**From JSX to component invocation.**
 When you write JSX in your component:
 
 ```tsx
 <UserProfileCard username="alex99" role="admin" isActive={true} />
 ```
 
-The compiler (Babel, SWC, or TypeScript) transforms this JSX syntax into a standard JavaScript function call:
+The compiler (Babel, SWC, or TypeScript) transforms this JSX syntax into a standard JavaScript function call. The following is an abbreviated compiler-output excerpt; the component definition and surrounding application setup are omitted:
 
 ```javascript
 // React 17+ JSX Transform:
@@ -53,10 +53,10 @@ _jsx(UserProfileCard, {
 React bundles all the JSX attributes into a single plain JavaScript object called the `props` object. When React mounts or updates `UserProfileCard`, it invokes the component function, passing that `props` object as its first argument:
 
 ```javascript
-UserProfileCard({ username: "alex99", role: "admin", isActive: true });
+UserProfileCard({ username: "alex99", role: "admin", isActive: true }); // abbreviated invocation
 ```
 
-### The Immutability Contract and Object.freeze
+**The immutability contract and `Object.freeze`.**
 In React, props are immutable inputs. A component must never modify its own props:
 
 ```javascript
@@ -66,11 +66,11 @@ function UserProfileCard(props) {
 }
 ```
 
-To enforce this invariant, React calls `Object.freeze(props)` on the props object during development mode. If any code attempts to write to, delete from, or reconfigure a property on `props`, the JavaScript engine throws a runtime error in strict mode: `TypeError: Cannot assign to read only property 'role' of object '#<Object>'`.
+In some development builds, React freezes element props to catch direct writes early, but that is a development aid rather than the reason props are read-only. If any code attempts to write to, delete from, or reconfigure a frozen property in strict mode, the JavaScript engine throws a runtime error such as `TypeError: Cannot assign to read only property 'role' of object '#<Object>'`.
 
-While `Object.freeze` only performs a shallow freeze (nested objects inside props are not automatically frozen by the engine), mutating nested properties inside a prop object breaks React's change detection mechanism. React relies on referential equality checking (`Object.is`) during reconciliation. If you mutate an object in place, its memory address remains identical. React cannot detect that the data changed, skips re-rendering, and leaves the UI out of sync with your underlying data model.
+While `Object.freeze` only performs a shallow freeze (nested objects inside props are not automatically frozen by the engine), mutating nested properties inside a prop object is still unsafe. React does not deep-compare props. An ordinary parent re-render calls its child again even when a nested value has the same reference; `React.memo` may skip the child because its shallow top-level comparison sees the same object reference, and a state setter given the same object reference may bail out because `Object.is(previous, next)` is true. Meanwhile, sibling code holding the shared object can observe the mutation immediately, so the UI and the data flow can disagree.
 
-### Unidirectional Data Flow and Callbacks
+**Unidirectional data flow and callbacks.**
 Data in React flows in one direction: top to bottom, from parent to child. A child component has no direct way to push data upward or modify parent state.
 
 To allow child components to trigger changes in the parent, React uses callback props. The parent passes down a reference to a function as a prop. When an event happens inside the child (such as a button click or input change), the child invokes that function, passing whatever new data or event identifiers are relevant as arguments:
@@ -87,27 +87,32 @@ flowchart TD
 
 The callback function executes inside the parent's lexical scope, allowing the parent to call its own state setter (`setCount`), update its state, and pass newly computed props back down to the child during the next render pass.
 
-### Modern Default Props vs Legacy defaultProps
+**Modern default props versus legacy `defaultProps`.**
 In modern functional components, default prop values are handled directly through JavaScript ES6 object destructuring default values:
 
 ```tsx
+import type { ReactNode } from 'react';
+
+interface ButtonProps {
+  variant?: 'primary' | 'secondary';
+  size?: 'small' | 'medium' | 'large';
+  children?: ReactNode;
+}
+
 function Button({ variant = 'primary', size = 'medium', children }: ButtonProps) {
   return <button className={`btn btn-${variant} btn-${size}`}>{children}</button>;
 }
 ```
 
-Earlier versions of React used a static property on component functions: `Button.defaultProps = { variant: 'primary' }`. This pattern is officially deprecated for functional components in modern React and will be removed in future releases because:
-1. It adds unnecessary runtime overhead to React's element creation pipeline.
-2. It conflicts with TypeScript's type inference systems, often requiring complex helper types or marking optional props as potentially undefined.
-3. JavaScript's built-in parameter defaults are standard language features, evaluated at call time with zero library-specific magic.
+Earlier versions of React commonly used a static property on component functions: `Button.defaultProps = { variant: 'primary' }`. The behavior and support are version-dependent: React 19 removed `defaultProps` for function components, while class components still support it; in versions that support it, missing or `undefined` props receive the default but `null` does not. For function components, use parameter defaults in current code. Keep a function `defaultProps` declaration only when the specific React version and library or codebase contract deliberately depend on it.
 
-### Props Spreading Hazards
+**Props spreading hazards.**
 JSX allows spreading an object into props: `<Component {...props} />`. While convenient when authoring higher-order wrappers or forwarding props to underlying components, spreading introduces several architectural hazards:
 - **Polluting the DOM:** If you spread arbitrary props onto a native HTML element (e.g., `<button {...props}>`), custom component props like `isLoading` or `variant` are forwarded directly to the DOM node. The browser does not recognize these attributes on HTML elements, causing runtime console warnings.
 - **Accidental overrides:** If you write `<Button onClick={handleClick} {...props} />`, any `onClick` passed inside `props` will silently overwrite your explicit `handleClick`.
 - **Hidden contracts:** Spreading hides what properties a component actually depends on, making refactoring and static analysis difficult.
 
-### How Prop Changes Drive Re-rendering
+**How prop changes drive re-rendering.**
 By default, whenever a parent component re-renders, all of its descendant components re-render automatically, regardless of whether their props changed.
 
 When you wrap a component in `React.memo(Component)`, React alters this default behavior. Before re-rendering the memoized child, React compares each prop from the previous render with the corresponding prop from the next render using shallow equality (`Object.is`):
@@ -119,7 +124,7 @@ If a parent creates a new object literal (`style={{ color: 'red' }}`) or an inli
 
 ## 4. Real Code — See It Working
 
-### Example 1: Explicit Component Contract with Callbacks and Destructuring Defaults
+**Example 1: explicit component contract with callbacks and destructuring defaults.**
 
 Here is a production-grade task item card showing typed props, default parameters, and child-to-parent callback events:
 
@@ -179,7 +184,7 @@ export function TaskItem({
 }
 ```
 
-### Example 2: Discriminated Union Props for Mutually Exclusive APIs
+**Example 2: discriminated-union props for mutually exclusive APIs.**
 
 A common prop design mistake is having optional props that only make sense in certain combinations (e.g., a modal that takes `errorMessage` when `variant="error"` but shouldn't allow it when `variant="success"`). TypeScript discriminated unions let you create impossible states at compile time:
 
@@ -223,7 +228,7 @@ export function Banner(props: BannerProps) {
 }
 ```
 
-### Example 3: Composition with `children` to Eliminate Prop Drilling
+**Example 3: composition with `children` to eliminate prop drilling.**
 
 Instead of passing 8 different configuration props down 5 levels just to feed a deeply nested button, pass components directly as `children`:
 
@@ -278,6 +283,28 @@ export function DeleteAccountFlow() {
 }
 ```
 
+**Example 4: render snapshots and event-handler closures.**
+
+Each render creates its own handler function. That handler closes over the props and state values from the render that created it; a later render does not rewrite the old closure:
+
+```tsx
+import { useState } from 'react';
+
+export function RenderSnapshot() {
+  const [count, setCount] = useState(0);
+
+  function handleClick() {
+    // This callback closes over the count from this particular render.
+    setTimeout(() => alert(`The clicked render saw ${count}`), 1000);
+    setCount(count + 1);
+  }
+
+  return <button onClick={handleClick}>Clicked {count} times</button>;
+}
+```
+
+If the button is clicked when `count` is `0`, the screen can update to `1` immediately, but the delayed alert still says `0`. The handler belongs to the earlier render snapshot, just as a callback prop receives the values captured by the parent render that created it.
+
 ## 5. The Interview Questions — All of Them, Done Properly
 
 **Q: What are props in React and how does React pass them internally?**
@@ -292,11 +319,9 @@ Under the hood, JSX tags compile to `jsx(Component, propsObject)` or `React.crea
 
 Props are strictly read-only. A receiving component must never modify its props.
 
-In development mode, React calls `Object.freeze(props)` on the props object. Attempting to reassign a property (e.g., `props.name = 'Bob'`) throws a `TypeError` in strict mode. 
+Some development builds freeze the props object with `Object.freeze(props)`. Attempting to reassign a property (e.g., `props.name = 'Bob'`) throws a `TypeError` in strict mode.
 
-If you mutate nested properties of an object or array passed via props (e.g., `props.user.name = 'Bob'`), `Object.freeze` does not throw because it is shallow, but it causes severe runtime bugs:
-1. **Broken Change Detection:** React compares prop references using `Object.is`. Because the object reference did not change, `React.memo` or React's internal reconciler will not detect that a re-render is required.
-2. **Leaked Side Effects:** Sibling components sharing that same `user` object reference will now hold mutated data without having rendered the update, causing state desynchronization across the entire UI tree.
+If you mutate nested properties of an object or array passed via props (e.g., `props.user.name = 'Bob'`), `Object.freeze` does not throw because it is shallow, but the shared reference is still corrupted. React does not deep-compare nested props. A normal parent re-render still invokes the child, but `React.memo` compares only top-level prop references and can skip a child when the object reference is unchanged. Separately, if the parent calls a state setter with the same object reference, React may bail out because `Object.is(previous, next)` is true. Siblings can also observe the mutation without their own update, so create new objects and arrays when changing nested data.
 
 ---
 
@@ -344,17 +369,19 @@ To preserve memoization, wrap functions in `useCallback` and objects/arrays in `
 
 **Q: What is the difference between `defaultProps` and ES6 default parameter syntax, and why was `defaultProps` deprecated?**
 
-`defaultProps` is a static property attached to component functions (`Button.defaultProps = { variant: 'primary' }`). During element creation, React copied default values into the props object before passing it to the component.
+`defaultProps` is a static property attached to component functions (`Button.defaultProps = { variant: 'primary' }`). In React versions that support it for function components, missing or `undefined` props receive the default, while an explicit `null` does not. React 19 removed function-component `defaultProps`; class components continue to support it.
 
 ES6 default parameter syntax uses native JavaScript destructuring right in the function signature:
 ```tsx
+interface ButtonProps {
+  variant?: string;
+  size?: string;
+}
+
 function Button({ variant = 'primary', size = 'md' }: ButtonProps) {}
 ```
 
-`defaultProps` on functional components was deprecated because:
-- **TypeScript incompatibility:** TypeScript struggled to infer whether a prop with `defaultProps` was optional for callers while guaranteed to be defined inside the component body, requiring messy workarounds.
-- **Runtime cost:** React had to perform an extra property lookup and copy step during element creation.
-- **Language standards:** ES6 destructuring defaults are a native JavaScript standard that executes directly at function call time with no React runtime baggage.
+For current function components, use the standard JavaScript parameter default shown above. If an older React version or an existing library API still uses function `defaultProps`, check that version's documented behavior before changing it; do not assume that a migration is safe solely from the syntax. The React 19 upgrade guidance specifically describes the removal and recommends ES6 defaults for function components.
 
 ---
 
@@ -363,9 +390,11 @@ function Button({ variant = 'primary', size = 'md' }: ButtonProps) {}
 In almost all cases, `children` should be typed as `React.ReactNode`:
 
 ```tsx
+import type { ReactNode } from 'react';
+
 interface CardProps {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 ```
 
@@ -385,10 +414,12 @@ Spreading props is risky for three main reasons:
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Copying Props into State (The Stale Derived State Bug)
+**Trap 1: copying props into state creates stale derived state.**
 A widespread antipattern is initializing component state directly from a prop and expecting that state to update when the parent passes a new prop:
 
 ```tsx
+import { useState } from 'react';
+
 // ❌ WRONG: State is only initialized once on component mount!
 function UserEmailEditor({ initialEmail }: { initialEmail: string }) {
   const [email, setEmail] = useState(initialEmail);
@@ -407,10 +438,19 @@ function UserEmailEditor({ initialEmail }: { initialEmail: string }) {
 
 ---
 
-### Trap 2: Mutating Nested Prop Objects in Place
+**Trap 2: mutating nested prop objects in place.**
 When receiving complex data structures, developers sometimes mutate nested properties before rendering or in event handlers:
 
 ```tsx
+interface FilterConfig {
+  activeFilters: Record<string, boolean>;
+}
+
+interface FilterListProps {
+  filterConfig: FilterConfig;
+  onChange: (nextConfig: FilterConfig) => void;
+}
+
 // ❌ WRONG: In-place mutation corrupts shared references and breaks change detection
 function FilterList({ filterConfig, onChange }: FilterListProps) {
   const handleToggle = (key: string) => {
@@ -421,9 +461,11 @@ function FilterList({ filterConfig, onChange }: FilterListProps) {
 }
 ```
 
-**Why it fails:** `filterConfig` is an object reference owned by the parent. Modifying `filterConfig.activeFilters` alters the parent's memory reference directly without triggering React's state transition machinery. If the parent or a sibling uses `React.memo`, it compares the old `filterConfig` to the new `filterConfig`, sees they are the exact same memory pointer, and fails to update the screen.
+**Why it fails:** `filterConfig` is an object reference owned by the parent. Modifying `filterConfig.activeFilters` alters the parent's memory reference directly. React does not deep-compare the nested map: an ordinary parent re-render may still invoke this child, but `React.memo` can skip a child when the top-level `filterConfig` reference is unchanged, and `setFilterConfig(filterConfig)` can bail out on the same reference. Siblings can also observe the mutation without rendering.
 
 **The Fix:** Always create shallow copies when updating objects or arrays:
+
+**Fix excerpt (inside the component's `handleToggle`):**
 
 ```tsx
 // ✅ CORRECT: Create a fresh object with updated properties
@@ -441,10 +483,21 @@ const handleToggle = (key: string) => {
 
 ---
 
-### Trap 3: Breaking Memoization with New References
+**Trap 3: breaking memoization with new references.**
 Wrapping a child component in `React.memo` is completely ineffective if the parent component passes unstable object or function references:
 
 ```tsx
+import { memo, useState } from 'react';
+
+type UserBadgeProps = {
+  config: { role: string };
+  onLogout: () => void;
+};
+
+const MemoizedUserBadge = memo(function UserBadge({ config, onLogout }: UserBadgeProps) {
+  return <button onClick={onLogout}>{config.role}</button>;
+});
+
 // ❌ WRONG: Child re-renders every time Parent re-renders
 function ParentDashboard() {
   const [count, setCount] = useState(0);
@@ -468,6 +521,17 @@ function ParentDashboard() {
 **The Fix:** Stabilize reference identities with `useMemo`, `useCallback`, or module-level constants:
 
 ```tsx
+import { memo, useCallback, useState } from 'react';
+
+type UserBadgeProps = {
+  config: { role: string };
+  onLogout: () => void;
+};
+
+const MemoizedUserBadge = memo(function UserBadge({ config, onLogout }: UserBadgeProps) {
+  return <button onClick={onLogout}>{config.role}</button>;
+});
+
 // ✅ CORRECT: Stable references preserve React.memo
 const USER_CONFIG = { role: 'admin' }; // Static constant outside render
 
@@ -489,26 +553,43 @@ function ParentDashboard() {
 
 ---
 
-### Trap 4: Spreading Unknown Props into Native HTML Elements
+**Trap 4: spreading unknown props into native HTML elements.**
 When building custom UI wrapper components, spreading `...rest` props onto raw HTML nodes often leaks custom properties into the DOM:
 
 ```tsx
-interface CustomButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+import type { ButtonHTMLAttributes } from 'react';
+
+interface CustomButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   isLoading?: boolean;
   variant?: 'primary' | 'secondary';
+  trackingId?: string;
 }
 
-// ❌ WRONG: isLoading and variant get spread directly onto <button>
+// ❌ WRONG: trackingId is a custom prop, but it remains in rest and leaks onto <button>
 function BadButton({ isLoading, variant, ...rest }: CustomButtonProps) {
-  // If rest contains custom properties, or if you write <button {...props}>,
-  // React warns: "Received `true` for a non-boolean attribute `isLoading`."
+  // <BadButton trackingId="checkout-submit" /> leaves trackingId in rest.
+  // React warns about or otherwise mishandles this non-standard DOM prop.
   return <button {...rest} className={`btn-${variant}`} />;
 }
+
+<BadButton trackingId="checkout-submit" />;
 ```
 
 **The Fix:** Destructure all custom component props explicitly, so only valid HTML attributes remain in the `rest` object before spreading onto the DOM node:
 
 ```tsx
+import type { ButtonHTMLAttributes } from 'react';
+
+interface CustomButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  isLoading?: boolean;
+  variant?: 'primary' | 'secondary';
+  trackingId?: string;
+}
+
+function Spinner() {
+  return <span aria-label="Loading">…</span>;
+}
+
 // ✅ CORRECT: Only standard button attributes remain in restProps
 function GoodButton({
   isLoading = false,
@@ -516,6 +597,7 @@ function GoodButton({
   children,
   disabled,
   className = '',
+  trackingId: _trackingId,
   ...restProps
 }: CustomButtonProps) {
   return (
@@ -526,6 +608,14 @@ function GoodButton({
     >
       {isLoading ? <Spinner /> : children}
     </button>
+  );
+}
+
+export function ButtonExample() {
+  return (
+    <GoodButton trackingId="checkout-submit" isLoading={false}>
+      Pay now
+    </GoodButton>
   );
 }
 ```
@@ -540,7 +630,7 @@ function GoodButton({
 | **DOM Attributes** | Key-value properties on native HTML DOM elements | Browser DOM engine | Yes (Via JavaScript DOM API) | Configuring native browser elements (`href`, `src`, `type`, `id`) |
 | **Function Arguments** | Parameters passed into standard JavaScript functions | Caller of the function | Yes (Unless frozen or typed as readonly) | Providing inputs to any computational logic |
 
-### Quick Decision Rules:
+**Quick decision rules:**
 - **Use Props** when passing configuration, data, or event callbacks directly from an immediate parent to a child.
 - **Use State** when a component needs to track data that changes over time as a result of user action (e.g., input values, toggle open/closed, pending form status).
 - **Use Context** only when data is needed by many components at multiple nesting levels and passing it through intermediate components adds zero architectural value.
