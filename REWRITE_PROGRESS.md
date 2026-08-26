@@ -1,6 +1,6 @@
 # Study-note rewrite progress
 
-Updated: 2026-08-25
+Updated: 2026-08-26
 
 This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-page status remains in [`docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`](docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md).
 
@@ -69,6 +69,66 @@ This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-
 
 
 None; all 56 JavaScript concept pages have passed scoped review and been committed.
+
+## Pending rewrite scope — verified 2026-08-26
+
+The detailed tracker currently reports 288 rewritten rows and 28 assigned rows. The assigned total contains duplicate MERN entries; there are 22 unique MERN paths still awaiting acceptance.
+
+### JavaScript output questions — active Type C queue
+
+The three original collection files remain unchanged by design. Each puzzle is being split into its own Type C page.
+
+| Collection | Total puzzles | Accepted pages | Remaining |
+|---|---:|---:|---:|
+| Part 1 | 40 | 5 | 35 (Questions 6–40) |
+| Part 2 | 100 | 5 | 95 (Questions 5, 6, and 8–100; Question 7 is accepted) |
+| Part 3 | 203 | 5 | 198 (Questions 6–203) |
+
+### React focused chapters outside `concepts/`
+
+These seven standalone notes are not part of the completed 66-page core-concepts queue and still use the old template:
+
+`component-design`, `forms`, `routing`, `security-build-platform`, `senior-scenarios`, `server-state`, `typescript-react`
+
+### Backend sections still using the old template
+
+| Section | Leaf pages remaining |
+|---|---:|
+| API design | 30 |
+| Authentication | 30 |
+| Backend concepts | 39 |
+| Coding practice | 30 |
+| Deployment | 25 |
+| Express | 30 |
+| FastAPI | 50 |
+| Full-stack integration | 20 |
+| Observability | 25 |
+| Performance | 25 |
+| Python backend | 30 |
+| Queues | 20 |
+| Redis | 20 |
+| Security | 30 |
+| Senior scenarios | 25 |
+| SQLAlchemy | 30 |
+| Testing | 20 |
+| WebSockets | 20 |
+
+### MERN status
+
+MERN has 30 leaf pages. Eight are accepted in the detailed tracker, 22 unique paths are assigned but not yet accepted, and 14 of those still visibly contain the old template. The other eight assigned paths have rewritten content but still need scoped review and tracker updates.
+
+### Database sections still using the old template
+
+| Section | Leaf pages remaining |
+|---|---:|
+| SQL | 40 |
+| MySQL | 30 |
+| PostgreSQL | 35 |
+| SQL query practice | 30 |
+
+MongoDB (35 leaf pages) and Mongoose (30 leaf pages) are marked complete in the detailed tracker. The JavaScript and React core-concept queues are also complete.
+
+The marker-based audit excludes indexes, wiring pages, and the intentionally preserved question-bank wrappers. It finds 655 old-template leaf pages across the seven React focused notes and the remaining backend/database sections.
 
 ## Cross-project synchronization
 
