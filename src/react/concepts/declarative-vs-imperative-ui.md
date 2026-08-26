@@ -8,7 +8,7 @@ You find the submit button and disable it. You append a CSS class to render an a
 
 Now the network times out or the bank declines the card. To render the error state, you must manually write the exact inverse of every single step you just ran, plus all the new steps for the error view: re-enable the button, remove the spinner class, restore the button label, unhide the error container, insert the error message, and attach a retry handler.
 
-What happens if the user clicks "Retry", the network succeeds on the second attempt, but the user clicks "Cancel" right before the response arrives?
+What happens if the user clicks "Retry", the network succeeds on the second attempt, but the user clicks "Cancel" right before the response arrives? Declarative rendering does not give an asynchronous request ownership by itself: each attempt needs cancellation and an identity check, and only the current request may update state. With that boundary in place, Cancel can abort the request and invalidate its identity, so a late response cannot bring back the success UI.
 
 In manual imperative code, every new interactive state multiplies the number of state-transition paths you have to write by hand. With 10 UI elements and 5 states, you are managing dozens of manual DOM mutation paths. The moment you miss a single `classList.remove('loading')` on an obscure error branch, your UI falls out of sync with your application data. The screen shows a spinner forever while the app is completely idle.
 
@@ -40,15 +40,15 @@ At its core, declarative UI in React is built on a single mathematical formula:
 UI = f(state)
 ```
 
-Your component is a pure descriptor function `f`. It takes the current snapshot of props and state, and returns a plain object tree describing what the screen should look like at that specific moment in time. You never write code that explains how to mutate existing DOM nodes from state A to state B; you only describe what state A looks like, and what state B looks like.
+Your component is a render function `f`. It reads a snapshot of props and state and returns a description of what the screen should look like for that snapshot. The function should be pure: the same inputs produce the same description, and rendering does not directly mutate the DOM. Event handlers can still perform work; the important boundary is that the render calculation describes the result instead of manually walking through DOM transitions.
 
 Here is the exact lifecycle of how a declarative update executes from state change to pixels:
 
 **Step 1: State Change Trigger**
 An event occurs (e.g., a user clicks a button) and updates state via `setStatus('submitting')`. React schedules a re-render for that component and its subtree.
 
-**Step 2: Render Phase (Pure Calculation)**
-React calls your component function with the new state. The JSX in your component evaluates into nested `React.createElement` (or modern `_jsx`) function calls. These produce a lightweight tree of plain JavaScript objects called the **Virtual DOM** (React Elements). For example:
+**Step 2: Render phase (pure calculation)**
+React calls your component function with the new state. The JSX in your component is transformed by the build tool into `React.createElement` or modern JSX-runtime calls. Evaluating those calls creates React Elements: lightweight JavaScript descriptions of the next tree. For example:
 
 ```javascript
 {
@@ -61,32 +61,34 @@ React calls your component function with the new state. The JSX in your componen
 }
 ```
 
-No real browser DOM has been touched yet. This phase is completely synchronous, fast, and has zero browser layout or repaint cost.
+No real browser DOM has been touched yet. React may perform this calculation more than once, pause it, or discard it before committing, which is why render must not contain side effects. The calculation itself does not cause browser layout or paint; those can happen later when the commit changes the DOM.
 
-**Step 3: Reconciliation Phase (Diffing)**
-React's reconciliation algorithm compares the newly returned Virtual DOM tree against the Virtual DOM tree from the previous render. It calculates the exact minimal diff needed to bring the real DOM up to date.
+**Step 3: Reconciliation phase (identity and changes)**
+React compares the new element tree with the previous one and uses element type and `key` identity to decide what can be preserved, updated, or removed. It prepares the host changes needed to bring the React-owned DOM into line with the new description. This is not a promise that every update is globally minimal; it is a practical, identity-aware update strategy.
 
 Instead of tearing down the whole DOM tree and rebuilding it from scratch, React identifies precisely what changed: "The `<button>` element is still a `<button>`, but its `disabled` attribute changed from `false` to `true`, and its text node changed from `'Submit'` to `'Processing...'`."
 
-**Step 4: Commit Phase (Batched DOM Mutations)**
-React applies only the computed diffs to the real browser DOM in a single batched pass. The browser executes the layout, paint, and composite steps once.
+**Step 4: Commit phase (DOM mutations)**
+React applies the prepared changes to the real browser DOM. React batches related updates when its scheduling context allows, and the browser then decides whether layout, paint, and compositing are needed. The framework does not guarantee that every update causes exactly one pass through each browser rendering stage.
 
-Because you only define what the UI looks like for any given state value, you never have to write cleanup or transition code between different states. If `status === 'error'`, the component renders the error banner. The moment `status` changes to `'submitting'`, the component function executes again, produces a tree without the error banner, and React automatically removes the error node from the real DOM.
+Because you define the UI for each state, you usually do not write inverse cleanup for every visual property. If `status === 'error'`, the component renders the error banner. When `status` changes to `'submitting'`, the next tree omits that banner and React removes it from the DOM it owns. Cleanup is still required for external resources such as subscriptions, timers, or third-party widgets; declarative rendering does not cancel those automatically.
 
-**The Imperative Escape Hatches in React**
+**Imperative escape hatches in React.**
 While React's rendering model is declarative, the underlying browser platform is fundamentally imperative. Certain operations cannot be expressed as pure state-to-DOM projections:
 - Focusing an input element (`inputRef.current.focus()`)
 - Scrolling a container to a specific coordinate (`window.scrollTo()`)
 - Interfacing with non-React imperative libraries (e.g., D3, Google Maps, Canvas APIs)
 - Measuring DOM layout geometry (`element.getBoundingClientRect()`)
 
-For these scenarios, React provides controlled escape hatches: `useRef` to hold direct references to real DOM nodes, and `useEffect` / `useLayoutEffect` to run imperative commands after React has finished committing the declarative tree to the DOM.
+For these scenarios, React provides controlled escape hatches: `useRef` can hold a reference to a DOM node, while an Effect can synchronize an external system after commit. Use `useLayoutEffect` only when the synchronization must happen before the browser paints; ordinary Effects are usually the better default. An event handler is also a valid place for an imperative response to a user action, such as focusing the field that just failed validation.
 
 ## 4. Real Code — See It Working
 
 Let us look at the exact same requirement implemented both ways: a multi-state async form with Idle, Submitting, Error (with retry), and Success (with reset) states.
 
-### The Imperative Approach (Vanilla JS / DOM Manipulation)
+The HTML block is a complete browser example. The React blocks are focused TypeScript components: paste each into a React + TypeScript application with the usual JSX build setup to run it. They intentionally omit the application entry point and styling so the state-to-view relationship stays visible.
+
+**Imperative approach (Vanilla JS / DOM manipulation).**
 
 Notice how update logic and DOM cleanup are scattered across event handlers. Adding a new state requires updating every handler to prevent visual leaks.
 
@@ -112,6 +114,7 @@ Notice how update logic and DOM cleanup are scattered across event handlers. Add
 
   // Manual mutation for the 'Submitting' state
   function setSubmittingUI() {
+    submitBtn.style.display = 'inline-block';
     submitBtn.disabled = true;
     submitBtn.textContent = 'Processing...';
     cardInput.disabled = true;
@@ -182,12 +185,12 @@ Notice how update logic and DOM cleanup are scattered across event handlers. Add
 </script>
 ```
 
-### The Declarative Approach (React + TypeScript)
+**Declarative approach (React + TypeScript).**
 
 Here, the UI is a direct reflection of a single state object. When the state changes, the entire view updates automatically. No DOM nodes are queried or manually mutated.
 
 ```tsx
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 
 type FormState =
   | { status: 'idle' }
@@ -198,18 +201,33 @@ type FormState =
 export function PaymentForm() {
   const [cardNumber, setCardNumber] = useState('');
   const [formState, setFormState] = useState<FormState>({ status: 'idle' });
+  const requestIdRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
 
   async function handlePayment(e: React.FormEvent) {
     e.preventDefault();
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
     setFormState({ status: 'submitting' });
 
     try {
-      const res = await fakePaymentApi(cardNumber);
+      const res = await fakePaymentApi(cardNumber, controller.signal);
+      if (requestId !== requestIdRef.current) return; // Ignore a stale response.
       setFormState({ status: 'success', txId: res.txId });
     } catch (err) {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
       const message = err instanceof Error ? err.message : 'Payment failed';
       setFormState({ status: 'error', errorMessage: message });
     }
+  }
+
+  function handleCancel() {
+    controllerRef.current?.abort();
+    requestIdRef.current += 1; // Invalidate the canceled request's response.
+    setFormState({ status: 'idle' });
   }
 
   function handleReset() {
@@ -247,9 +265,14 @@ export function PaymentForm() {
           {formState.status === 'error' ? (
             <button type="submit">Retry Payment</button>
           ) : (
-            <button type="submit" disabled={formState.status === 'submitting'}>
-              {formState.status === 'submitting' ? 'Processing...' : 'Pay Now'}
-            </button>
+            <>
+              <button type="submit" disabled={formState.status === 'submitting'}>
+                {formState.status === 'submitting' ? 'Processing...' : 'Pay Now'}
+              </button>
+              {formState.status === 'submitting' && (
+                <button type="button" onClick={handleCancel}>Cancel</button>
+              )}
+            </>
           )}
         </>
       )}
@@ -257,16 +280,20 @@ export function PaymentForm() {
   );
 }
 
-function fakePaymentApi(card: string): Promise<{ txId: string }> {
+function fakePaymentApi(card: string, signal: AbortSignal): Promise<{ txId: string }> {
   return new Promise((resolve, reject) => {
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       card.startsWith('4') ? resolve({ txId: 'TX-9901' }) : reject(new Error('Card declined'));
     }, 800);
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('Payment request aborted', 'AbortError'));
+    }, { once: true });
   });
 }
 ```
 
-### Controlled Imperative Bridge with `useRef`
+**Controlled imperative bridge with `useRef`.**
 
 When an imperative browser action is required (e.g. auto-focusing the card input after a validation error or reset), we bridge the gap cleanly using a ref:
 
@@ -319,13 +346,13 @@ JavaScript is an imperative language with statements, loops, and function calls.
 
 **Q: How does declarative UI eliminate state-DOM synchronization bugs?**
 
-In imperative systems, state-DOM bugs occur because the DOM is an independent, mutable state store that drifts away from your JavaScript variables whenever an event handler fails to update every affected node.
+In imperative systems, state-DOM bugs occur because the DOM is an independent, mutable representation that drifts away from your JavaScript variables whenever an event handler fails to update every affected node.
 
-In declarative systems, the DOM is never treated as the source of truth. The application state in JavaScript is the single source of truth, and the DOM is merely a read-only projection of that state. Because React re-evaluates the component description whenever state changes, there is no manual "transition code" to forget. If an item is absent from your state array, it is impossible for a DOM node for that item to linger on screen.
+In declarative systems, React-owned render output is not treated as a second application-state store. Application state is the source of truth for that output, and React re-evaluates the component description whenever relevant state changes. There is no manual transition branch to forget for an omitted React child, so an item absent from the state array will not remain in that React-owned list. This guarantee does not cover DOM that a browser API, an uncontrolled input, or a third-party library owns.
 
 **Q: Is JSX declarative, and what does it compile to under the hood?**
 
-Yes, JSX is fully declarative. It looks like HTML, but it is syntactic sugar for JavaScript object creation. During the build step, a compiler (such as Babel, SWC, or TypeScript) transforms JSX tags into `React.createElement` or modern `_jsx()` calls. When evaluated at runtime during the render phase, these calls return plain JavaScript objects representing Virtual DOM nodes. JSX allows developers to declare UI structures using familiar markup syntax embedded with dynamic JavaScript expressions.
+JSX is declarative syntax for describing React elements: it looks like HTML, but it is syntactic sugar for JavaScript function calls that create element descriptions. During the build step, a compiler (such as Babel, SWC, or TypeScript) transforms JSX tags into `React.createElement` or modern `_jsx()` calls. When evaluated at runtime during the render phase, these calls return plain JavaScript objects representing React elements. The expressions inside JSX are still ordinary JavaScript, so they can contain imperative logic or side effects; JSX's declarative part is the UI description, not a restriction that makes every embedded expression pure.
 
 **Q: When is it necessary or appropriate to write imperative code inside a React application?**
 
@@ -352,12 +379,12 @@ In an imperative world, if you start mutating DOM nodes halfway through a long c
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Thinking Declarative Means "Less Code" or "No Logic"
+**Trap 1: Thinking declarative means “less code” or “no logic.”**
 - **The Misconception:** Developers sometimes assume declarative code is just writing static templates and that complex control flow belongs in imperative scripts.
 - **Why It Fails:** Declarative code contains substantial logic, but that logic is expressed as functional transformations and derived data rather than DOM mutation scripts.
 - **What to Do:** Embrace conditional rendering (`&&`, ternaries), array mappings (`.map()`), and derived values directly in the render flow instead of trying to manipulate rendered elements post-render.
 
-### Trap 2: Duplicating State Instead of Deriving It
+**Trap 2: Duplicating state instead of deriving it.**
 - **The Misconception:** Storing UI presentation states in dedicated state variables (e.g., maintaining `isSubmitDisabled`, `fullName`, and `itemCount` in separate `useState` hooks).
 - **Why It Fails:** When you manually update three separate state setters across different handlers, you reintroduce the exact same state-synchronization bugs that declarative UI was created to solve.
 - **What Actually Happens:** If `firstName` updates but an event handler forgets to call `setFullName(firstName + ' ' + lastName)`, the UI displays stale, conflicting data.
@@ -381,34 +408,34 @@ const fullName = `${firstName} ${lastName}`.trim(); // Computed fresh on every r
 const isSubmitDisabled = !firstName || !lastName;
 ```
 
-### Trap 3: Direct DOM Mutation Inside Component Bodies
+**Trap 3: Direct DOM mutation inside component bodies.**
 - **The Misconception:** Using `document.querySelector` or modifying `ref.current` styles directly during the render phase.
 - **Why It Fails:** Render functions in React must be pure and free of side effects. Modifying the real DOM during render violates React's lifecycle and causes erratic UI flickering or reconciliation crashes.
 - **The Fix:** Express styles and classes declaratively via props (`className={isActive ? 'active' : ''}`), and restrict any unavoidable imperative mutations to `useEffect` or event handlers.
 
-### Trap 4: Treating `useEffect` as an Imperative Step-by-Step Script
+**Trap 4: Treating `useEffect` as an imperative step-by-step script.**
 - **The Misconception:** Using `useEffect` chains to imperatively trigger sequences of state updates (e.g., "when state A changes, run an effect to set state B, which triggers an effect to set state C").
 - **Why It Fails:** This pattern causes cascading re-renders, race conditions, and makes data flow impossible to trace.
 - **The Fix:** Treat `useEffect` solely as a synchronization mechanism with external, non-React systems (like network sockets, timers, or browser storage). Handle user intent and multi-step logic inside event handlers, or consolidate related fields into a single `useReducer`.
 
 ## 7. Compare With Related Concepts
 
-### Declarative UI vs Imperative UI
+**Declarative UI vs imperative UI.**
 - **Key Difference:** Imperative UI dictates the sequential steps and mechanics of HOW to modify the DOM (`element.classList.add('visible')`). Declarative UI dictates WHAT the target interface should look like for a given data state (`<Modal isOpen={isOpen} />`).
 - **Rule of Thumb:** Use declarative React rendering for all screen layouts, visibility, and data binding. Reserve imperative code for DOM measurements, focus management, and non-React third-party integrations via `useRef`.
 
-### Declarative UI vs Reactive Programming (RxJS, MobX, Signals)
+**Declarative UI vs reactive programming (RxJS, MobX, Signals).**
 - **Key Difference:** Declarative UI describes the structural shape of the user interface as a function of state. Reactive programming describes how data streams propagate and notify subscribers over time when changes occur. React pairs declarative UI with coarse component-level re-renders, while fine-grained reactive systems (like SolidJS or Preact Signals) notify individual DOM bindings directly.
 - **Rule of Thumb:** Declarative UI is the paradigm for *describing* visual output; Reactive programming is a paradigm for *managing and propagating* data changes to trigger those descriptions.
 
-### Declarative UI vs Functional Programming
+**Declarative UI vs functional programming.**
 - **Key Difference:** Functional programming is a broad paradigm emphasizing pure functions, immutability, and function composition. Declarative UI is a specific application of functional principles to user interface engineering (`UI = f(state)`). React components are functions that take immutable inputs (props) and return UI descriptors.
 - **Rule of Thumb:** Functional programming provides the mathematical principles (immutability, pure functions); Declarative UI applies those principles to build predictable user interfaces.
 
-### Declarative JSX vs HTML Template Engines (Handlebars, EJS, Mustache)
-- **Key Difference:** Template engines use custom string-interpolation DSLs (`{{#if user}}`) that compile down to string concatenation, which is then parsed into DOM nodes. JSX is full JavaScript syntax that compiles into executable function calls producing rich in-memory Virtual DOM object graphs with full access to JavaScript scoping, types, and expressions.
-- **Rule of Thumb:** Template engines interpolate data into static HTML strings; JSX evaluates JavaScript expressions to produce dynamic, type-safe component trees.
+**Declarative JSX vs HTML template engines (Handlebars, EJS, Mustache).**
+- **Key Difference:** Template engines use a template language and engine-specific compilation/runtime strategy; some produce HTML strings, while others generate DOM-building or framework-specific output. JSX is JavaScript syntax that compiles into executable function calls producing rich in-memory element descriptions with access to JavaScript scoping and expressions. JSX itself is not automatically type-safe: TypeScript and configured editor/compiler tooling can check props and expressions, while plain JavaScript JSX relies on runtime checks.
+- **Rule of Thumb:** Choose a template engine when its template syntax and rendering model fit the host system; choose JSX when you want JavaScript expressions and component composition, with type safety only when your TypeScript/tooling setup provides it.
 
-## 8. 🧠 The Memory Hook
+## 8. 🧠 The Memory Hook — What Sticks
 
 **Imperative is giving turn-by-turn driving directions to a blindfolded driver; Declarative is entering your destination into a GPS. In React, you declare the destination (`UI = f(state)`), and the framework steers the DOM to get you there.**
