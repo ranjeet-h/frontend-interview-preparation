@@ -1,136 +1,322 @@
 # Handling Async Logic Inside Hooks
 
-## Detailed explanation
-Async logic inside hooks usually means starting asynchronous work from an effect or event handler and then updating state when it completes. Effects cannot directly be `async` because an async function returns a promise, while React expects either nothing or a cleanup function.
+## 1. Why This Exists — The Problem First
 
-Safe async hooks handle loading, error, cancellation, stale responses, and cleanup. For shared server data, prefer server-state libraries over repeatedly writing manual async effect logic.
+An API request does not respect React's render timing. A component can render for `userId = "a"`, start a request, render again for `userId = "b"`, and then receive the response for `"a"` after the response for `"b"`. If both responses write to the same state, the screen can show the wrong user while looking completely healthy.
 
-## 1. One-line mental model
-Async hook logic must handle time, cancellation, and stale results explicitly.
+There is a second failure hiding in a deceptively common line: `useEffect(async () => { ... })`. The request code may look reasonable, but the effect callback has a small, strict return contract that an `async` function cannot satisfy. Safe async hook code exists because JavaScript work finishes later while React effects are tied to a particular render and must be cleaned up when that render is no longer current.
 
-## 2. Problem it solves
-Async work can finish after dependencies change, fail unexpectedly, or update unmounted components.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Do not make the effect callback itself `async`.
-- Define and call an inner async function.
-- Track loading/error states intentionally.
-- Cancel or ignore outdated work.
-- Prefer query libraries for server state.
+Think of an effect as placing an order at a restaurant. Each render with a new dependency value places a new order. The waiter needs two things from you: start the order now, and provide a cleanup instruction for the old order when the table changes. A promise is the meal's future delivery status; it is not a cleanup instruction.
 
-## 4. Visual / analogy
-Async logic is like sending mail: by the time the reply arrives, the address may have changed.
+If the customer changes their order from soup to pasta, the restaurant may be able to stop cooking the soup. That is `AbortController`. If it cannot stop the kitchen, the waiter can still refuse to put the old soup on the table when it arrives. That is an active or request-identity check. The first saves work; the second protects the UI even when the work cannot be stopped.
 
-```mermaid
-flowchart LR
-  Start["Start async"] --> Pending["Pending"]
-  Pending --> Success["Success"]
-  Pending --> Error["Error"]
-  Pending --> Cancel["Cancel/ignore"]
-```
+The table's status also needs more than “a request exists.” It needs to distinguish waiting, successful data, and a real failure. In React, those statuses are state for the render, while the cleanup is the instruction that invalidates work belonging to an older table setup.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+An effect callback runs after React commits the render. React calls the callback and keeps its return value. That return value must be either `undefined` or a synchronous cleanup function. React later calls that cleanup before the effect runs again because a dependency changed, and when the component is removed.
+
+Every render is an immutable snapshot: its props, state values, and functions are the values from that one render. The effect setup and every async function it creates close over that snapshot, so each effect closure belongs to the render that created it; a later render does not rewrite the old closure's `userId` or state values. Cleanup is the handoff between snapshots: it marks or cancels the old closure's work, while a completion calls a state setter to request a new render rather than mutating the snapshot that is already on screen. That is why cleanup and result guards work together: cleanup revokes the old closure's permission to publish, and the setter publishes only from a still-current operation.
+
+An `async` function always returns a promise, even when its body has no explicit `return`. Therefore this is invalid:
 
 ```tsx
-React.useEffect(() => {
-  let active = true;
-
-  async function load() {
-    const data = await fetchData();
-    if (active) setData(data);
-  }
-
-  load();
-  return () => {
-    active = false;
-  };
+// Partial pattern: place this inside a component that imports React and
+// declares `Profile` and `setProfile` with useState, for example:
+// type Profile = { name: string };
+// const [profile, setProfile] = React.useState<Profile | null>(null);
+React.useEffect(async () => {
+  const response = await fetch("/api/profile");
+  setProfile(await response.json());
 }, []);
 ```
 
-## 6. Real-world example
+React receives a promise where it expects a cleanup function. The fix is to keep the effect callback synchronous and start the asynchronous function inside it:
 
 ```tsx
-function useUser(userId: string) {
-  return useQuery({
-    queryKey: ["user", userId],
-    queryFn: ({ signal }) => userApi.get(userId, { signal }),
+// Partial pattern: place this inside a component that imports React and
+// provides `setProfile` as a useState setter in its component scope.
+React.useEffect(() => {
+  async function loadProfile() {
+    // Awaiting here does not change the effect's return value.
+    const response = await fetch("/api/profile");
+    const profile = await response.json();
+    setProfile(profile);
+  }
+
+  void loadProfile();
+}, []);
+```
+
+The `void` makes it explicit that the effect intentionally starts, rather than returns, the promise. It does not handle errors; production code must do that separately.
+
+For a request depending on an input, each effect run owns a particular controller and request. Cleanup aborts that run before the next one begins:
+
+```text
+render for "a" -> commit -> effect A starts
+render for "b" -> commit -> cleanup A -> effect B starts
+response A or abort A arrives
+response B arrives
+```
+
+`AbortController` is cooperative cancellation. Passing its `signal` to `fetch` lets the browser reject the fetch when `abort()` is called. It does not magically cancel every promise or undo server-side work that already happened. The server might have received and processed the request, so cancellation is mainly a client-side resource and result-lifetime decision.
+
+An abort still rejects the promise, so the catch block must treat `AbortError` as expected control flow. Other errors should move the operation into an error state. For APIs that do not accept an abort signal, an active flag or request ID prevents an old completion from committing its result. The following is a partial pattern: it assumes a component scope with `React`, a stable `slowSource` function in the dependency list, and `setValue`/`setError` state setters declared with `React.useState`:
+
+```tsx
+React.useEffect(() => {
+  let current = true;
+
+  async function load() {
+    try {
+      const value = await slowSource();
+      if (current) setValue(value);
+    } catch (error) {
+      if (current) setError(error);
+    }
+  }
+
+  void load();
+  return () => {
+    current = false;
+  };
+}, [slowSource]);
+```
+
+The flag is not state. Changing it does not trigger a render; it marks the old effect instance as no longer authorized to publish. A request ID is often clearer when several operations can exist at once: store the latest ID in a ref, capture the ID for the current request, and only publish if the IDs match.
+
+Async state should describe the state machine, not merely whether a promise was created. A typical request moves through `idle -> pending -> success` or `idle -> pending -> failure`. A refresh may be `success + pending` if the UI should keep showing old data while new data loads. That is more useful than blindly replacing data with `undefined` every time.
+
+Dependencies are also part of correctness. The effect must mention values it reads from the render, such as `userId` or an API client whose identity can change. Omitting one gives the async function a stale closure: it continues using the value captured by an older render. Adding an unstable function or object can cause repeated requests, so make dependencies stable or move the construction inside the effect when it belongs there.
+
+Async work started by an event handler is different from synchronization started by an effect. A submit handler can be `async` because React is not interpreting its return value as effect cleanup. It should still guard duplicate submits, handle errors, and decide what happens if the user navigates away.
+
+For server data shared across screens, manual effects are usually the wrong ownership boundary. A query library such as TanStack Query gives the request a cache key, deduplicates observers, tracks status, and coordinates refetching. A custom hook can still be useful as the application-specific API around that library. `useState` and `useReducer` remain better fits for local client state such as form drafts and open panels.
+
+At a senior level, also separate data ownership from loading presentation. A Suspense boundary such as `<Suspense fallback={<Spinner />}><SearchResults /></Suspense>` can show a fallback while a Suspense-aware resource is pending, and a transition-marked update such as `startTransition(() => setQuery(nextQuery))` can keep already-visible UI responsive while a non-urgent update is prepared. They improve what the user sees; they do not replace request cancellation, cleanup-local invalidation or request-identity guards, or server-state caching. A transition does not cancel the network request, and Suspense does not decide whether an older response is still allowed to publish. Pair these boundaries with a cache or framework that owns the resource lifecycle, and keep cancellation and identity policy at the request boundary.
+
+## 4. Real Code — See It Working
+
+This complete browser example uses a mocked API so it can be copied into a React + TypeScript app without a backend. The delay makes out-of-order completion easy to observe.
+
+```tsx
+import { useEffect, useState } from "react";
+
+type User = { id: string; name: string };
+
+function getUser(id: string, signal: AbortSignal): Promise<User> {
+  const delay = id === "a" ? 700 : 150;
+
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      resolve({ id, name: id === "a" ? "Ada" : "Brendan" });
+    }, delay);
+
+    signal.addEventListener(
+      "abort",
+      () => {
+        window.clearTimeout(timer);
+        reject(new DOMException("Request aborted", "AbortError"));
+      },
+      { once: true },
+    );
   });
+}
+
+export function UserCard({ userId }: { userId: string }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [status, setStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setStatus("pending");
+    setError(null);
+
+    async function load() {
+      try {
+        const nextUser = await getUser(userId, controller.signal);
+        setUser(nextUser);
+        setStatus("success");
+      } catch (unknownError) {
+        if (unknownError instanceof DOMException && unknownError.name === "AbortError") {
+          return; // Changing userId is normal invalidation, not a visible failure.
+        }
+        setError(unknownError instanceof Error ? unknownError.message : "Unknown error");
+        setStatus("error");
+      }
+    }
+
+    void load();
+    return () => controller.abort();
+  }, [userId]);
+
+  if (status === "pending" && user === null) return <p>Loading…</p>;
+  if (status === "error") return <p role="alert">Could not load user: {error}</p>;
+  if (user === null) return <p>No user selected.</p>;
+
+  return (
+    <article aria-busy={status === "pending"}>
+      <strong>{user.name}</strong>
+      {status === "pending" && <span> Updating…</span>}
+    </article>
+  );
 }
 ```
 
-## 7. Common interview questions
-#### How do you handle async logic in hooks?
-- **The Engine Mechanism (Why it behaves this way):** Async logic in hooks requires managing the full lifecycle: loading state, success state, error state, and cancellation. Inside `useEffect`, you define an inner async function (because the effect callback itself can't be async) and call it immediately. You track loading/error with `useState`, handle cancellation via cleanup (AbortController or active flag), and update state only if the component is still relevant. The Fiber scheduler doesn't coordinate with async operations, so you must manually manage the timing.
-- **The Unforgettable Mental Model:** The **Mission Control**. Launching a rocket (async request) requires tracking: countdown (loading), orbit achieved (success), anomaly (error), and abort sequence (cancellation). Mission control manages all four states explicitly.
-- **The Trap:** Making the effect callback `async` directly. This returns a Promise, and React expects either nothing or a cleanup function. Returning a Promise confuses React's effect cleanup system.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I handle async logic by defining an inner async function inside the effect and calling it immediately. I track loading and error states with `useState`, handle cancellation in the cleanup function with AbortController, and only update state if the request is still relevant. For shared server data, I prefer TanStack Query because it handles all of this automatically — loading, error, caching, deduplication, and cancellation."
+The previous user remains visible during a refresh because the example models `status` separately from `user`. That prevents a distracting blank screen. If the product requires a hard loading screen, clear `user` when starting the request instead; that is a product decision, not an async rule.
 
-#### Why can't effect callback be async?
-- **The Engine Mechanism (Why it behaves this way):** React's `useEffect` expects the callback to return either nothing (`undefined`) or a cleanup function. An `async` function always returns a Promise, even if you don't explicitly return anything. React would interpret this Promise as the cleanup function, which is incorrect — Promises don't have the cleanup behavior React expects. The Fiber scheduler stores the return value and calls it during cleanup; a Promise is not callable as a cleanup function.
-- **The Unforgettable Mental Model:** The **Wrong Return Ticket**. React expects a return ticket (cleanup function) that it can use later. An async function hands it a receipt (Promise) instead. The receipt proves something happened, but it can't be used to clean up.
-- **The Trap:** Using an IIFE pattern that hides the issue: `useEffect(async () => { ... }())`. This still returns a Promise and breaks cleanup.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: React expects the effect callback to return either nothing or a cleanup function. An async function always returns a Promise, which React would mistakenly treat as the cleanup function. Since Promises aren't callable as cleanup, this breaks the effect lifecycle. The fix is to define and call an inner async function: `useEffect(() => { async function load() { ... } load(); })`."
+To visibly exercise out-of-order completion, use a non-abortable source with a small driver. Click **Run A → B** and request A starts first but takes longer; B completes first and is shown. When A eventually completes, its request ID is stale, so it is ignored. This is the case an aborting demo cannot show because cancellation may prevent A from completing at all.
 
-#### How do you avoid race conditions?
-- **The Engine Mechanism (Why it behaves this way):** Race conditions in async effects occur when multiple requests are in-flight and complete out of order. Two patterns prevent this: (1) AbortController cancels the previous request when dependencies change, ensuring only the latest request can succeed. (2) An active flag (`let active = true`) set to `false` in cleanup lets the request complete but prevents the state update. Both patterns leverage the effect's cleanup function, which React calls before re-running the effect.
-- **The Unforgettable Mental Model:** The **Single-File Queue**. Only one person (request) should be at the counter at a time. When a new person arrives, the previous one is either sent home (abort) or told their number is no longer called (active flag).
-- **The Trap:** Using only the active flag for large responses. The request still downloads fully, wasting bandwidth. AbortController is more efficient because it stops the download mid-stream.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I avoid race conditions with AbortController — I create a new controller in the effect, pass its signal to fetch, and abort in cleanup. This cancels the previous request when dependencies change, ensuring only the latest response updates state. For APIs that don't support AbortController, I use an active flag pattern: `let active = true` in the effect, set to `false` in cleanup, and check before state updates."
+```tsx
+import { useRef, useState } from "react";
 
-#### How do you cancel requests?
-- **The Engine Mechanism (Why it behaves this way):** `AbortController` creates a signal that's passed to `fetch` via `{ signal }`. When `controller.abort()` is called in the effect's cleanup, the browser's networking layer cancels the TCP connection and rejects the fetch promise with an `AbortError`. The catch block filters this error and returns early. This is the cleanest cancellation pattern because it stops the work at the source, not just the result handling.
-- **The Unforgettable Mental Model:** The **Recall Wire**. Like the movie trope where someone calls back a message before it's delivered. The abort wire reaches the request mid-flight and tells it to turn around.
-- **The Trap:** Not filtering `AbortError` in the catch block. This causes the UI to show a cancellation as if it were a real network error, confusing users.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use AbortController — create it inside the effect, pass the signal to fetch, and call `controller.abort()` in cleanup. In the catch block, I check `if (error.name === 'AbortError')` and return early, since cancellation is expected behavior, not a failure. This pattern cancels the request at the network level, saving bandwidth and preventing stale responses."
+type Result = { id: "a" | "b"; label: string };
 
-#### How do you model loading and error?
-- **The Engine Mechanism (Why it behaves this way):** Loading and error are derived states that reflect the async operation's lifecycle. `useState` tracks three states: `isLoading` (boolean), `data` (the result), and `error` (the failure). The async function sets `isLoading(true)` before the request, `setData(result)` on success, and `setError(err)` on failure. `isLoading` is set to `false` in both success and error branches. React's reconciliation updates the UI based on these state values, showing a spinner, data, or error message.
-- **The Unforgettable Mental Model:** The **Traffic Light System**. Green (data loaded), yellow (loading), red (error). The UI shows different content based on which light is active, and only one light is on at a time.
-- **The Trap:** Not resetting error state before a new request. If a previous request failed and a new one starts, the old error may still be displayed until the new request completes. Always set `setError(null)` before starting a new request.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I model async state with three pieces of state: `isLoading`, `data`, and `error`. Before the request, I set loading to true and clear any previous error. On success, I set the data and clear loading. On error, I set the error and clear loading. This gives the UI three clear branches to render: a spinner, the data, or an error message. I always reset error before starting a new request to avoid showing stale errors."
+function getNonAbortableResult(id: Result["id"]): Promise<Result> {
+  const delay = id === "a" ? 700 : 150;
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve({ id, label: id === "a" ? "Ada" : "Brendan" }), delay);
+  });
+}
 
-#### When should you use TanStack Query?
-- **The Engine Mechanism (Why it behaves this way):** TanStack Query should be used for any shared server state — data that comes from an API and may be needed by multiple components. It handles caching, background refetching, request deduplication, automatic cancellation, pagination, infinite scrolling, and optimistic updates. Instead of writing manual effects for each data fetch, you declare a query with a key and a fetch function, and the library manages the entire lifecycle. The query result is available to any component that requests the same query key.
-- **The Unforgettable Mental Model:** The **Central Library**. Instead of every student (component) buying their own copy of a textbook (fetching data), they check it out from the central library (TanStack Query). The library manages copies, handles reservations, and ensures everyone gets the latest edition.
-- **The Trap:** Using TanStack Query for client-only state like form inputs or UI toggles. It's designed for server state — data that lives outside your app and needs to be fetched, cached, and synchronized.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use TanStack Query for any server state — data fetched from APIs that may be shared across components. It eliminates manual effect logic by handling caching, deduplication, background refetching, cancellation, and error retries automatically. I don't use it for client-only state like form inputs or UI toggles — that's what `useState` and `useReducer` are for. The rule is simple: if the data lives on a server, use a query library."
+export function OutOfOrderDriver() {
+  const requestId = useRef(0);
+  const [result, setResult] = useState<Result | null>(null);
+  const [running, setRunning] = useState(false);
 
-#### How do custom async hooks work?
-- **The Engine Mechanism (Why it behaves this way):** A custom async hook wraps the async effect logic in a reusable function. It accepts parameters (like a user ID), uses `useState` for loading/error/data, and `useEffect` for the fetch logic with AbortController cleanup. It returns an object with `data`, `isLoading`, `error`, and sometimes a `refetch` function. Consumers call the hook with their parameters and get a ready-to-use async state object. When built on TanStack Query, the custom hook is even simpler — it just wraps `useQuery` with the appropriate query key and fetch function.
-- **The Unforgettable Mental Model:** The **Vending Machine**. The custom hook is a vending machine — you insert a coin (parameter), and it dispenses a complete package (data, loading, error). You don't need to know how the machine works inside; you just use the interface.
-- **The Trap:** Making the custom hook too specific. A good async hook is parameterized and reusable — not hardcoded to one endpoint or one component's needs.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A custom async hook encapsulates the fetch logic, state management, and cleanup in a reusable function. It accepts parameters, manages loading/error/data state internally, and returns them to the consumer. When built on TanStack Query, it's even cleaner — just a `useQuery` call with the right key and fetch function. The hook abstracts away the async complexity so components just consume the result."
+  async function load(id: Result["id"]) {
+    const idForThisRequest = ++requestId.current;
+    setRunning(true);
+    const nextResult = await getNonAbortableResult(id);
+    if (idForThisRequest !== requestId.current) return; // Old completion loses.
+    setResult(nextResult);
+    setRunning(false);
+  }
 
-## 8. Active recall test
-1. **Why not `useEffect(async () => {})`?**
-   - **Explanation:** An async function always returns a Promise. React expects the effect callback to return either nothing or a cleanup function. Returning a Promise confuses React's cleanup system, as Promises aren't callable as cleanup functions. The fix is to define and call an inner async function inside the effect.
-2. **What states should async UI model?**
-   - **Explanation:** Three states: `isLoading` (request in progress), `data` (successful result), and `error` (failure). The UI renders different branches based on these states: a spinner for loading, the data for success, or an error message for failure. Error should be cleared before starting a new request.
-3. **How do you ignore outdated results?**
-   - **Explanation:** Use an active flag (`let active = true`) set to `false` in cleanup, and check `if (active)` before calling `setState`. Alternatively, use AbortController to cancel the request entirely. Both prevent stale responses from overwriting fresh data when dependencies change.
-4. **How does AbortController help?**
-   - **Explanation:** It cancels in-flight fetch requests at the network level when the effect's cleanup runs. This prevents stale responses from arriving, saves bandwidth, and frees the browser connection. The fetch promise rejects with `AbortError`, which should be filtered in the catch block.
-5. **When should manual fetching be avoided?**
-   - **Explanation:** When data is shared across multiple components, needs caching, requires background refetching, or benefits from request deduplication. In these cases, TanStack Query handles the entire lifecycle automatically — manual effects would duplicate this logic and introduce bugs like race conditions and stale caches.
+  function runRace() {
+    void load("a");
+    window.setTimeout(() => void load("b"), 25);
+  }
 
-## 9. Mistakes / traps
-- Making effect callback async.
-- Missing cleanup.
-- Not handling errors.
-- Showing stale results.
-- Duplicating query logic across components.
+  return (
+    <section>
+      <button onClick={runRace}>Run A → B</button>
+      <p>{running ? "Requests in flight…" : result ? result.label : "No result yet"}</p>
+    </section>
+  );
+}
+```
 
-## 10. Compare with related concepts
-- **Async effect vs event async:** effects sync with rendering; events respond to user actions.
-- **Manual async vs query library:** manual controls one request; library handles cache lifecycle.
-- **Cancellation vs error:** cancellation is expected invalidation, not a failure state.
+For a user action, the async function belongs in the handler, not in an effect:
 
-## 11. Summary from memory
-Explain how to write a safe async effect and when to replace it with TanStack Query.
+```tsx
+import { useState } from "react";
 
-## 12. Spaced revision prompts
-- After 1 day: Explain async effect pattern.
-- After 3 days: Add loading and error state.
-- After 7 days: Add cancellation.
-- After 14 days: Convert manual fetch to query hook.
+export function SaveButton({ save }: { save: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
 
+  async function handleSave() {
+    if (saving) return; // Prevents accidental double-submit.
+    setSaving(true);
+    setMessage("");
+    try {
+      await save();
+      setMessage("Saved");
+    } catch {
+      setMessage("Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <button onClick={() => void handleSave()} disabled={saving}>{message || "Save"}</button>;
+}
+```
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: Why can’t the `useEffect` callback itself be `async`?**
+
+React uses the callback's return value as a cleanup function. An `async` callback always returns a promise, so it cannot return the synchronous cleanup contract React expects. Put an inner async function in a synchronous effect and call it with `void`; return only cleanup from the effect.
+
+**Q: What happens when dependencies change while a request is in flight?**
+
+React runs the previous cleanup before running the new effect setup. The old request may still resolve unless it supports cancellation, so the cleanup should abort it or invalidate its result. The new request then owns the right to publish data for the new dependency value.
+
+**Q: Is `AbortController` enough to prevent stale data?**
+
+It is the best first tool for `fetch`, but cancellation is cooperative and timing-sensitive. A response may already have completed, and non-fetch work may ignore the signal. Keep the result-lifetime guard when the operation can outlive cleanup, especially with custom promises, workers, or libraries that only partially support signals.
+
+**Q: Where do Suspense boundaries and transitions fit?**
+
+Suspense owns the loading boundary for a resource that is integrated with Suspense, while a transition marks an update as non-urgent so React can keep current content interactive while preparing the next view. Neither is a request-lifecycle policy: neither cancels an in-flight request, rejects an obsolete completion, or supplies a cache key and server-state freshness policy. Use them with request cancellation or identity guards and a server-state cache when the data is remote or shared.
+
+**Q: What is the difference between cancelling work and ignoring a result?**
+
+Cancellation tries to stop the underlying operation and can save bandwidth, CPU, and connection capacity. Ignoring a result lets the operation finish but prevents an obsolete effect from publishing. Use cancellation where supported, and use invalidation when stopping the work is impossible or insufficient.
+
+**Q: How should loading, success, and error be modeled?**
+
+Treat them as states of one operation. Set pending before starting, clear or retain old data according to the UI's refresh behavior, set success only after valid data arrives, and set failure only for a real error. Clear a previous error when a new attempt starts. For complex flows, a discriminated union or reducer prevents contradictory combinations such as `isLoading: false` with both fresh data and a stale error.
+
+**Q: How do stale closures affect async effects?**
+
+The async function captures values from the render that created it. If `userId` is read but omitted from dependencies, a later render can display one ID while the request still uses the old one. Include every render value the effect reads, then stabilize dependencies when their identity is not meant to change.
+
+**Q: Should an effect fetch data on every render?**
+
+No. The dependency array expresses when synchronization must be recreated. An empty array means “for this mount,” while `[userId]` means “when this user changes.” An effect with no dependency array runs after every committed render, which can create request loops if the request updates state.
+
+**Q: How is async event-handler code different from async effect code?**
+
+An event handler is allowed to be `async` because React does not use its return value as cleanup. It represents an explicit user action, so the handler owns duplicate-submit prevention and feedback. An effect represents synchronization with rendered inputs, so its outer callback must stay synchronous and return cleanup.
+
+**Q: When would you choose TanStack Query over a manual effect?**
+
+Choose a query library when remote data needs caching, deduplication, background refetching, retries, invalidation, pagination, or coordination across components. A manual effect is reasonable for one local synchronization such as a component-specific request or a browser API. The key distinction is ownership of server state, not whether the request uses `fetch`.
+
+**Q: What does React Strict Mode change about async effects?**
+
+In development, Strict Mode may perform an extra setup-and-cleanup cycle to expose effects that do not clean up correctly. A correct effect tolerates this: it aborts or invalidates the first request, and only the current setup can publish. Strict Mode is revealing a lifecycle bug, not creating a production race that can be ignored.
+
+**Q: Does cleanup guarantee that the server stopped processing the request?**
+
+No. Cleanup guarantees that your client-side effect can stop listening, abort a supported client operation, or reject an old result. The server may already have accepted the request. Mutations therefore also need server-side idempotency or a request token when retries and duplicate submissions could cause harm.
+
+## 6. The Traps — What Goes Wrong
+
+**Returning the promise from the effect.** The mistake is writing `useEffect(() => fetchData().then(setData), [])`. The promise becomes the effect's return value, so React cannot use it as cleanup. Start the promise inside the callback and return a cleanup function or nothing.
+
+**Using `isMounted` state as the cancellation mechanism.** A state flag causes another render and does not stop the request. Cleanup-local variables, request IDs in a ref, or `AbortController` express the lifetime directly. Also, modern React does not make “set state after unmount” a safe design goal; the real requirement is to stop obsolete work and release resources.
+
+**Aborting without handling `AbortError`.** An expected dependency change then appears as a red error message. Filter the abort case, but do not swallow every error: authentication failures, server errors, and parsing failures still need to reach the UI or an error boundary.
+
+**Checking only `loading` to decide what to render.** `loading = false` does not mean success. It can mean failure, idle, or a request that was cancelled. Keep an explicit status or derive the render branches from a well-defined state shape.
+
+**Leaving dependencies out to “run only once.”** This freezes the effect's captured values and creates stale requests. If an operation truly belongs to mount-only setup, it should not depend on changing render values. Otherwise, list the dependency and handle the cleanup between runs.
+
+**Creating unstable dependencies inside the component.** An object or function created during every render can make an effect restart on every render, and the request can update state, causing a loop. Move construction into the effect, memoize it when identity matters, or pass the primitive values the effect actually needs.
+
+**Assuming abort makes mutations safe.** Aborting a client request does not roll back a server write that already happened. Use idempotency keys, transactions, or a server-side state transition when repeating a mutation could charge, email, or create a duplicate record.
+
+**Reimplementing a cache in every custom hook.** A local `useEffect` can fetch one user, but several components will otherwise duplicate requests and disagree about freshness. Put shared server-state policy in a query cache; keep custom hooks as a typed boundary rather than a second cache implementation.
+
+## 7. Compare With Related Concepts
+
+**Effect synchronization vs event-handler work:** an effect reacts to committed render inputs and must clean up when those inputs stop being current; an event handler reacts to an explicit action and may be `async`. Use an effect for “keep this external resource aligned with state,” and a handler for “do this because the user clicked or submitted.”
+
+**AbortController vs an active flag:** `AbortController` asks a supported operation to stop and saves resources; an active flag only blocks an obsolete completion from publishing. Use both when the operation is cancellable and stale results would be harmful; use the flag when the API cannot be aborted.
+
+**Manual effect vs TanStack Query:** a manual effect owns one component's request lifecycle; a query library owns shared server data, cache identity, and refetch policy. Use manual code for a narrow local integration, and a query library when multiple consumers need the same remote resource.
+
+**`useState` vs `useReducer` for async state:** separate state values are fine for a small request, but they can drift into impossible combinations. Use a reducer or discriminated union when transitions such as retry, refresh, pagination, or cancellation make the state machine non-trivial.
+
+**Cancellation vs error handling:** cancellation means the result is no longer wanted; an error means the wanted operation failed. Keep cancellation quiet in normal UI flow, but expose actionable errors and preserve enough context for retry and observability.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+An effect is a rented worker tied to one render: start the async job inside it, and when the rental ends, cancel the job or revoke its permission to publish. The promise brings back a result, but cleanup decides whether that result still belongs on today's screen.
