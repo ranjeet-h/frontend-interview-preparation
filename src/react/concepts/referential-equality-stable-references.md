@@ -1,117 +1,248 @@
 # Referential Equality and Stable References
 
-## Detailed explanation
-Referential equality means two objects, arrays, or functions are equal only if they are the same reference in memory. In React, this matters because dependency arrays, `React.memo`, `useMemo`, and `useCallback` compare references.
+## 1. Why This Exists — The Problem First
 
-Stable references help avoid unnecessary recalculation or re-rendering, but forcing stability everywhere is unnecessary. The goal is to stabilize references only where identity affects behavior or performance.
+You memoize a large results table, but it still renders whenever the parent types into an unrelated input. Or a subscription reconnects on every render even though the room ID has not changed. The surprising part is often that the data *looks* unchanged: `{ sort: "name" }` still contains the same key, and the callback still has the same body.
 
-## 1. One-line mental model
-Referential equality checks whether two values are the exact same object or function reference.
+The missing piece is identity. React can cheaply ask whether it received the same value reference as last time, but it does not recursively inspect every object to decide whether two objects have equal contents. If you create a fresh object or function during every render, you are telling React—and any library using identity checks—that something changed.
 
-## 2. Problem it solves
-React optimizations need a cheap way to know whether a value changed.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Objects/functions created during render get new references.
-- Dependency arrays compare references.
-- Memoized children care about prop references.
-- `useMemo` and `useCallback` can stabilize values.
-- Stability has cost and should be purposeful.
+Imagine a warehouse that accepts delivery instructions. Each instruction has a destination and a list of options. The clerk does not open every package and compare every word with yesterday’s package. They check the tracking number.
 
-## 4. Visual / analogy
-Two identical-looking keys are not the same key if they are separate physical objects.
+Two packages can contain identical instructions and still have different tracking numbers because they are two physical packages. That is JavaScript’s object comparison: two separately created objects are different references. If you hand over the *same package* again, the tracking number is unchanged, so a memoized clerk can skip reprocessing it.
 
-```tsx
-{} === {} // false
+In this analogy, a render is a new delivery round, an object or function is a package, and a reference is its tracking number. `useMemo` keeps one package until its inputs change. `useCallback` does the same for a function package. A primitive such as a string is more like the instruction written directly on a form: React can compare the value itself.
+
+The analogy has an important limit: keeping the same package does not update its contents. A stable function can still contain old closed-over values. Identity and freshness are separate concerns.
+
+## 3. How It Actually Works — The Full Explanation
+
+JavaScript stores objects, arrays, and functions as values with identity. An object literal creates a new object each time that expression runs. A function expression or arrow function creates a new function object each time it runs. Equality for these values asks whether both variables point to the same object, not whether their properties or function bodies look alike.
+
+```js
+const first = { page: 1 };
+const second = { page: 1 };
+const alias = first;
+
+console.log(first === second);       // false: two allocations
+console.log(Object.is(first, alias)); // true: one allocation, two names
+console.log(Object.is({ page: 1 }, { page: 1 })); // false
 ```
 
-## 5. Minimal example
+React relies on this shallow identity check in several places. A dependency array is compared element by element with `Object.is`; a primitive is compared by its value, while an object, array, or function is compared by its reference. `React.memo` similarly compares the component’s props shallowly by default. It does not deep-compare nested properties.
 
-```tsx
-const options = React.useMemo(() => ({ pageSize: 20 }), []);
+That gives us a common render sequence:
+
+1. A parent renders.
+2. An inline object, array, or function expression runs again.
+3. JavaScript creates a new reference, even if the contents are identical.
+4. A memoized child sees that prop reference change and renders again, or a dependency-based synchronization sees a changed dependency and runs again.
+
+The parent itself still renders when its state changes. Stable references do not stop that. They only let consumers of those references skip work when the logical input did not change.
+
+React render snapshots capture one set of props and state. The component function creates closures and values for that snapshot and returns a description of the UI. A later render creates a new snapshot; it does not mutate the old snapshot's local bindings. That is why a stable callback can still be stale if it captured an old value, while a callback whose dependency changed gets a new identity and a new snapshot of that value.
+
+Ownership clarifies where identity should be decided. The component that owns a changing value should create or preserve the object or function derived from that value, then pass it to consumers. Consumers should not manufacture a fresh equivalent reference merely to forward the same meaning. When the owner changes the logical input, a new reference is intentional; when the input is unchanged, preserving the reference gives memoized children and other identity-sensitive consumers a useful signal.
+
+Effects are for synchronizing a committed render with something outside React, such as a subscription, timer, DOM API, or network connection. Their dependencies describe which render values that external synchronization uses: an unstable object dependency can reconnect unnecessarily, while omitting a changing value can leave the external system synchronized with an old snapshot. Referential equality therefore affects when setup and cleanup repeat, but it does not make an effect's captured values live.
+
+There are three normal ways to avoid accidental identity changes:
+
+- Use a primitive prop when the child only needs a primitive. Passing `pageSize={20}` is easier to compare than passing `options={{ pageSize: 20 }}`.
+- Move a truly constant object or function outside the component. It then has one module-level identity.
+- Use `useMemo` for a value or `useCallback` for a function when a consumer benefits from avoiding recalculation or from usually-stable identity, and its inputs determine when a new identity is correct.
+
+Memoization is not free, and `useMemo` is a performance optimization rather than a semantic identity guarantee. React stores the cached value and its dependencies, but it may discard that cache and calculate the value again, such as when a component suspends during its initial mount or when React makes other implementation decisions. If the calculation is cheap and nobody observes identity, recreating the value is often clearer and just as fast. If identity is part of correctness, use a persistent mechanism such as `useRef` for a stable container or `useState` with a lazy initializer for a persistent value; those values persist for the mounted component until you change them or it unmounts. If a memoized value captures changing data, every value it reads must be represented in its dependencies—or the stable reference can become stale.
+
+The most useful distinction is this:
+
+- Referential equality answers, “Is this the same allocation?”
+- Value equality answers, “Does this represent the same data?”
+- Stable reference means, “For this consumer, keep the allocation unchanged until these declared inputs change.”
+
+React’s comparison does not know your domain’s notion of “same.” Two user objects with the same `id` are still different references unless your code compares their IDs or preserves the original object.
+
+## 4. Real Code — See It Working
+
+The first example is plain JavaScript, so it can be run directly with `node` and makes the identity rule visible without a React setup.
+
+```js
+const makeOptions = () => ({ pageSize: 20 });
+
+const previousOptions = makeOptions();
+const nextOptions = makeOptions();
+const sameOptions = previousOptions;
+
+console.log(Object.is(previousOptions, nextOptions)); // false
+console.log(Object.is(previousOptions, sameOptions)); // true
+
+const cache = new Map();
+cache.set(previousOptions, "cached result");
+
+console.log(cache.get(nextOptions)); // undefined
+console.log(cache.get(sameOptions)); // cached result
 ```
 
-## 6. Real-world example
+The `Map` example is production-relevant: caches, registries, subscription managers, and event systems often use object identity as a key. Equal-looking objects do not retrieve the same entry.
+
+Here is a complete React example. It can be placed in a standard React + TypeScript application. The child is memoized so the effect of prop identity is observable in the console.
 
 ```tsx
-const columns = React.useMemo(() => createTableColumns(onEdit), [onEdit]);
+import { memo, useCallback, useMemo, useState } from "react";
+
+type SearchOptions = {
+  pageSize: number;
+  sort: "name" | "updated";
+};
+
+type ResultsProps = {
+  options: SearchOptions;
+  onSelect: (id: string) => void;
+};
+
+const Results = memo(function Results({ options, onSelect }: ResultsProps) {
+  console.log("Results rendered", options, onSelect);
+  return (
+    <button type="button" onClick={() => onSelect("result-42")}>
+      Show {options.pageSize} results sorted by {options.sort}
+    </button>
+  );
+});
+
+export function SearchPanel() {
+  const [query, setQuery] = useState("");
+
+  // The child does not depend on query, so keep these identities independent of it.
+  const options = useMemo<SearchOptions>(
+    () => ({ pageSize: 20, sort: "updated" }),
+    [],
+  );
+  const handleSelect = useCallback((id: string) => {
+    console.log("selected", id);
+  }, []);
+
+  return (
+    <section>
+      <label>
+        Search
+        <input value={query} onChange={(event) => setQuery(event.target.value)} />
+      </label>
+      <Results options={options} onSelect={handleSelect} />
+    </section>
+  );
+}
 ```
 
-Stable columns can prevent a table from resetting or recalculating unnecessarily.
+Typing changes `SearchPanel`’s state and therefore re-renders the parent. Because `options` and `handleSelect` retain their references, the default `memo` comparison can skip `Results`. If `options` were written inline or `handleSelect` were declared inline, each keystroke would provide a new reference and defeat this particular optimization.
 
-## 7. Common interview questions
-#### What is referential equality?
-- **The Engine Mechanism (Why it behaves this way):** JavaScript compares objects, arrays, and functions by reference (memory address), not by content. Two objects with identical properties are not equal because they occupy different memory locations. React uses `Object.is` for dependency comparisons in `useEffect`, `useMemo`, and `useCallback`, and for `React.memo` prop comparisons. `Object.is` behaves like `===` for objects — it returns `true` only if both operands point to the same memory address.
-- **The Unforgettable Mental Model:** The **Twin Test**. Identical twins look the same but are different people. Two `{ name: "Alice" }` objects have the same content but are different objects in memory. Referential equality asks "are you the same person?" not "do you look the same?"
-- **The Trap:** Assuming deep equality. React never does deep comparison of objects in dependency arrays or `React.memo`. It only checks if the reference changed, which is O(1) — deep comparison would be O(n) and too expensive for every render.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Referential equality means two values are equal only if they're the exact same object in memory. JavaScript's `Object.is` and `===` operators check the memory address, not the content. React uses this for dependency comparisons because it's a fast O(1) check. Two objects with identical properties are not referentially equal — they're separate allocations."
+If the value depends on render data, include that data rather than forcing an empty dependency list:
 
-#### Why do inline objects cause re-renders?
-- **The Engine Mechanism (Why it behaves this way):** Every time a component renders, JavaScript creates new objects and functions in memory. An inline object like `options={{ pageSize: 20 }}` in JSX allocates a new object on the heap each render. When this object is passed as a prop to a `React.memo`-wrapped child or used in a `useEffect` dependency array, React's `Object.is` comparison sees a new reference and treats it as changed, triggering a re-render or effect re-run even though the content is identical.
-- **The Unforgettable Mental Model:** The **Daily Newspaper**. Even if today's newspaper has the exact same headline as yesterday's, it's a different physical paper. The child component (subscriber) gets a new paper every day and feels compelled to read it again.
-- **The Trap:** Memoizing the child but not stabilizing the props. `React.memo` only prevents re-renders if ALL props are referentially equal. One unstable prop defeats the entire memoization.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Inline objects create a new memory reference on every render. When passed to memoized children or used as effect dependencies, React's `Object.is` comparison sees a different reference and treats it as a change. This triggers unnecessary re-renders or effect re-runs. The fix is to stabilize the reference with `useMemo`, extract the primitive values, or move the object outside the component if it's constant."
+```tsx
+import { useCallback, useMemo, useState } from "react";
 
-#### What are stable references?
-- **The Engine Mechanism (Why it behaves this way):** A stable reference is an object or function that maintains the same memory address across renders. `useMemo` and `useCallback` store their return values in the Fiber node's `memoizedState` and only recompute when dependencies change. `useState` with a constant initial value also provides stability — the state value's reference only changes when `setState` is called. Stable references prevent unnecessary work in dependency comparisons and `React.memo` checks.
-- **The Unforgettable Mental Model:** The **Permanent Address**. A stable reference is like someone who never moves — mail always goes to the same address. An unstable reference is like a nomad — every day they're at a new location, so you have to re-deliver everything.
-- **The Trap:** Stabilizing references that don't need stabilization. `useMemo` and `useCallback` have their own overhead (storing values, comparing dependencies). Only stabilize when the reference is actually used in a comparison that affects performance.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A stable reference is an object or function that keeps the same memory address across renders. I achieve stability with `useMemo` for objects, `useCallback` for functions, or by defining constants outside the component. Stable references prevent unnecessary re-renders in memoized children and unnecessary effect re-runs. But I only stabilize when the reference is actually used in a comparison that impacts performance."
+type Sort = "name" | "updated";
 
-#### How do dependency arrays compare values?
-- **The Engine Mechanism (Why it behaves this way):** React's `useEffect` and `useMemo` implementations iterate through the dependency array and compare each element using `Object.is`. For primitives (strings, numbers, booleans, null, undefined), `Object.is` compares by value. For objects, arrays, and functions, `Object.is` compares by reference. If ANY element fails the comparison, the effect re-runs or the memoized value recomputes. This is why inline objects and functions in dependency arrays cause excessive re-execution.
-- **The Unforgettable Mental Model:** The **Security Checkpoint**. Each dependency is a person going through security. Primitives show their ID card (value) — easy to verify. Objects show their fingerprint (reference) — even identical twins have different fingerprints. If any person's check fails, the whole group gets re-screened.
-- **The Trap:** Putting functions defined inside the component in dependency arrays without memoizing them. Each render creates a new function reference, triggering the effect every time.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: React compares each dependency array element using `Object.is`. Primitives compare by value — `5 === 5` is true. Objects, arrays, and functions compare by reference — two separate objects are never equal even with identical content. This is why inline objects in dependency arrays cause effects to re-run every render. The fix is to extract primitives, stabilize references with `useMemo`, or restructure the dependencies."
+export function SortableResultsFixture() {
+  const [sort, setSort] = useState<Sort>("name");
+  const onSelect = useCallback((id: string, selectedSort: Sort) => {
+    console.log("selected", id, "under", selectedSort);
+  }, []);
+  const options = useMemo(
+    () => ({ pageSize: 20, sort }),
+    [sort],
+  );
 
-#### When to use `useMemo`?
-- **The Engine Mechanism (Why it behaves this way):** `useMemo` stores a computed value in the Fiber node's `memoizedState` and only recomputes when dependencies change. It's useful for: expensive calculations that would block rendering, objects/arrays passed to memoized children or used as effect dependencies, and values that are referenced by multiple effects. The overhead of `useMemo` (storing deps, comparing them) is negligible compared to the cost of the computation it avoids.
-- **The Unforgettable Mental Model:** The **Cached Calculator**. Instead of solving a complex math problem from scratch every time, you write the answer on a sticky note and only recalculate when the input numbers change.
-- **The Trap:** Using `useMemo` as a premature optimization for cheap computations. `useMemo({ a: 1 }, [])` adds more overhead than just creating `{ a: 1 }` directly. Reserve it for genuinely expensive work or reference stability needs.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use `useMemo` in two scenarios: first, for expensive computations that would noticeably slow rendering — like filtering large datasets or complex transformations. Second, for stabilizing object or array references that are passed to memoized children or used as effect dependencies. I don't memoize cheap values or primitives, as the overhead of `useMemo` exceeds the benefit."
+  const handleSelect = useCallback(
+    (id: string) => onSelect(id, sort),
+    [onSelect, sort],
+  );
 
-#### When to use `useCallback`?
-- **The Engine Mechanism (Why it behaves this way):** `useCallback(fn, deps)` is syntactic sugar for `useMemo(() => fn, deps)`. It stores the function reference in the Fiber node and only creates a new reference when dependencies change. It's essential when passing callbacks to memoized children (to prevent their re-render), when the callback is used as an effect dependency, or when the function is passed to third-party libraries that compare references.
-- **The Unforgettable Mental Model:** The **Business Card**. A callback is like a business card — if you hand out a newly printed card every time someone asks, they think it's a new contact. `useCallback` ensures you hand out the same card until your details actually change.
-- **The Trap:** Memoizing callbacks that are only used in the current component's JSX event handlers. `onClick={handleClick}` doesn't need `useCallback` because the parent re-renders anyway, and the child isn't memoized.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use `useCallback` when a function reference needs to be stable across renders. This includes passing callbacks to `React.memo`-wrapped children, using functions as effect dependencies, or integrating with third-party libraries that rely on reference equality. I don't memoize callbacks used only in the current component's JSX event handlers, since there's no performance benefit."
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setSort((current) => (current === "name" ? "updated" : "name"))}
+      >
+        Sort by {sort === "name" ? "updated" : "name"}
+      </button>
+      <button type="button" onClick={() => handleSelect("result-42")}>
+        Show {options.pageSize} results sorted by {options.sort}
+      </button>
+    </>
+  );
+}
+```
 
-#### Why can over-stabilizing be bad?
-- **The Engine Mechanism (Why it behaves this way):** Every `useMemo` and `useCallback` call adds overhead: React must store the dependencies, compare them on every render using `Object.is`, and manage the memoized value in the Fiber node. Over-stabilizing creates a web of memoized values where changing one dependency triggers a cascade of dependency comparisons. It also increases code complexity, making it harder to reason about when values actually update. In some cases, the overhead of memoization exceeds the cost of the computation it's trying to avoid.
-- **The Unforgettable Mental Model:** The **Over-Secured Building**. Putting a security guard, keycard, retinal scanner, and metal detector on every single door slows everyone down more than just leaving most doors open. Security (memoization) should be proportional to the risk (cost of recomputation).
-- **The Trap:** Memoizing to "fix" a missing dependency warning from the linter. The real fix is usually to move the function inside the effect, simplify the dependency chain, or restructure the logic — not to memoize everything.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Over-stabilizing adds overhead — each `useMemo` and `useCallback` requires dependency storage and comparison on every render. It also creates complex dependency chains where changing one value triggers cascading memoization checks. I follow the rule: memoize only when there's a measurable performance benefit or a correctness requirement (like stable identity for effects). Premature memoization makes code harder to maintain and can actually hurt performance."
+This is the correctness boundary. Clicking the first button changes the owned `sort` state, so `options` and `handleSelect` intentionally receive new identities through their dependency lists. Re-rendering without a sort change reuses those identities. Omitting `sort` would preserve the references but make the callback or object describe an old render.
 
-## 8. Active recall test
-1. **Why is `{}` not equal to `{}`?**
-   - **Explanation:** JavaScript compares objects by reference (memory address), not content. Two `{}` literals create two separate objects at different memory locations. `Object.is({}, {})` returns `false` because they're different allocations, even though their content is identical.
-2. **What happens to inline functions each render?**
-   - **Explanation:** A new function object is created in memory on every render. Even if the function body is identical, each render produces a distinct function reference. This causes `React.memo` children to re-render and effects with the function as a dependency to re-run unnecessarily.
-3. **Why do memoized children care about prop references?**
-   - **Explanation:** `React.memo` performs a shallow comparison of props using `Object.is`. If any prop has a new reference (even with identical content), `React.memo` returns false and the child re-renders. One unstable prop defeats the entire memoization of that component.
-4. **How do you stabilize an object reference?**
-   - **Explanation:** Wrap the object creation in `useMemo` with appropriate dependencies: `const options = useMemo(() => ({ pageSize: 20 }), [])`. This stores the object in the Fiber node and only creates a new one when dependencies change, maintaining referential equality across renders.
-5. **When should you not bother stabilizing?**
-   - **Explanation:** When the value is only used within the current component and not passed to memoized children, used as an effect dependency, or compared by reference. Also, don't stabilize cheap computations — the overhead of `useMemo`/`useCallback` exceeds the cost of creating a new object or function directly.
+## 5. The Interview Questions — All of Them, Done Properly
 
-## 9. Mistakes / traps
-- Assuming identical object contents mean same reference.
-- Memoizing everything.
-- Passing unstable object props to `React.memo` children.
-- Missing dependencies while trying to stabilize.
-- Ignoring that primitive values compare by value.
+**Q: What is referential equality, and why does `{}` not equal `{}`?**
 
-## 10. Compare with related concepts
-- **Referential vs value equality:** same reference vs same content/value.
-- **Stable reference vs stale closure:** stable identity can still capture stale values if dependencies are wrong.
-- **Memoization vs correctness:** memoization optimizes; it should not hide dependency bugs.
+Objects, arrays, and functions are compared by identity. Each object literal allocates a separate object, so the two expressions point to different allocations even though both objects have no properties. `Object.is(a, b)` and `a === b` are both true only when the references point to the same object for this kind of value.
 
-## 11. Summary from memory
-Explain why an inline `{ sort: "name" }` object can retrigger an effect every render.
+**Q: How does React compare dependency-array entries?**
 
-## 12. Spaced revision prompts
-- After 1 day: Define referential equality.
-- After 3 days: Explain stable references.
-- After 7 days: Fix unstable object dependency.
-- After 14 days: Compare stability and stale closures.
+React compares entries pairwise with `Object.is`. A primitive such as a number or string is compared by value. An object, array, or function is compared by reference. If one dependency is not equal, the associated memoized calculation or synchronization is considered changed. This is why depending on a freshly created object is different from depending on its primitive fields.
 
+**Q: Why can an inline object or function defeat `React.memo`?**
+
+`React.memo` performs a shallow prop comparison by default. The parent may pass the same logical settings, but `options={{ pageSize: 20 }}` creates a new object on every render. Likewise, `onSelect={(id) => save(id)}` creates a new function. One changed prop is enough for the shallow comparison to fail, so the child renders.
+
+**Q: What is a stable reference?**
+
+A stable reference is an object, array, or function whose identity remains the same across renders until chosen inputs change. A module-level constant is stable for the lifetime of that module. `useRef` and state preserve a value for the mounted component; `useMemo` and `useCallback` cache values as performance optimizations and may be discarded by React. Stability matters only when a consumer observes identity—for example, a memoized child, dependency comparison, `Map` key, or third-party subscription API.
+
+**Q: When should you use `useMemo` or `useCallback`?**
+
+Use `useMemo` for a calculation that is meaningfully expensive or for an object/array whose usually-stable identity helps a consumer. Use `useCallback` when a function identity helps a memoized child or a library that subscribes and unsubscribes by function identity. Neither hook is a semantic identity guarantee: React may discard a memo cache. If identity is correctness-critical, use `useRef` or state initialized with `useState` so the value persists for the mounted component. Do not add memoization automatically; its dependency bookkeeping and extra code must save more work than they cost.
+
+**Q: Is `useCallback(fn, deps)` fundamentally different from `useMemo(() => fn, deps)`?**
+
+For reference stability, they express the same idea: cache a function reference until the dependencies change. `useCallback` is the clearer API when the thing being cached is a function. Neither prevents the function from seeing stale values if the dependency list is incomplete.
+
+**Q: Can a stable reference still be wrong?**
+
+Yes. Stable identity says nothing about the freshness of the value reachable through that identity. A callback memoized with `[]` that reads `userId` will keep the initial `userId`. The reference is stable, but its behavior may be stale. Dependencies must describe every render value that the callback or computed value reads, unless the value is intentionally obtained through another explicit mechanism.
+
+**Q: Should you deep-compare dependencies or memoize everything?**
+
+Usually no. Deep comparison has a cost that grows with the structure being inspected and can hide unclear ownership or data-flow decisions. Memoization also has a cost. First ask whether a primitive can be passed, whether a constant can move outside the component, or whether the child really needs memoization. Then stabilize the specific identity that has a measured or correctness-relevant consumer.
+
+## 6. The Traps — What Goes Wrong
+
+The first trap is confusing equal contents with equal identity. This fails in `Map` keys, `Set` membership, memoized props, and dependency arrays because those consumers do not inspect every nested property. Compare a stable domain key such as `user.id` when that is the actual identity you need, or preserve the original object when object identity is meaningful.
+
+The second trap is wrapping an unstable value in another unstable value. This does not help:
+
+```tsx
+const options = { pageSize: 20 };
+const childProps = useMemo(() => ({ options }), [options]);
+```
+
+`options` is new on every render, so `childProps` is also recalculated on every render. Memoization only works when the inputs themselves remain stable or change for a real reason. Memoize the object at its source, pass primitives, or remove the unnecessary wrapper.
+
+The third trap is using `useMemo` to hide a missing dependency. An empty list can make a reference stable while freezing the first render’s values. That trades a visible re-run for a less visible correctness bug. Include the values read by the calculation, restructure the calculation so it receives explicit inputs, or use an API designed for reading current values without changing the synchronization boundary.
+
+The fourth trap is assuming `React.memo` prevents all child renders. It only skips a render when its observed props compare equal and React can reuse that work. Local state, context changes, a changed key, or an unstable prop can still cause the child to render. Memoization is a performance hint around a component boundary, not a guarantee that the component never runs.
+
+The fifth trap is stabilizing cheap values by reflex. Creating `{ pageSize: 20 }` is usually cheaper and clearer than maintaining a memo record if nobody compares that object. A stable reference is valuable when it changes behavior for a consumer, not merely because a new allocation feels aesthetically wrong.
+
+The sixth trap is using a custom deep comparator without measuring it. A comparator can cost more than rendering the child, and it can become incorrect when a new prop is added or a nested value is mutated. Prefer immutable updates, narrow props, and primitive selectors before introducing custom equality logic.
+
+## 7. Compare With Related Concepts
+
+**Referential equality vs value equality.** Referential equality asks whether two variables point to the same allocation; value equality asks whether their contents or domain values match. Use reference comparison when identity itself matters. Compare fields, IDs, or use a deliberate value-equality function when two separate objects should count as the same data.
+
+**Stable reference vs immutable update.** A stable reference stays unchanged across renders; an immutable update creates a new reference when data changes and preserves old references for untouched data. Use both together: preserve identity for unchanged branches, and replace the changed branch so consumers can detect the update.
+
+**Stable reference vs stale closure.** Stability controls *when the identity changes*. A closure controls which render’s variables a function can read. Use a dependency list that matches the values the function reads; do not treat a stable callback as proof that it sees current state.
+
+**`useMemo` vs `useCallback`.** `useMemo` caches the result of a calculation; `useCallback` caches a function identity. Both are performance optimizations whose caches React may discard. Use `useRef` or state when the identity must persist because correctness depends on it, and use the memo hooks when the value only needs an optimization.
+
+**`React.memo` vs `useMemo`.** `React.memo` can skip a component render when its props are shallowly equal. `useMemo` can preserve a value inside a component. Use `React.memo` at a component boundary and `useMemo` for a value that needs stable identity or expensive calculation; either one is ineffective if the relevant inputs keep changing.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+React does not inspect every package to see whether the contents look the same; it checks the tracking number. Keep the same reference only when a real consumer cares—and remember that the same tracking number can still point to instructions from an old render if you forgot an input.
