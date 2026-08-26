@@ -1,383 +1,509 @@
 # Frontend Questions
 
-Imported from `Frontend_Questions.csv`. Exact duplicate prompts were removed during generation.
+This is a **study bank**, not a checklist. Each section below is one skill area interviewers probe at senior frontend rounds. Read the opening context first so you know *why* the topic matters, then work through the five questions out loud as if you're in the room — predict your answer, then read the full explanation.
+
+Do not memorize scripts. If you can explain the mechanic in your own words after one read, you are done with that section.
+
+Source: `Frontend_Questions.csv` (deduplicated). Deep dives for individual HTML/CSS/web topics live in the [Frontend Fundamentals](index.md) chapters.
 
 ## Question index
 
-| # | Skill | Questions |
+| # | Skill area | Questions |
 |---|---|---|
-| 1 | [JavaScript Fundamentals – scope, closures, hoisting, this binding, async/await, promises, event loop](#1-javascript-fundamentals-scope-closures-hoisting-this-binding-async-await-promises-event-loop) | 5 |
-| 2 | [JavaScript Advanced – currying, debounce/throttle, memoization, prototype chain, custom bind/call/apply, immutability](#2-javascript-advanced-currying-debounce-throttle-memoization-prototype-chain-custom-bind-call-apply-immutability) | 5 |
-| 3 | [DOM & Browser – event bubbling/capturing, event delegation, reflow vs repaint, browser rendering, web storage, intersection observer](#3-dom-browser-event-bubbling-capturing-event-delegation-reflow-vs-repaint-browser-rendering-web-storage-intersection-observer) | 5 |
-| 4 | [Frameworks – React Core, components, props, state, hooks, conditional rendering, lists & keys, controlled components](#4-frameworks-react-core-components-props-state-hooks-conditional-rendering-lists-keys-controlled-components) | 5 |
-| 5 | [React Hooks – useState, useEffect, dependency array, cleanup, useMemo, useCallback, custom hooks](#5-react-hooks-usestate-useeffect-dependency-array-cleanup-usememo-usecallback-custom-hooks) | 5 |
-| 6 | [State Management – lifting state, context API, Redux basics, async state, server vs client state, normalization, Zustand](#6-state-management-lifting-state-context-api-redux-basics-async-state-server-vs-client-state-normalization-zustand) | 5 |
-| 7 | [JavaScript Libraries – TanStack Query, axios, data handling](#7-javascript-libraries-tanstack-query-axios-data-handling) | 5 |
-| 8 | [Performance Tuning – routing, virtualization, component splitting](#8-performance-tuning-routing-virtualization-component-splitting) | 5 |
-| 9 | [GIT – understanding of git commands and project management](#9-git-understanding-of-git-commands-and-project-management) | 5 |
-| 10 | [CSS Core – box model, display, positioning, flexbox, grid, media queries, responsive design, mobile-first, specificity](#10-css-core-box-model-display-positioning-flexbox-grid-media-queries-responsive-design-mobile-first-specificity) | 5 |
-| 11 | [Routing – client-side routing, dynamic routes, nested routes, guards, query params, URL sync](#11-routing-client-side-routing-dynamic-routes-nested-routes-guards-query-params-url-sync) | 5 |
-| 12 | [API & Data Fetching – REST, HTTP status codes, error handling, pagination, caching, retries](#12-api-data-fetching-rest-http-status-codes-error-handling-pagination-caching-retries) | 5 |
-| 13 | [Performance – memoization, code splitting, lazy loading, bundle optimization, web vitals](#13-performance-memoization-code-splitting-lazy-loading-bundle-optimization-web-vitals) | 5 |
-| 14 | [Security – JWT basics, token storage risks, XSS, CSRF, CORS, secure cookies](#14-security-jwt-basics-token-storage-risks-xss-csrf-cors-secure-cookies) | 5 |
-| 15 | [Testing – unit tests, integration tests, Jest, RTL, mocking, E2E](#15-testing-unit-tests-integration-tests-jest-rtl-mocking-e2e) | 5 |
-| 16 | [Build Tools – npm, package.json, Vite, webpack, env variables, build/runtime](#16-build-tools-npm-package-json-vite-webpack-env-variables-build-runtime) | 5 |
-| 17 | [Architecture – component design, separation of concerns, reusability, scalability, patterns](#17-architecture-component-design-separation-of-concerns-reusability-scalability-patterns) | 5 |
-| 18 | [Accessibility (A11y) – keyboard navigation, screen readers, ARIA, focus, color contrast](#18-accessibility-a11y-keyboard-navigation-screen-readers-aria-focus-color-contrast) | 5 |
-| 19 | [Frontend System Design – SPA vs SSR, hydration, micro-frontends, CDN, caching, error handling](#19-frontend-system-design-spa-vs-ssr-hydration-micro-frontends-cdn-caching-error-handling) | 5 |
+| 1 | [JavaScript fundamentals](#1-javascript-fundamentals) | 5 |
+| 2 | [JavaScript advanced](#2-javascript-advanced) | 5 |
+| 3 | [DOM and browser](#3-dom-and-browser) | 5 |
+| 4 | [React core](#4-react-core) | 5 |
+| 5 | [React hooks](#5-react-hooks) | 5 |
+| 6 | [State management](#6-state-management) | 5 |
+| 7 | [Data libraries](#7-data-libraries-tanstack-query-axios) | 5 |
+| 8 | [Performance tuning](#8-performance-tuning) | 5 |
+| 9 | [Git](#9-git) | 5 |
+| 10 | [CSS core](#10-css-core) | 5 |
+| 11 | [Routing](#11-routing) | 5 |
+| 12 | [API and data fetching](#12-api-and-data-fetching) | 5 |
+| 13 | [Performance metrics](#13-performance-metrics) | 5 |
+| 14 | [Security](#14-security) | 5 |
+| 15 | [Testing](#15-testing) | 5 |
+| 16 | [Build tools](#16-build-tools) | 5 |
+| 17 | [Architecture](#17-architecture) | 5 |
+| 18 | [Accessibility](#18-accessibility) | 5 |
+| 19 | [Frontend system design](#19-frontend-system-design) | 5 |
 
 ---
 
-## 1. JavaScript Fundamentals – scope, closures, hoisting, this binding, async/await, promises, event loop
+## 1. JavaScript fundamentals
 
-1. Explain scope with an example
-2. What is a closure and real use case?
-3. How does hoisting work for let/var/functions?
-4. Explain this binding in different contexts
-5. Explain event loop with async/await
+**Why interviewers care:** Almost every frontend round still tests whether you understand how JavaScript actually runs — not syntax trivia, but scope, async order, and `this`. Mess these up and you'll mis-debug React effects, closures in handlers, and race conditions.
 
----
+**Core idea:** JavaScript is single-threaded with lexical scope. Functions remember where they were created. `this` is decided at call time. Async work queues on the event loop after the current stack clears.
 
-## 2. JavaScript Advanced – currying, debounce/throttle, memoization, prototype chain, custom bind/call/apply, immutability
+### Questions and answers
 
-1. What is currying and why useful
-2. Explain Implement debounce or throttle
-3. Explain memoization use case
-4. How does prototype chain work?
-5. How would you implement custom bind?
+**Q: Explain scope with an example.**
 
----
+Scope is where a variable can be read. JavaScript uses **lexical scope** — a function sees variables from the text block where it was written, not where it is called. Inner functions can read outer bindings; outer functions cannot read inner locals.
 
-## 3. DOM & Browser – event bubbling/capturing, event delegation, reflow vs repaint, browser rendering, web storage, intersection observer
+```javascript
+function outer() {
+  const message = "hello";
+  function inner() {
+    console.log(message); // "hello" — inner sees outer's binding
+  }
+  inner();
+}
+```
 
-1. What is Difference between bubbling and capturing?
-2. Explain event delegation with example
-3. What causes reflow and repaint
-4. Explain browser rendering pipeline
-5. When would you use IntersectionObserver?
+Block scope with `let`/`const` limits variables to `{ }` blocks. `var` is function-scoped and hoisted — a common source of bugs in loops.
 
----
+**Q: What is a closure and a real use case?**
 
-## 4. Frameworks – React Core, components, props, state, hooks, conditional rendering, lists & keys, controlled components
+A closure is a function plus the variables it still has access to after its outer function finished. The inner function "closes over" those bindings.
 
-1. Difference between props and state?
-2. How does React re-render work?
-3. Why keys are important in lists?
-4. Explain Controlled vs uncontrolled components
-5. How hooks replaced class components?
+Real uses: private state (counter factory), event handlers that remember config, debounce/throttle timers, React hooks holding state between renders. If you see a function defined inside another function and returned or passed as a callback, you are probably looking at a closure.
 
----
+**Q: How does hoisting work for let, var, and functions?**
 
-## 5. React Hooks – useState, useEffect, dependency array, cleanup, useMemo, useCallback, custom hooks
+During compilation, declarations are registered before execution runs. **`var`** is hoisted and initialized to `undefined` — you can read it before the line, but it is `undefined`. **Function declarations** are fully hoisted — you can call them before their line in the source. **`let` and `const`** are hoisted but stay in the **temporal dead zone** until their declaration line runs — reading them early throws `ReferenceError`.
 
-1. Explain useEffect lifecycle
-2. What Common dependency array mistakes
-3. Explain useMemo vs useCallback in detail
-4. How cleanup function works?
-5. How to create custom hooks?
+**Q: Explain `this` binding in different contexts.**
+
+`this` is set by **how** a function is called, not where it is written (except arrow functions). Default call: `this` is `undefined` in strict mode (or `window` in sloppy mode). Method call: `this` is the object before the dot. `call`/`apply`/`bind`: you set `this` explicitly. `new`: `this` is the new instance. **Arrow functions** don't have their own `this` — they use `this` from the enclosing scope. That is why arrow handlers in React class components were popular, and why arrow callbacks in `useEffect` dependencies behave differently from regular functions.
+
+**Q: Explain the event loop with async/await.**
+
+Synchronous code runs on the call stack until it is empty. `Promise.then` and `await` schedule **microtasks** — they run before the next timer or DOM event (**macrotask**). So `async/await` reads like sync code but still yields: everything after `await` is a microtask. Two `await` lines run in order; they do not block the main thread for I/O — the network happens in the background and the continuation queues when the promise settles.
+
+**Traps:** Saying closures "copy values" — they capture **bindings** (live variables), which is why loop bugs happen with `var`. Confusing `this` in callbacks passed to `setTimeout`. Thinking `await` runs on a new thread — it does not.
+
+**Memory hook:** Scope is lexical, `this` is call-site, async is stack-then-microtasks. Draw the call stack and one microtask queue and you can answer half the JS fundamentals round.
 
 ---
 
-## 6. State Management – lifting state, context API, Redux basics, async state, server vs client state, normalization, Zustand
+## 2. JavaScript advanced
 
-1. What is lifting state up?
-2. Explain Context API vs Redux in detail
-3. How async state is handled?
-4. Explain Client state vs server state
-5. Why state normalization is important?
+**Why interviewers care:** Senior roles expect you to implement or reason about utilities the ecosystem gives you for free — debounce, bind, memoization — and to understand prototypes without reciting class syntax.
 
----
+**Core idea:** Functions are objects with a prototype chain. Patterns like currying and memoization trade memory for reuse or fewer executions.
 
-## 7. JavaScript Libraries – TanStack Query, axios, data handling
+### Questions and answers
 
-1. Why use TanStack Query?
-2. How caching works in React Query?
-3. Diff between Axios vs fetch
-4. How to Handling loading & error states?
-5. How to do Managing stale data
+**Q: What is currying and why is it useful?**
 
----
+Currying turns `f(a, b, c)` into `f(a)(b)(c)` — each call fixes one argument until all are supplied. Useful for partial application: `const add5 = curry(add)(5)` then `add5(3)` → 8. Libraries use it for configurable pipelines and typed function composition. In interviews, mention reuse and cleaner APIs, not currying for its own sake.
 
-## 8. Performance Tuning – routing, virtualization, component splitting
+**Q: Explain debounce or throttle.**
 
-1. What is route-based code splitting?
-2. Explain list virtualization
-3. How component splitting helps?
-4. Explain Causes of unnecessary re-renders
-5. How do you profile performance?
+**Debounce:** wait until calls stop for `delay` ms, then run once. Search-as-you-type, resize end, autosave. **Throttle:** run at most once per `delay` ms while events keep firing. Scroll position, parallax, high-frequency mouse move. Debounce = "when they're done"; throttle = "not more than every N ms."
 
----
+**Q: Memoization use case.**
 
-## 9. GIT – understanding of git commands and project management
+Cache results of a **pure** function by input key. Expensive filter/sort on big lists, recursive fibonacci, React `useMemo` for derived data. Only helps when the same inputs repeat; costs memory. Useless if inputs are always unique objects unless you key by a stable id.
 
-1. Explain Merge vs rebase
-2. How do you resolve conflicts?
-3. Explain Pull request workflow
-4. Explain Revert vs reset
-5. Explain Release management strategy
+**Q: How does the prototype chain work?**
+
+Objects have an internal `[[Prototype]]` link. Property lookup walks the chain: own properties first, then prototype, then its prototype, until `null`. `Array.prototype.push` works on every array because arrays delegate to `Array.prototype`. `class` syntax is sugar over constructor functions and prototypes.
+
+**Q: How would you implement custom `bind`?**
+
+Return a new function that calls the original with a fixed `this` and optional preset args. Must handle `new` — if called with `new`, the bound `this` is ignored and a new instance is created. `call` and `apply` invoke immediately; `bind` returns a function for later.
+
+**Traps:** Memoizing impure functions. Debounce without `clearTimeout` on each call. Forgetting `bind` must support `new`.
+
+**Memory hook:** Currying fixes args one at a time; debounce waits for quiet; throttle caps rate; prototype is the lookup chain; bind returns a delayed `call` with locked `this`.
 
 ---
 
-## 10. CSS Core – box model, display, positioning, flexbox, grid, media queries, responsive design, mobile-first, specificity
+## 3. DOM and browser
 
-1. Explain CSS box model
-2. Explain Flexbox vs Grid use cases
-3. How specificity is calculated?
-4. List Positioning types
-5. While developing what should be taken Mobile-first or desktop-first? Explain both in detail
+**Why interviewers care:** You touch the DOM through frameworks, but bugs still show up as wrong event targets, layout jank, and mystery reflows. Senior devs know what the browser is doing under React.
 
----
+**Core idea:** Events flow capture → target → bubble. Rendering is parse → style → layout → paint → composite. Prefer delegation and observers over polling.
 
-## 11. Routing – client-side routing, dynamic routes, nested routes, guards, query params, URL sync
+### Questions and answers
 
-1. How client-side routing works?
-2. Dynamic routes example
-3. What are nested routes?
-4. How to protect routes?
-5. How to implement URL and state synchronization?
+**Q: Difference between bubbling and capturing?**
 
----
+Capturing goes from `window` down to the target; bubbling goes back up. Most code uses bubbling (`addEventListener('click', fn)` — third arg `false` by default). Capturing is useful when you need to intercept early. `event.stopPropagation()` stops further travel.
 
-## 12. API & Data Fetching – REST, HTTP status codes, error handling, pagination, caching, retries
+**Q: Event delegation with example.**
 
-1. Explain REST principles
-2. List down Common HTTP status codes
-3. How to implement globel API error handling?
-4. What are Pagination strategies?
-5. Explain Caching and retries
+Attach one listener on a parent; use `event.target` or `event.target.closest('button')` to see which child was clicked. Works for dynamic children, fewer listeners, less memory. Lists, tables, and menus are classic cases.
 
----
+**Q: What causes reflow and repaint?**
 
-## 13. Performance – memoization, code splitting, lazy loading, bundle optimization, web vitals
+**Reflow (layout):** geometry changes — width, height, position, DOM insert/remove, reading layout properties after writes. **Repaint:** visual-only changes like `color`. Reflow is usually costlier. Batch reads and writes; avoid interleaving `offsetHeight` with style changes in loops.
 
-1. What is memoization?
-2. How code splitting works?
-3. Explain Lazy loading vs eager
-4. How to Reduce bundle size?
-5. Explain LCP, CLS, FID
+**Q: Explain the browser rendering pipeline.**
+
+HTML → DOM. CSS → CSSOM. Combined render tree → layout (compute geometry) → paint (pixels) → composite (layers). JS can force sync layout if you read layout after mutating style. Critical path optimization: less blocking CSS/JS before first paint.
+
+**Q: When would you use IntersectionObserver?**
+
+When you need to know if an element entered the viewport — lazy-load images, infinite scroll, pause off-screen video, analytics visibility. Better than scroll listeners: browser optimizes, callback runs when intersection changes, not every pixel scrolled.
+
+**Traps:** Assuming `event.target` is always the button (might be a child span). Using `innerHTML` with user content. One scroll listener doing heavy work every frame.
+
+**Memory hook:** Events ride down then up; layout is expensive so batch DOM work; observers beat scroll polling for visibility.
 
 ---
 
-## 14. Security – JWT basics, token storage risks, XSS, CSRF, CORS, secure cookies
+## 4. React core
 
-1. How JWT works?
-2. Where to store tokens?
-3. How to Prevent XSS?
-4. What is CSRF?
-5. How CORS works?
+**Why interviewers care:** React is still the default SPA stack. They want ownership of data, render model, and forms — not API memorization.
 
----
+**Core idea:** UI = f(state). Props down, events up. Reconciliation uses element type and keys to diff trees.
 
-## 15. Testing – unit tests, integration tests, Jest, RTL, mocking, E2E
+### Questions and answers
 
-1. What is diff between Unit vs integration tests?
-2. What to test in frontend?
-3. how testing async code?
-4. What is mocking?
-5. When to use E2E tests?
+**Q: Difference between props and state?**
 
----
+Props are inputs from parent — read-only for the child. State is owned by the component and triggers re-render when updated. If data changes over time inside a component, it is state (or derived from state). If it comes from outside, props.
 
-## 16. Build Tools – npm, package.json, Vite, webpack, env variables, build/runtime
+**Q: How does React re-render work?**
 
-1. What happens in npm install?
-2. Explian Important package.json fields?
-3. Explain Vite vs Webpack?
-4. what is the Role of Babel build tool?
-5. what is Build-time vs runtime config
+State or props change → component function runs again → React builds a new element tree → reconciles with previous → commits DOM updates where needed. Parent re-render usually re-renders children unless memoized. Render ≠ DOM update every time.
 
----
+**Q: Why are keys important in lists?**
 
-## 17. Architecture – component design, separation of concerns, reusability, scalability, patterns
+Keys tell React which item is which across updates. Stable unique ids preserve component state and avoid bugs when reordering. Index as key breaks when list order changes — wrong row state, bad animations.
 
-1. how to Design reusable components?
-2. What are Separation of concerns?
-3. How to develop Scaling frontend apps
-4. what are Common anti-patterns?
-5. Explain Folder structure for scalable frontend application.
+**Q: Controlled vs uncontrolled components?**
+
+Controlled: value in React state (`value` + `onChange`). Single source of truth, easy validation. Uncontrolled: DOM holds value (`ref`, `defaultValue`). Fine for simple forms or file inputs. Controlled is default for most app forms.
+
+**Q: How did hooks replace class components?**
+
+Hooks put state and effects in functions — same model as render, easier to extract logic into custom hooks, less `this` binding pain, smaller bundles. Classes still work but hooks are the idiomatic pattern for new code.
+
+**Traps:** Mutating state directly. Keys from random `Math.random()`. Lifting state too high "just in case."
+
+**Memory hook:** Props in, events out, state owns change, keys are identity, controlled means React owns the input value.
 
 ---
 
-## 18. Accessibility (A11y) – keyboard navigation, screen readers, ARIA, focus, color contrast
+## 5. React hooks
 
-1. Why accessibility matters?
-2. How to imlementKeyboard navigation handling?
-3. Explain ARIA roles
-4. what is Focus management?
-5. what are Color contrast standards?
+**Why interviewers care:** `useEffect` bugs ship to production constantly — stale closures, missing deps, race conditions. Senior candidates explain synchronization, not lifecycle charts.
+
+**Core idea:** Hooks run each render. Effects sync with external systems after paint. Dependencies must list every value from render that the effect reads.
+
+### Questions and answers
+
+**Q: Explain `useEffect` lifecycle.**
+
+After render commits to screen, React runs effects. Cleanup runs before the next effect run and on unmount. Use for subscriptions, timers, DOM sync, fetching (with abort). Not for deriving state from props — do that in render.
+
+**Q: Common dependency array mistakes.**
+
+Missing deps → stale values. Unstable deps (`{}`, inline functions) → infinite loops. Empty `[]` when you meant to react to prop changes. Fix: list honest deps, stabilize with `useCallback`/`useMemo` when justified, or move logic into event handlers.
+
+**Q: `useMemo` vs `useCallback` in detail.**
+
+`useMemo` caches a **computed value** between renders when deps unchanged. `useCallback` caches a **function reference**. Use when passing callbacks to memoized children or expensive calculations — not everywhere. Measure first.
+
+**Q: How does the cleanup function work?**
+
+Returned function from effect runs before re-running the effect and on unmount. Cancel fetch (`AbortController`), clear intervals, unsubscribe websockets. Prevents updates after unmount and stale request races.
+
+**Q: How to create custom hooks?**
+
+Extract stateful logic into `function useX() { ... return ... }`. Must follow rules of hooks — only call at top level of React functions. Share behavior, not UI. `useFetch`, `useLocalStorage`, `useMediaQuery` are patterns.
+
+**Traps:** `useEffect` for everything. No cleanup on fetch. `useMemo` on cheap operations.
+
+**Memory hook:** Effects sync after paint; deps are a contract; cleanup cancels work; custom hooks are shared state machines.
 
 ---
 
-## 19. Frontend System Design – SPA vs SSR, hydration, micro-frontends, CDN, caching, error handling
+## 6. State management
 
-1. what are SPA vs SSR tradeoffs
-2. What is hydration
-3. When micro-frontends
-4. what is Role of CDN, why we use it?
-5. Frontend caching strategy
+**Why interviewers care:** Apps fail when server cache, UI state, and URL state are one tangled blob. Seniors separate concerns and pick the smallest tool that works.
+
+### Questions and answers
+
+**Q: What is lifting state up?**
+
+Move shared state to the closest common ancestor of components that need it. Pass value down, pass updater callbacks up. When drilling hurts, consider context or a store — but try colocating state down first.
+
+**Q: Context API vs Redux?**
+
+Context: simple broadcast of stable-ish values (theme, locale, auth snapshot). Every consumer re-renders on value change unless split contexts or memoized. Redux/Zustand: frequent updates, middleware, devtools, selectors, normalized entities. Don't put fast-changing server lists in Context alone.
+
+**Q: How is async state handled?**
+
+Model `idle | loading | success | error` explicitly. Never store raw promises in state. TanStack Query owns server async state — caching, deduping, retries. UI state stays local or in a small client store.
+
+**Q: Client state vs server state?**
+
+Client: modal open, form draft, selected tab. Server: data from API, can go stale, should be cached and invalidated. Mixing them makes invalidation impossible to reason about.
+
+**Q: Why is normalization important?**
+
+Nested API JSON duplicated across components leads to inconsistent updates. Store entities by id `{ users: { byId, allIds } }` — update one place, selectors derive views. Redux Toolkit and many apps use this shape.
+
+**Memory hook:** Lift until it hurts, Context for slow-changing globals, query library for server data, normalize nested API sludge.
 
 ---
 
-## Detailed answers
+## 7. Data libraries (TanStack Query, axios)
 
-### 1. JavaScript Fundamentals - scope, closures, hoisting, this binding, async/await, promises, event loop
+**Q: Why use TanStack Query?**  
+It is a server-state cache: dedupes requests, handles stale/fresh, retries, background refetch, loading/error flags. Stops every component reinventing fetch + useEffect.
 
-- **Scope** - Scope is where a variable can be read. JavaScript uses lexical scope, so inner functions can read outer bindings, but not the other way around.
-- **Closures** - A closure is a function plus the variables it remembers from its outer scope. Use it for counters, factories, and private state.
-- **Hoisting** - `var` declarations are hoisted and initialized as `undefined`, function declarations are fully hoisted, and `let`/`const` stay in the temporal dead zone until the declaration runs.
-- **this binding** - `this` depends on the call site: default, implicit, explicit, or constructor call. Arrow functions do not create their own `this`; they capture it from the outer scope.
-- **async/await** - `async/await` is promise syntax that makes async code read like sync code. `await` pauses the function and resumes on the microtask queue, so it still follows promise ordering rules.
+**Q: How does caching work in React Query?**  
+Query keys identify cache entries. `staleTime` = how long data is fresh without refetch. `gcTime` (formerly cacheTime) = how long unused data stays in memory. `invalidateQueries` after mutations refreshes related data.
 
-**Interview takeaway**: explain scope first, then closure, then hoisting, then show that `this` is call-site based, and finish with how async code moves through the event loop.
+**Q: Axios vs fetch?**  
+Axios: interceptors, automatic JSON, timeouts, wider browser story in older apps. `fetch`: built-in, need manual `res.ok` check and `res.json()`. Both fine; axios wins for cross-cutting auth/error layers.
 
-### 2. JavaScript Advanced - currying, debounce/throttle, memoization, prototype chain, custom bind/call/apply, immutability
+**Q: Handling loading and error states?**  
+Explicit UI for each: skeleton while loading, retry on error, empty state when success but no data. Centralize API error shape in one client layer.
 
-- **Currying** - Currying turns one function that takes many arguments into a chain of functions that take one argument at a time. It is useful when you want reuse, partial application, or cleaner composition.
-- **Debounce / throttle** - Debounce waits until activity stops, which is good for search inputs and autosave. Throttle limits how often a function can run, which is better for scroll or resize handlers.
-- **Memoization** - Memoization caches the result of a pure function so repeated calls with the same inputs return instantly. Use it when the same expensive computation runs often.
-- **Prototype chain** - Objects inherit by walking the `[[Prototype]]` chain until the property is found or the chain ends. This is why methods on `Array.prototype` work on every array.
-- **Custom bind** - A custom `bind` returns a new function with a fixed `this` and preset arguments; a complete version must also handle `new` correctly. In interviews, mention that `call` and `apply` execute immediately, while `bind` returns a new function.
+**Q: Managing stale data?**  
+Tune `staleTime`, show cached data while revalidating (`isFetching`), invalidate on mutation success, optimistic updates with rollback on failure.
 
-**Interview takeaway**: these questions test whether you understand function reuse, object inheritance, and how JavaScript behaves under repeated or delayed execution.
+---
 
-### 3. DOM & Browser - event bubbling/capturing, event delegation, reflow vs repaint, browser rendering, web storage, intersection observer
+## 8. Performance tuning
 
-- **Bubbling vs capturing** - Capturing runs from the document root down to the target, and bubbling runs from the target back up. Most app code listens in the bubbling phase because it is easier to delegate.
-- **Event delegation** - Put one listener on a parent instead of one listener per child. It reduces memory usage and still works for elements added later.
-- **Reflow vs repaint** - Reflow means layout changed and the browser must recalculate positions and sizes; repaint means only visual style changed. Reflow is usually more expensive.
-- **Rendering pipeline** - The browser builds the DOM and CSSOM, combines them into a render tree, calculates layout, paints pixels, and then composites layers. Performance work is mostly about avoiding unnecessary layout and paint work.
-- **IntersectionObserver** - Use it for lazy loading, infinite scroll, and visibility-based analytics. It is better than scroll handlers because the browser can optimize the observation work.
+**Q: Route-based code splitting?**  
+`React.lazy` + `Suspense` per route — initial bundle excludes unvisited pages. Vite/webpack emit separate chunks automatically.
 
-**Interview takeaway**: talk about event flow, then rendering cost, and finish with practical browser APIs that help you avoid manual polling.
+**Q: List virtualization?**  
+Render only visible rows (+ overscan). Constant DOM size for 10k items. `@tanstack/react-virtual`, `react-window`.
 
-### 4. Frameworks - React Core, components, props, state, hooks, conditional rendering, lists & keys, controlled components
+**Q: How component splitting helps?**  
+Smaller trees re-render less when state is local. Easier to lazy load and test.
 
-- **Props vs state** - Props are read-only inputs from a parent, while state is local data owned by the component. If data must survive re-render and change over time, it belongs in state or a store.
-- **Re-rendering** - React re-renders when state or props change, then reconciles the new tree with the old one. A render does not always mean the DOM changes.
-- **Keys** - Keys give React stable identity for list items. Good keys prevent DOM reuse bugs and preserve item state correctly.
-- **Controlled vs uncontrolled** - Controlled components keep input value in React state, which makes validation and conditional UI easier. Uncontrolled components let the DOM manage the value and are useful for simple forms or file inputs.
-- **Hooks replacing classes** - Hooks moved state and lifecycle logic into functions, which made reuse easier and reduced class boilerplate. The real win is composition: you can extract behavior into custom hooks.
+**Q: Causes of unnecessary re-renders?**  
+New object/function props each render, context value changing every render, state too high in tree. Fix: move state down, memoize children, split context.
 
-**Interview takeaway**: emphasize ownership of data, how React decides to update, and why stable identity matters for list rendering.
+**Q: How do you profile?**  
+React Profiler, Performance tab, Web Vitals in field data. Fix measured bottleneck.
 
-### 5. React Hooks - useState, useEffect, dependency array, cleanup, useMemo, useCallback, custom hooks
+---
 
-- **useEffect lifecycle** - Effects run after render, and their cleanup runs before the next effect or when the component unmounts. That makes them the right place for subscriptions, timers, and network side effects.
-- **Dependency array mistakes** - Missing dependencies create stale values, while unstable object or function dependencies can cause endless reruns. Keep dependencies honest and stabilize values when needed.
-- **useMemo vs useCallback** - `useMemo` caches a computed value, while `useCallback` caches a function reference. Use them only when a child render or expensive calculation justifies the extra complexity.
-- **Cleanup** - Cleanup should cancel timers, abort requests, and remove subscriptions so the component does not leak work after unmount. This is especially important for race conditions in data fetching.
-- **Custom hooks** - Custom hooks let you package reusable stateful logic without reusing UI. Good hooks hide implementation details and expose a small, declarative API.
+## 9. Git
 
-**Interview takeaway**: the main hook story is side effects, dependency correctness, and making reusable behavior through composition.
+**Q: Merge vs rebase?**  
+Merge preserves branch topology with a merge commit. Rebase replays commits on new base — linear history, rewrites commits. Rebase locally; merge (or squash merge) on shared main.
 
-### 6. State Management - lifting state, context API, Redux basics, async state, server vs client state, normalization, Zustand
+**Q: Resolve conflicts?**  
+Open conflicted files, understand both sides, keep correct combined behavior, run tests, commit resolution.
 
-- **What is lifting state up?** Move shared state to the closest common parent so siblings stay in sync. Pass the value down as props and pass update callbacks back up.
-- **Context API vs Redux in detail** Context is ideal for low-frequency global values like theme or auth user. Redux is better when state is large, changes often, or needs middleware, devtools, and predictable actions.
-- **How is async state handled?** Track loading, success, and error states explicitly instead of storing raw promise objects. For server data, prefer a query/cache library so retries, refetching, and deduplication are handled consistently.
-- **Client state vs server state** Client state belongs to the UI and user interactions; server state comes from the API and can become stale. Keep them separate so you can cache and invalidate server data without polluting UI state.
-- **Why is normalization important?** Normalize nested data into entity maps keyed by id so updates happen in one place. This avoids duplication, makes selectors simpler, and works well with Redux or Zustand stores.
+**Q: Pull request workflow?**  
+Small branches, clear description, CI green, review, squash or merge per team policy.
 
-### 7. JavaScript Libraries - TanStack Query, axios, data handling
+**Q: Revert vs reset?**  
+Revert = new commit undoing a change (safe on shared branches). Reset moves branch pointer (destructive if pushed).
 
-- **Why use TanStack Query?** It manages server state with caching, deduping, retries, and background refetching. That removes a lot of manual loading and stale-data code from components.
-- **How does caching work in React Query?** Query keys identify cache entries, `staleTime` controls when data becomes stale, and invalidation forces fresh fetches. Cached data can stay in memory even after unmount, which improves UX when users return to a page.
-- **Axios vs fetch** Axios gives you JSON handling, interceptors, timeouts, and simpler error handling out of the box. `fetch` is built into the browser and is fine when you want a lightweight, lower-level client.
-- **How to handle loading and error states?** Model them explicitly with `isLoading`, `isError`, `data`, and `error`. Show skeletons or spinners for pending states and clear retry actions for failures.
-- **How to manage stale data?** Use `staleTime`, `keepPreviousData`, and targeted invalidation after mutations. The goal is to show fast cached data while still refreshing at the right time.
+**Q: Release strategy?**  
+Tags, changelog, feature flags, ability to roll back. Trunk-based or release branches depending on team.
 
-### 8. Performance Tuning - routing, virtualization, component splitting
+---
 
-- **What is route-based code splitting?** Load only the bundle for the current route instead of shipping the whole app up front. This reduces initial JS cost and makes the first load faster.
-- **Explain list virtualization** Render only the visible rows in a long list, plus a small overscan buffer. This keeps the DOM small and avoids expensive layout and paint work.
-- **How component splitting helps** Split large components into smaller ones so state changes are localized. Smaller components are easier to memoize, test, and lazy load.
-- **What causes unnecessary re-renders?** Inline object/function props, lifting too much state too high, and passing broad context values all force extra renders. Move state down, memoize carefully, and keep props stable.
-- **How do you profile performance?** Use React DevTools Profiler, browser performance traces, and web vitals to find hot paths. Fix the measured bottleneck first, not the one that "feels slow."
+## 10. CSS core
 
-### 9. GIT - understanding of git commands and project management
+See also: [Box Model](css/box-model.md), [Flexbox and Grid](css/layout-flexbox-grid.md), [Specificity](css/specificity.md), [Positioning](css/positioning.md).
 
-- **Merge vs rebase** Merge preserves branch history and creates a merge commit; rebase rewrites your branch to make history linear. Rebase is good locally, merge is safer for shared history.
-- **How do you resolve conflicts?** Inspect both versions, keep the intent of the change, and test the result after resolution. Conflicts usually mean two people touched the same behavior and you need to choose the correct combined state.
-- **Explain pull request workflow** Keep branches small, run checks before review, and use PR comments to explain behavior changes. Clean PRs are easier to review, revert, and ship.
-- **Revert vs reset** Revert creates a new commit that undoes changes and is safe for shared branches. Reset moves the branch pointer and rewrites history, so it should be used carefully.
-- **Release management strategy** Prefer small, frequent releases with tags, changelogs, and a rollback plan. Stable release branches are useful when you need controlled promotion to production.
+**Q: CSS box model?**  
+Content, padding, border, margin. `border-box` makes `width` include padding and border — use it.
 
-### 10. CSS Core - box model, display, positioning, flexbox, grid, media queries, responsive design, mobile-first, specificity
+**Q: Flexbox vs Grid?**  
+Flex: one axis alignment. Grid: rows and columns together. Component vs page layout.
 
-- **Explain the CSS box model** Every element has content, padding, border, and margin. `box-sizing: border-box` makes width and height easier to reason about in real layouts.
-- **Flexbox vs Grid use cases** Flexbox is best for one-dimensional layout, either row or column. Grid is better when you need two-dimensional layout with explicit rows and columns.
-- **How specificity is calculated?** Inline styles beat IDs, IDs beat classes/attributes/pseudo-classes, and those beat element selectors. When specificity ties, the later rule wins.
-- **List positioning types** `static` is the default, `relative` offsets without leaving flow, `absolute` positions relative to the nearest positioned ancestor, `fixed` anchors to the viewport, and `sticky` behaves like relative until a threshold is reached.
-- **Mobile-first or desktop-first?** Mobile-first is usually better because it starts with the smallest viewport and progressively enhances with `min-width` breakpoints. It tends to produce cleaner responsive CSS and better performance on constrained devices.
+**Q: Specificity calculation?**  
+Inline > ID > class/pseudo-class/attribute > element. Ties → later rule wins. Avoid `!important` arms races.
 
-### 11. Routing - client-side routing, dynamic routes, nested routes, guards, query params, URL sync
+**Q: Positioning types?**  
+`static`, `relative`, `absolute`, `fixed`, `sticky` — absolute needs positioned ancestor; sticky needs threshold and scroll room.
 
-- **How client-side routing works** The router intercepts navigation, updates the history state, and renders the matching component without a full page reload. That keeps app state alive and makes navigation feel instant.
-- **Dynamic routes example** Routes like `/users/:id` or `/products/:slug` let the same page component render many entities. Read the param from the router and fetch the matching data.
-- **What are nested routes?** Nested routes let a parent layout stay mounted while child pages swap inside an outlet. This is ideal for dashboards, settings pages, and other shared shells.
-- **How to protect routes?** Check auth and permissions before rendering sensitive pages, then redirect unauthenticated users to login. For role-based access, protect both the route and the API.
-- **How to implement URL and state sync?** Put sharable state such as filters, tabs, and pagination in the URL. The URL becomes the source of truth, which makes refresh, back/forward, and sharing work naturally.
+**Q: Mobile-first vs desktop-first?**  
+Mobile-first: base styles for small screens, `min-width` media queries add complexity. Usually better performance and simpler CSS than shrinking desktop layouts.
 
-### 12. API & Data Fetching - REST, HTTP status codes, error handling, pagination, caching, retries
+---
 
-- **Explain REST principles** REST is resource-oriented, stateless, and uses standard HTTP methods consistently. The server should expose nouns like `/users/123`, not action-heavy endpoints.
-- **Common HTTP status codes** Use 200/201/204 for success, 400/422 for invalid input, 401/403 for auth problems, 404 for missing resources, 409 for conflicts, 429 for rate limits, and 500 for server errors.
-- **Global API error handling** Normalize API errors in one client layer so UI code gets a consistent shape. Add retries, cancellation, and logging there instead of duplicating logic in every component.
-- **Pagination strategies** Offset pagination is simple, but cursor pagination scales better when data changes often. Cursor-based APIs usually give more stable next-page behavior.
-- **Caching and retries** Cache GET responses when data is reused, then retry transient failures with backoff and jitter. Make writes idempotent where possible so retries are safe.
+## 11. Routing
 
-### 13. Performance - memoization, code splitting, lazy loading, bundle optimization, web vitals
+**Q: Client-side routing?**  
+Intercept link clicks, `history.pushState`, render matching component without full reload. State persists; faster navigation.
 
-- **What is memoization?** Memoization stores the result of a function or component calculation so repeated inputs are cheap. In React, use it when a recalculation or rerender is measurably expensive.
-- **How code splitting works** Code splitting breaks the app into chunks that can be loaded on demand. The main bundle gets smaller, so users pay for only the code they actually visit.
-- **Lazy loading vs eager** Lazy loading defers non-critical work until needed, while eager loading fetches it immediately. Use lazy loading for secondary routes, modals, and below-the-fold content.
-- **How to reduce bundle size** Remove unused dependencies, rely on tree shaking, import only what you need, and split large routes or features. Always measure with a bundle analyzer before changing architecture.
-- **Explain LCP, CLS, FID** LCP measures when the main content appears, CLS measures unexpected layout shift, and FID/INP measure interactivity delay. These metrics tell you whether the page is fast, stable, and responsive.
+**Q: Dynamic routes?**  
+`/users/:id` — read param, fetch entity. Same component, different data.
 
-### 14. Security - JWT basics, token storage risks, XSS, CSRF, CORS, secure cookies
+**Q: Nested routes?**  
+Parent layout stays mounted; child swaps in `<Outlet>`. Dashboards, settings tabs.
 
-- **How JWT works** A JWT is a signed token with a header, payload, and signature. The client sends it to prove identity, and the server verifies the signature without looking up server-side session state.
-- **Where to store tokens** For web apps, prefer `httpOnly`, `Secure`, `SameSite` cookies for refresh tokens or session cookies. Avoid localStorage for sensitive tokens when XSS risk matters.
-- **How to prevent XSS** Escape output by default, sanitize untrusted HTML, and use a strong Content Security Policy. Never insert raw user HTML unless you intentionally sanitize it first.
-- **What is CSRF?** CSRF tricks a browser into sending an authenticated request from another site. Use `SameSite` cookies, CSRF tokens, and origin checks for state-changing actions.
-- **How CORS works** CORS is a browser policy that controls which origins can read responses from a server. The server must explicitly allow methods, headers, and origins when cross-site access is intended.
+**Q: Protect routes?**  
+Check auth before render; redirect to login. Guard APIs too — client guard is UX, not security.
 
-### 15. Testing - unit tests, integration tests, Jest, RTL, mocking, E2E
+**Q: URL and state sync?**  
+Filters, pagination, tabs in query params — shareable, back button works. URL as source of truth for bookmarkable UI state.
 
-- **Unit vs integration tests** Unit tests isolate a small function or component, while integration tests verify several pieces working together. Use both, but optimize for behavior that matters to the user.
-- **What to test in frontend** Test user-visible behavior, edge cases, accessibility, and state transitions. Avoid overfocusing on implementation details that can change without breaking UX.
-- **How to test async code** Await state changes with `findBy*`, `waitFor`, or controlled timers. Do not assert immediately after triggering async work unless the code is synchronous by design.
-- **What is mocking?** Mocking replaces external dependencies such as APIs or storage with controlled test doubles. Mock the boundary, not the logic you are actually trying to verify.
-- **When to use E2E tests** Use E2E for critical user journeys like sign-in, checkout, and navigation flows. They give high confidence but should be fewer and slower than unit tests.
+---
 
-### 16. Build Tools - npm, package.json, Vite, webpack, env variables, build/runtime
+## 12. API and data fetching
 
-- **What happens in npm install?** npm reads `package.json` and the lockfile, resolves dependencies, downloads packages, and links them into `node_modules`. It also runs lifecycle scripts where configured.
-- **Important package.json fields** `scripts` define commands, `dependencies` are runtime packages, `devDependencies` are build/test only, and `engines` declares supported runtimes. `type`, `sideEffects`, and `exports` also matter in modern setups.
-- **Vite vs Webpack** Vite gives a fast dev server and modern build pipeline by leaning on native ESM. Webpack is more configurable and still common for larger or older setups.
-- **Role of Babel** Babel transpiles newer JavaScript and JSX into syntax supported by target browsers or runtimes. It is a compiler, not a bundler.
-- **Build-time vs runtime config** Build-time config is baked into the bundle during compilation, while runtime config is read after deployment. Use runtime config when you need the same build to behave differently across environments.
+**Q: REST principles?**  
+Resources as nouns, HTTP verbs with meaning, stateless requests, consistent status codes.
 
-### 17. Architecture - component design, separation of concerns, reusability, scalability, patterns
+**Q: Common HTTP status codes?**  
+200 OK, 201 Created, 204 No Content, 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict, 422 Validation, 429 Rate limit, 500 Server error.
 
-- **How to design reusable components** Keep the API small, keep responsibilities focused, and prefer composition over prop-heavy conditionals. Reusable components should be easy to drop into new screens without hidden assumptions.
-- **What are separation of concerns?** Separate data fetching, state ownership, presentation, and side effects into different layers. This makes components easier to test and reason about.
-- **How to scale frontend apps** Use feature-based folders, clear boundaries between shared and feature-specific code, and lazy load big routes. As the app grows, state ownership and module boundaries matter more than raw file count.
-- **Common anti-patterns** Giant components, duplicated server state, prop drilling everywhere, and too much global context all make apps fragile. When a component knows too much, split it.
-- **Folder structure for scalable frontend application** A feature-first structure with `features/`, `shared/`, `components/`, `hooks/`, and `services/` is easier to grow than a flat folder. Keep tests beside the code they verify.
+**Q: Global API error handling?**  
+One client wrapper normalizes errors, handles 401 redirect, retries transient failures, logs correlation ids.
 
-### 18. Accessibility (A11y) - keyboard navigation, screen readers, ARIA, focus, color contrast
+**Q: Pagination strategies?**  
+Offset/limit — simple, bad on shifting data. Cursor — stable next page with `nextCursor` token.
 
-- **Why accessibility matters** Accessibility helps keyboard users, screen reader users, and anyone with temporary or permanent impairments. It also improves overall UX and reduces legal risk.
-- **How to implement keyboard navigation handling** Ensure tab order is logical, visible focus states exist, and interactive elements are reachable without a mouse. Add Enter, Space, Arrow, and Escape handling where the UI expects it.
-- **Explain ARIA roles** ARIA adds semantics when native HTML is not enough, but it should not replace correct elements. Prefer a real `<button>` over a `<div role="button">` whenever possible.
-- **What is focus management?** Move focus intentionally when opening dialogs, switching routes, or showing validation errors. Restore focus to the trigger when the user closes transient UI.
-- **What are color contrast standards?** Text and important UI signals should meet WCAG contrast ratios so they remain readable. Never communicate meaning with color alone.
+**Q: Caching and retries?**  
+Cache GETs with TTL; retry idempotent requests with exponential backoff and jitter.
 
-### 19. Frontend System Design - SPA vs SSR, hydration, micro-frontends, CDN, caching, error handling
+---
 
-- **SPA vs SSR tradeoffs** SPAs give smoother app-like interactions after load, while SSR improves first paint and SEO. Choose based on the product's discoverability and interaction needs.
-- **What is hydration** Hydration is the client attaching event handlers and runtime state to server-rendered HTML. If the server and client render different markup, hydration bugs appear.
-- **When micro-frontends** Use micro-frontends when multiple teams need independent deployment boundaries and the app is large enough to justify the extra complexity. For most products, a modular monolith is simpler and better.
-- **Role of CDN** A CDN caches static assets close to users, reducing latency and origin load. It is one of the cheapest ways to improve global performance.
-- **Frontend caching strategy** Cache static assets aggressively with content hashes, cache API responses selectively, and invalidate with versioned keys or explicit refresh logic. The goal is fast repeat visits without showing stale critical data.
+## 13. Performance metrics
+
+**Q: Memoization?**  
+Cache pure function results or React computed values when recalculation is costly and inputs repeat.
+
+**Q: Code splitting?**  
+Separate bundles loaded on demand — routes, heavy modals, editors.
+
+**Q: Lazy vs eager loading?**  
+Lazy: load when needed (below fold, on navigation). Eager: upfront — use for critical path only.
+
+**Q: Reduce bundle size?**  
+Tree-shake, analyze bundle, remove dead deps, dynamic import, avoid shipping all locales/icons.
+
+**Q: LCP, CLS, INP?**  
+LCP: largest content visible ≤2.5s. CLS: layout shift ≤0.1. INP: interaction responsiveness ≤200ms. See [Core Web Vitals](web/core-web-vitals.md).
+
+---
+
+## 14. Security
+
+See [Web Security](web/security.md).
+
+**Q: How JWT works?**  
+Signed token (header.payload.signature). Server verifies signature; payload can hold claims. Stateless auth — watch expiry and refresh flow.
+
+**Q: Where to store tokens?**  
+HttpOnly Secure SameSite cookies for session/refresh — not localStorage if XSS is a risk.
+
+**Q: Prevent XSS?**  
+Escape output, sanitize HTML, CSP, avoid `innerHTML` with user data.
+
+**Q: CSRF?**  
+Trick browser into authenticated request. SameSite cookies, CSRF tokens, check Origin.
+
+**Q: CORS?**  
+Browser blocks reading cross-origin responses unless server sends allow headers. Not a substitute for auth.
+
+---
+
+## 15. Testing
+
+**Q: Unit vs integration?**  
+Unit: one function/component isolated. Integration: several pieces together. Test behavior users see; integration catches wiring bugs.
+
+**Q: What to test in frontend?**  
+User flows, edge cases, a11y roles, error/loading states. Not implementation details like internal state variable names.
+
+**Q: Testing async?**  
+`findBy*`, `waitFor`, fake timers for debounce. Await UI update before assert.
+
+**Q: Mocking?**  
+Replace network, clock, module boundaries — not the logic under test.
+
+**Q: When E2E?**  
+Critical paths: login, checkout, core workflow. Fewer, slower, high confidence. Playwright/Cypress.
+
+---
+
+## 16. Build tools
+
+**Q: What happens in `npm install`?**  
+Read package.json + lockfile, resolve dependency tree, download tarballs, write `node_modules`, run lifecycle scripts.
+
+**Q: Important package.json fields?**  
+`scripts`, `dependencies`, `devDependencies`, `engines`, `type`, `exports`, `sideEffects` (affects tree-shaking).
+
+**Q: Vite vs Webpack?**  
+Vite: native ESM dev server, fast HMR, Rollup build. Webpack: highly configurable, mature ecosystem. Greenfield often Vite; legacy often Webpack.
+
+**Q: Role of Babel?**  
+Transpile JSX and modern JS to targets browsers support. Compiler, not bundler.
+
+**Q: Build-time vs runtime config?**  
+Build-time baked into bundle (`import.meta.env` at build). Runtime read from `window.__ENV__` or server — same artifact, different deploy envs.
+
+---
+
+## 17. Architecture
+
+**Q: Design reusable components?**  
+Small API, composition (`children`), sensible defaults, no hidden global deps.
+
+**Q: Separation of concerns?**  
+Fetch in hooks/services, presentation in components, routing in router layer.
+
+**Q: Scale frontend apps?**  
+Feature folders, lazy routes, clear shared vs feature code, consistent state boundaries.
+
+**Q: Anti-patterns?**  
+God components, prop drilling everything, duplicating server cache, business logic in every leaf.
+
+**Q: Folder structure?**  
+`features/`, `shared/`, `components/`, colocate tests. Scale by feature, not by file type only.
+
+---
+
+## 18. Accessibility
+
+**Q: Why accessibility matters?**  
+Legal, ethical, and UX — keyboard users, screen readers, low vision, motor impairments. Better for everyone (captions, focus order).
+
+**Q: Keyboard navigation?**  
+Logical tab order, visible focus, interactive elements are real `<button>`/`<a>`, Escape closes modals.
+
+**Q: ARIA roles?**  
+Fill gaps when native HTML insufficient. First rule: use native elements.
+
+**Q: Focus management?**  
+Trap focus in modal, return focus on close, move focus to errors.
+
+**Q: Color contrast?**  
+WCAG AA minimum 4.5:1 normal text. Don't convey meaning by color alone.
+
+---
+
+## 19. Frontend system design
+
+See [Rendering Patterns](web/rendering-patterns.md).
+
+**Q: SPA vs SSR tradeoffs?**  
+SPA: fast after load, rich interaction, weaker first paint/SEO. SSR/SSG: faster first content, better SEO, more server complexity.
+
+**Q: Hydration?**  
+Client JS attaches to server HTML. Mismatch if server and client render differ (`Date.now()`, random ids).
+
+**Q: When micro-frontends?**  
+Multiple teams, independent deploys, org scale — not default for small products. Operational cost is real.
+
+**Q: Role of CDN?**  
+Cache static assets at edge — lower latency, less origin load.
+
+**Q: Frontend caching strategy?**  
+Hashed filenames long-cache; HTML short-cache; API via query library stale times; service worker for offline if PWA.
+
+---
+
+## How to use this bank in one sitting
+
+1. Pick one section. Close the answers.
+2. Answer all five questions out loud in 15 minutes.
+3. Read the section and fix gaps in understanding, not wording.
+4. Next day, one section cold recall — only the memory hook first, then expand.
+
+**Memory hook for the whole bank:** Fundamentals (scope, async), React (data ownership, effects), platform (DOM, security, metrics), delivery (git, build, architecture). Map every question to one of those four buckets and you always know where to start explaining.

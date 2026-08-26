@@ -1,0 +1,63 @@
+:root {
+  --content-max-width: 1100px;
+}
+
+.content {
+  line-height: 1.7;
+}
+
+pre {
+  overflow-x: auto;
+}
+
+pre code {
+  white-space: pre;
+}
+
+table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.chapter {
+  max-width: 1100px;
+}
+
+/* Hide Previous / Next chapter side arrows */
+.nav-chapters {
+  display: none !important;
+}
+
+/* Hide in-page headings dumped into the sidebar (mdBook sidebar-header-nav). */
+#sidebar .chapter a[href*="#"] {
+  display: none !important;
+}
+
+#sidebar .chapter li:has(> a[href*="#"]) {
+  display: none !important;
+}
+
+/* Match print icon styling for the copy-page toolbar button */
+#copy-page-button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 8px;
+  margin: 0;
+  font: inherit;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  line-height: var(--menu-bar-height);
+}
+
+#copy-page-button svg {
+  display: block;
+  vertical-align: middle;
+}
+
+#copy-page-button.copy-page-copied {
+  color: #7cb342;
+}

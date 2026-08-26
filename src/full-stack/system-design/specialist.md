@@ -20,16 +20,6 @@ flowchart TD
 
 | # | Question |
 |---|---|
-| 86 | [Design ML/AI Infrastructure](#86-design-ml-ai-infrastructure) |
-| 87 | [Design Large Language Model (LLM) Inference API](#87-design-large-language-model-llm-inference-api) |
-| 88 | [Design Microservices Architecture](#88-design-microservices-architecture) |
-| 89 | [Design GraphQL API](#89-design-graphql-api) |
-| 90 | [Design Multi-Tenancy System](#90-design-multi-tenancy-system) |
-| 91 | [Design Data Warehouse](#91-design-data-warehouse) |
-| 92 | [Design IoT System](#92-design-iot-system) |
-| 93 | [Design Content Moderation System](#93-design-content-moderation-system) |
-| 94 | [Design GDPR-Compliant System](#94-design-gdpr-compliant-system) |
-| 95 | [Design Distributed Consensus for Blockchain](#95-design-distributed-consensus-for-blockchain) |
 | 96 | [Design High-Availability Disaster Recovery](#96-design-high-availability-disaster-recovery) |
 | 97 | [Design Financial System with Consistency Guarantees](#97-design-financial-system-with-consistency-guarantees) |
 | 98 | [Design Real-time Bidding (Ad Tech)](#98-design-real-time-bidding-ad-tech) |
@@ -37,598 +27,155 @@ flowchart TD
 | 100 | [Design Monitoring & Alerting System](#100-design-monitoring-alerting-system) |
 
 ---
-### 86. **Design ML/AI Infrastructure**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:1884:1909}}
-
-</details>
-
----
-
-### 87. **Design Large Language Model (LLM) Inference API**
-
-#### Answer summary
-
-Design Large Language Model (LLM) Inference API by starting with the user flow, then naming the durable state, hot-path cache, async pipeline, and failure handling. A strong answer is less about naming technologies and more about explaining why each component exists.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Request flow and primary API
-- Durable state and hot-path acceleration
-- Failure handling and observability
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:1911:1936}}
-
-</details>
-
----
-
-### 88. **Design Microservices Architecture**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:1938:1962}}
-
-</details>
-
----
-
-### 89. **Design GraphQL API**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:1964:1976}}
-
-</details>
-
----
-
-### 90. **Design Multi-Tenancy System**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:1978:2000}}
-
-</details>
-
----
-
-### 91. **Design Data Warehouse**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2002:2025}}
-
-</details>
-
----
-
-### 92. **Design IoT System**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2027:2046}}
-
-</details>
-
----
-
-### 93. **Design Content Moderation System**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2048:2071}}
-
-</details>
-
----
-
-### 94. **Design GDPR-Compliant System**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2073:2087}}
-
-</details>
-
----
-
-### 95. **Design Distributed Consensus for Blockchain**
-
-#### Answer summary
-
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
-
-#### Key points
-
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
-```
-
-<details>
-<summary>Original source notes</summary>
-
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2089:2108}}
-
-</details>
-
----
 
 ### 96. **Design High-Availability Disaster Recovery**
 
-#### Answer summary
+**Why interviewers ask** — Region outages, bad deploys, and ransomware are inevitable. Interviewers test whether you translate business SLAs into concrete RPO/RTO targets and pick backup, replication, or multi-region strategies that actually meet them.
 
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
+**Core insight** — DR is not "more backups" — define how much data loss (RPO) and downtime (RTO) the business accepts, then build standby capacity and automated failover to hit those numbers; untested plans are fiction.
 
-#### Key points
+**Architecture**
 
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
+```txt
+Primary region (active) → sync/async replication → standby (warm/hot)
+Periodic snapshots → immutable object storage (cross-region, encrypted)
+Health monitor → failover controller → DNS/global LB shift → promote replica
+Quarterly game days: restore drill → measure actual RPO/RTO achieved
 ```
 
-<details>
-<summary>Original source notes</summary>
+- **RPO** — Max acceptable data loss window; drives backup frequency and replication mode (sync ≈ zero loss, async = bounded lag).
+- **RTO** — Max acceptable outage; drives hot standby vs cold restore (minutes vs hours).
+- **Backup & recovery** — Full/incremental snapshots to durable storage; versioned; restore tested on schedule.
+- **Replication** — Streaming replica in same or cross-region; automatic failover with leader election and fencing.
+- **Multi-region** — Active-active or active-passive; global traffic routing; survive full region failure.
 
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2110:2134}}
+**Key decisions** — Sync replication for tight RPO on money data; async for cost/latency tradeoff; hot standby for low RTO; backups alone only when hours of downtime are acceptable.
 
-</details>
+**Scale & failure** — Split-brain during failover, replication lag exceeding RPO, and restore drills that fail in production break DR first. Mitigation: quorum fencing, lag alerts with write freeze, mandatory game days.
+
+**Memory hook** — RPO is how much history you can lose; RTO is how long the lights stay off; rehearsals prove the plan is real.
 
 ---
 
 ### 97. **Design Financial System with Consistency Guarantees**
 
-#### Answer summary
+**Why interviewers ask** — Money must never be wrong under concurrency, retries, or partial failures. Interviewers test ACID ledger design, double-entry bookkeeping, immutable audit trails, and when you sacrifice availability for consistency.
 
-Strong consistency returns the latest committed value at the cost of latency and coordination, while eventual consistency improves availability and responsiveness but allows short-term staleness. The right answer depends on whether correctness or freshness is the stronger business requirement.
+**Core insight** — Ledger is immutable source of truth; every transfer is double-entry balanced; external gateway calls are idempotent and reconciled async — correctness always beats speed.
 
-#### Key points
+**Architecture**
 
-- Responsibility boundaries and where each component sits in the stack
-- When you choose one vs the other, and when you combine them
-- What breaks first at scale or under failure
-- The one-sentence interview takeaway
-
-#### Interview details
-
-- Strong consistency returns the latest committed value; eventual consistency favors availability and low latency.
-- Strong consistency is safer for money and invariants; eventual consistency is common for feeds and social features.
-- Explain the acceptable window of staleness.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  W[Write] --> S1[Strong Consistency]
-  W --> S2[Eventual Consistency]
-  S1 --> Read1[Latest Read]
-  S2 --> Read2[May lag briefly]
+```txt
+Client → Payment API (idempotency key) → ledger DB (ACID, serializable)
+                                      → fraud scoring (velocity + rules + ML)
+                                      → gateway adapter (async webhook confirm)
+                                      → reconciliation batch + immutable audit log
 ```
 
-<details>
-<summary>Original source notes</summary>
+- **ACID transactions** — Balance updates in one txn; rollback on any failure; isolation prevents double-spend races.
+- **Double-entry** — Every debit paired with credit; account sums invariant always holds.
+- **Audit trail** — Append-only journal; who/when/what; regulatory export; never mutate balance without a matching entry.
+- **Fraud detection** — Pre-authorization scoring; velocity limits; block before capture not after.
+- **Distributed money** — Saga or outbox over 2PC across services; local txn plus async completion and nightly reconciliation.
 
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2136:2150}}
+**Key decisions** — Strong consistency on ledger shard; idempotency keys on all writes; pessimistic lock or serializable isolation on balance rows; eventual reads only for non-money views with explicit staleness bounds.
 
-</details>
+**Scale & failure** — Hot-account lock contention, duplicate webhook delivery, and gateway timeout with unknown state break money flows first. Mitigation: shard ledger by account, webhook dedup table, pending state plus reconciliation jobs.
+
+**Deep link** — [Payment system](../backend/system-design/design-a-payment-system.md)
+
+**Memory hook** — Ledger never lies; idempotency key at the door; reconcile what you cannot confirm synchronously.
 
 ---
 
 ### 98. **Design Real-time Bidding (Ad Tech)**
 
-#### Answer summary
+**Why interviewers ask** — Ad auctions must close in under 100ms across millions of QPS with complex targeting — the latency budget is the product.
 
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
+**Core insight** — Page load triggers parallel bid requests to SSPs/DSPs; highest eligible bid wins before a hard timeout; the hot path uses precomputed profiles and CDN creatives, not synchronous DB joins.
 
-#### Key points
+**Architecture**
 
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
+```txt
+Publisher page → ad tag → SSP auction server
+                        → parallel bid fanout to N DSPs (<80ms wall clock)
+                        → each DSP: profile lookup (Redis) + targeting + bid price
+                        → second-price auction → winner creative from CDN
+                        → impression pixel + async billing stream (Kafka)
 ```
 
-<details>
-<summary>Original source notes</summary>
+- **Bid flow** — OpenRTB-style request with user context; parallel HTTP to bidders; timeout returns house ad or no-bid.
+- **Latency** — Profile and segment data in memory; pre-approved creatives on CDN; zero heavy DB on auction path.
+- **Targeting** — Geo, device, interests compiled offline into key-value profiles; boolean filter in auction worker.
+- **Throughput** — Horizontally scaled auction tier; connection pools to bidders; drop late bids past deadline.
 
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2152:2166}}
+**Key decisions** — Separate real-time auction from campaign management UI; frequency caps in Redis; fraud and billing async; second-price auction reduces bid-shading games.
 
-</details>
+**Scale & failure** — Slow DSP poisoning auction latency, profile store outage stripping targeting, and timeout storms causing blank ads break revenue first. Mitigation: per-DSP circuit breakers, cached fallback segments, strict auction wall clock.
+
+**Deep link** — [Advertising platform](medium.md#59-design-advertising-platform)
+
+**Memory hook** — Fan out bids in parallel, cut at the deadline, bill impressions after the ad is already on screen.
 
 ---
 
 ### 99. **Design Circuit Breaker Pattern**
 
-#### Answer summary
+**Why interviewers ask** — Cascading failure is the default when dependencies slow down. Interviewers want the closed/open/half-open state machine and how you stop retry storms from amplifying outages.
 
-This is a platform or specialist design: lead with constraints, then explain governance, safety, scaling, and operational feedback loops.
+**Core insight** — Track failure rate per dependency; when threshold is exceeded, fail fast locally instead of waiting on a sick service; half-open probes recovery before restoring full traffic.
 
-#### Key points
+**Architecture**
 
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Governance, safety, performance, and operational feedback loops.
-- Treat the non-functional requirement as the main requirement.
-- Highlight failure domains and recovery procedures.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
+```txt
+Caller service → circuit breaker wrapper → downstream dependency
+                      ↓ rolling failure counter
+              Closed (pass) → Open (fail fast) → Half-open (limited probes)
+                      ↓ open state
+              Fallback (cache / default / degraded response)
 ```
 
-<details>
-<summary>Original source notes</summary>
+- **States** — Closed: normal calls pass; Open: immediate failure or fallback after threshold; Half-open: limited probes test recovery.
+- **Failure threshold** — Error rate or consecutive failures over a window (e.g. 50% in 10s or 5 consecutive timeouts).
+- **Open timeout** — Duration before half-open trial (e.g. 30s) — prevents immediate retry storm on flapping dependency.
+- **Success threshold** — Consecutive successes in half-open to close (e.g. 3 of 5 probes succeed).
+- **Isolation** — Per-dependency breaker plus bulkhead — one slow endpoint must not exhaust all threads.
 
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2168:2180}}
+**Key decisions** — Breaker complements bounded retries, not infinite loops; fallbacks must be safe (stale cache OK for recommendations, not for auth); emit metrics on every state transition.
 
-</details>
+**Scale & failure** — Mis-tuned breaker blocking healthy traffic, half-open stampede when many instances probe simultaneously, and missing fallback causing user-visible errors break resilience first. Mitigation: per-endpoint tuning, jittered half-open entry, graceful degradation by design.
+
+**Memory hook** — Breaker is a fuse — too many failures trip it open; half-open is one careful finger on the switch before full power returns.
 
 ---
 
 ### 100. **Design Monitoring & Alerting System**
 
-#### Answer summary
+**Why interviewers ask** — Operators need signal not noise at scale. Interviewers expect ingestion pipelines, cardinality control, alert routing, and on-call workflows that move from metric to action.
 
-Observability systems should separate ingestion, aggregation, storage, query, and alerting. Call out retention, sampling, cardinality, and how operators get from a signal to an action.
+**Core insight** — Separate collection, storage, query, visualization, and alerting; treat retention and label cardinality as first-class inputs; alerts tie to runbooks and symptoms (SLO breach), not raw CPU spikes.
 
-#### Key points
+**Architecture**
 
-- What the client path looks like end to end
-- Where the source of truth lives
-- Which components absorb burstiness or slow work
-- How you scale, observe, and recover
-
-#### Interview details
-
-- Ingestion, processing, storage, query, and alerting.
-- Treat retention and cardinality as first-class design inputs.
-- Explain how operators move from signal to action.
-
-#### Diagram
-
-```mermaid
-flowchart TD
-  Client[Client / Workload] --> Edge[Edge / Policy Layer]
-  Edge --> Core[Core Service]
-  Core --> Data[(Primary Data Store)]
-  Core --> Cache[(Cache / Feature Store)]
-  Core --> Async[Async Jobs / Pipelines]
-  Async --> Obs[Monitoring / Audit / Feedback]
+```txt
+Apps/infra → exporters (metrics / logs / traces) → ingestion gateway
+                                            → TSDB (Prometheus / Influx)
+                                            → recording rules / aggregations
+         Grafana dashboards ← query API
+         Alertmanager ← rule engine (threshold + anomaly)
+                      → on-call routing (PagerDuty) → escalation → incident tracker
 ```
 
-<details>
-<summary>Original source notes</summary>
+- **Metrics collection** — Pull scrapes or push gateway; standardized labels (service, env); RED/USE framework per service.
+- **Storage** — Time-series append-only blocks; retention tiers (raw 15d, downsampled 1y); federation for multi-cluster views.
+- **Alerting** — Threshold (error rate > 1%) and anomaly detection; alert grouping to reduce pages; severity and ownership labels.
+- **Visualization** — Dashboards per SLO; drill alert → metric → trace → log via shared correlation IDs.
+- **On-call** — Rotation schedules, escalation policies, incident lifecycle (ack → resolve → postmortem).
 
-{{#include ../../../100_System_Design_Interview_Questions_Complete_Guide.md:2182:2210}}
+**Key decisions** — Pull vs push collection tradeoffs; cardinality limits (never `user_id` as a metric label); alert on user-visible symptoms where possible, not infrastructure noise.
 
-</details>
+**Scale & failure** — Cardinality explosion, alert fatigue from noisy rules, and ingestion lag hiding incidents break observability first. Mitigation: label allowlists, SLO burn-rate alerts, HA ingest with remote-write buffering.
+
+**Deep link** — [Design an analytics dashboard backend](../backend/system-design/design-an-analytics-dashboard-backend.md) · [Real-time metrics system](easy.md#28-design-real-time-metrics-system)
+
+**Memory hook** — Collect cheaply, label lightly, alert on user pain, route to a human with a runbook.

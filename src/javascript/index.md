@@ -3,13 +3,9 @@
 JavaScript is the language layer that powers the browser, your algorithms, and the reusable
 patterns interviewers probe from multiple angles.
 
-## Migration tracker
+Rewrite progress: [`REWRITE-PROGRESS.md`](../../REWRITE-PROGRESS.md) (project root) and the per-topic tracker in `docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`.
 
-| Chapter | Purpose |
-|---|---|
-| [JavaScript Missing Concepts Audit](missing-concepts-audit.md) | Tracks frontend-interview JavaScript topics that still need dedicated concept pages |
-
-## Concept chapters (12-section study format)
+## Concept chapters (Type A study format)
 
 | Chapter | Focus |
 |---|---|

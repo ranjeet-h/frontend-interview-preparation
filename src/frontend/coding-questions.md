@@ -1,43 +1,45 @@
 # Frontend Coding Questions
 
-Imported from `Frontend_Coding_Questions.csv`. Exact duplicate prompts were removed during generation.
+Fourteen problems from `Frontend_Coding_Questions.csv` — easy through hard, including React. Each one is written as a full **Format B** walkthrough: what the interviewer is testing, how a senior dev thinks before coding, the solution, a dry run, edge cases, follow-ups, and a memory hook.
 
-## Question index
-
-| # | Category | Question |
-|---|---|---|
-| 1 | EASY | [Implement a debounce function](#1-implement-a-debounce-function) |
-| 2 | EASY | [Group array of objects by key](#2-group-array-of-objects-by-key) |
-| 3 | EASY | [Reverse words in a string](#3-reverse-words-in-a-string) |
-| 4 | MEDIUM | [Predict event loop execution order](#4-predict-event-loop-execution-order) |
-| 5 | MEDIUM | [Remove duplicates efficiently](#5-remove-duplicates-efficiently) |
-| 6 | MEDIUM | [Flatten a nested array](#6-flatten-a-nested-array) |
-| 7 | HARD | [Implement Promise.all](#7-implement-promise-all) |
-| 8 | HARD | [Implement Promise.all (rejection case)](#8-implement-promise-all-rejection-case) |
-| 9 | HARD | [Deep clone an object](#9-deep-clone-an-object) |
-| 10 | HARD | [Implement memoization](#10-implement-memoization) |
-| 11 | HARD | [Implement LRU Cache](#11-implement-lru-cache) |
-| 12 | HARD - React/Frontend | [Custom useFetch hook](#12-custom-usefetch-hook) |
-| 13 | HARD - React/Frontend | [Pagination with caching](#13-pagination-with-caching) |
-| 14 | HARD - React/Frontend | [Route-based code splitting](#14-route-based-code-splitting) |
+Work one problem at a time. Cover the prompt, write your solution, then read only after you have an answer.
 
 ---
 
-## EASY
+## Question index
 
-### 1. Implement a debounce function
+| # | Level | Problem |
+|---|---|---|
+| 1 | Easy | [Implement debounce](#1-implement-debounce) |
+| 2 | Easy | [Group array of objects by key](#2-group-array-of-objects-by-key) |
+| 3 | Easy | [Reverse words in a string](#3-reverse-words-in-a-string) |
+| 4 | Medium | [Predict event loop order](#4-predict-event-loop-order) |
+| 5 | Medium | [Remove duplicates](#5-remove-duplicates) |
+| 6 | Medium | [Flatten nested array](#6-flatten-nested-array) |
+| 7 | Hard | [Implement Promise.all](#7-implement-promiseall) |
+| 8 | Hard | [Promise.all rejection](#8-promiseall-rejection) |
+| 9 | Hard | [Deep clone](#9-deep-clone) |
+| 10 | Hard | [Memoization](#10-memoization) |
+| 11 | Hard | [LRU cache](#11-lru-cache) |
+| 12 | Hard | [Custom useFetch](#12-custom-usefetch) |
+| 13 | Hard | [Pagination with caching](#13-pagination-with-caching) |
+| 14 | Hard | [Route-based code splitting](#14-route-based-code-splitting) |
 
-**Problem summary**
+---
 
-A debounced function delays invoking `fn` until `delay` ms have elapsed since the last call. Rapid consecutive calls reset the timer — only the final call actually executes.
+## 1. Implement debounce
 
-**Approach**
+### What the interviewer is really testing
 
-Maintain a `timerId` reference in the closure. On every call, clear any existing timer and schedule a new one. The inner function captures `this` and `arguments` so the debounced wrapper works as a transparent proxy.
+Whether you understand **closures**, **timers**, and preserving `this`/arguments — the same building blocks behind search inputs, resize handlers, and autosave. This is not a string problem; it is a "can you wrap a function and control when it fires" problem.
 
-**Implementation**
+### Think before you code
 
-```js
+Naive approach: call `fn` on every keystroke — O(n) API calls for n keystrokes. We need to **reset a timer** on each call and only invoke `fn` after `delay` ms of silence. That means one `timerId` in a closure shared by every call to the returned wrapper. Preserve `this` and `args` with `fn.apply(this, args)` inside `setTimeout`.
+
+### The solution — fully explained code
+
+```javascript
 function debounce(fn, delay) {
   let timerId;
 
@@ -49,52 +51,46 @@ function debounce(fn, delay) {
   };
 }
 
-// Usage
-const log = debounce(() => console.log("API called"), 300);
-log(); log(); log(); log(); log();
-// → "API called" printed exactly once, 300 ms after the 5th call
+const search = debounce((q) => console.log('API:', q), 300);
+search('a');
+search('ab');
+search('abc');
+// Only "API: abc" logs, ~300ms after last call
 ```
 
-**Complexity**
+Time: O(1) per call. Space: O(1) for one timer id.
 
-- Time: O(1) per invocation  
-- Space: O(1) — one timer reference
+### Dry run
 
-**Explanation / edge cases**
+`search('a')` → schedule T1 in 300ms. `search('ab')` → clear T1, schedule T2. `search('abc')` → clear T2, schedule T3. 300ms quiet → T3 fires → `fn('abc')`.
 
-- **Leading-edge variant**: call immediately on first invocation, then suppress until quiet. Add a `leading` flag if needed.
-- **Returning the result**: `setTimeout` can't return a value; if the caller needs a result, use `Promise`-based debounce.
-- **React usage**: wrap in `useRef` or `useMemo` to keep identity stable across renders.
+### Edge cases
 
-```js
-// React-safe debounce
-import { useRef, useCallback } from "react";
+Leading-edge debounce (fire immediately, then suppress). Returning a value from async debounce needs Promises. In React, stabilize the debounced function with `useRef` + `useCallback` so identity does not reset every render.
 
-function useDebouncedCallback(fn, delay) {
-  const timer = useRef(null);
+### Variations and follow-ups
 
-  return useCallback((...args) => {
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => fn(...args), delay);
-  }, [fn, delay]);
-}
-```
+**Throttle** — cap rate instead of waiting for quiet. **Cancel** — expose `debounced.cancel()` that clears the timer. **maxWait** — lodash debounce fires at least every N ms during continuous input.
+
+### Memory hook
+
+Debounce = reset the egg timer on every knock; only cook when they stop knocking.
 
 ---
 
-### 2. Group array of objects by key
+## 2. Group array of objects by key
 
-**Problem summary**
+### What the interviewer is really testing
 
-Given an array of objects, partition them into groups where each group shares the same value for a specified key. Return an object whose keys are the distinct values and whose values are arrays of matching items.
+Whether you reach for **`reduce` + hash map** instead of nested loops when you need O(1) bucket lookup.
 
-**Approach**
+### Think before you code
 
-Use `Array.prototype.reduce`. For each item read the grouping key, create the bucket array if it does not exist, then push the item.
+Brute force: for each item, scan result arrays for matching key — O(n²). Better: one pass, object (or `Map`) keyed by `item[key]`, push into bucket arrays — O(n).
 
-**Implementation**
+### The solution
 
-```js
+```javascript
 function groupBy(arr, key) {
   return arr.reduce((acc, item) => {
     const groupKey = item[key];
@@ -103,99 +99,82 @@ function groupBy(arr, key) {
     return acc;
   }, {});
 }
-
-// Usage
-const people = [
-  { id: 1, age: 25 },
-  { id: 2, age: 30 },
-  { id: 3, age: 25 },
-];
-
-console.log(groupBy(people, "age"));
-// {
-//   25: [{ id: 1, age: 25 }, { id: 3, age: 25 }],
-//   30: [{ id: 2, age: 30 }]
-// }
 ```
 
-**Complexity**
+Time: O(n). Space: O(n).
 
-- Time: O(n)  
-- Space: O(n)
+### Dry run
 
-**Explanation / edge cases**
+`[{id:1, age:25}, {id:2, age:30}, {id:3, age:25}]` keyed by `age` → `{ 25: [obj1, obj3], 30: [obj2] }`.
 
-- Keys are coerced to strings when used as object properties — numeric keys like `25` become `"25"`. Use `Map` if you need strict type preservation.
-- Works with any primitive key value (string, number, boolean).
-- `Object.groupBy(arr, item => item[key])` is now stage-4 but not yet universally available — use the `reduce` version for interview code.
+### Edge cases
+
+Object keys stringify numbers (`25` → `"25"`). Use `Map` if you need number keys without coercion. `Object.groupBy` exists in modern JS but know the `reduce` version for interviews.
+
+### Variations
+
+Group by computed key: `groupBy(arr, x => x.age > 18 ? 'adult' : 'minor')` with a `Map`.
+
+### Memory hook
+
+One pass, one bucket per key — reduce into a map.
 
 ---
 
-### 3. Reverse words in a string
+## 3. Reverse words in a string
 
-**Problem summary**
+### What the interviewer is really testing
 
-Reverse the order of words in a sentence. Individual characters within each word stay in order; only the word positions are swapped.
+String manipulation basics — trim, split, reverse, join — and whether you handle **multiple spaces** correctly.
 
-**Approach**
+### Think before you code
 
-Split on whitespace, reverse the resulting array, then join back with a single space. Handle leading/trailing spaces by trimming first.
+Split on whitespace, reverse array, join with single space. `trim()` + `/\s+/` avoids empty tokens from leading or double spaces.
 
-**Implementation**
+### The solution
 
-```js
+```javascript
 function reverseWords(str) {
-  return str.trim().split(/\s+/).reverse().join(" ");
+  return str.trim().split(/\s+/).reverse().join(' ');
 }
-
-// Usage
-console.log(reverseWords("hello world from JavaScript"));
-// → "JavaScript from world hello"
 ```
 
-**Complexity**
+Time/space: O(n).
 
-- Time: O(n) — split, reverse, and join are all O(n)  
-- Space: O(n)
+### Dry run
 
-**Explanation / edge cases**
+`"hello world from JS"` → `['hello','world','from','JS']` → reversed → `"JS from world hello"`.
 
-- `/\s+/` collapses multiple consecutive spaces into one split — safer than `split(" ")`.
-- `trim()` removes leading/trailing whitespace so you don't get empty strings at the array edges.
-- Single-word input returns the word unchanged.
-- To also reverse characters within each word: `str.trim().split(/\s+/).map(w => [...w].reverse().join("")).reverse().join(" ")`.
+### Edge cases
+
+Single word unchanged. Multiple spaces collapsed. Follow-up: reverse characters inside each word (different problem).
+
+### Memory hook
+
+Trim, split on whitespace runs, reverse, join — four moves.
 
 ---
 
-## MEDIUM
+## 4. Predict event loop order
 
-### 4. Predict event loop execution order
+### What the interviewer is really testing
 
-**Problem summary**
+Microtask vs macrotask ordering — core JavaScript runtime knowledge. Format C style but included here as a coding trace.
 
-Understand how the JavaScript event loop schedules synchronous code, microtasks (Promises), and macrotasks (setTimeout) and predict the exact console output order.
+### Think before you code
 
-**Approach**
+Sync runs first to completion. Microtasks (promises) drain fully. Then one macrotask (`setTimeout`). Repeat.
 
-JavaScript has a single call stack. Tasks are queued in three categories:
+### The code
 
-1. **Synchronous** — runs immediately, before anything else.
-2. **Microtask queue** — `.then` / `queueMicrotask` callbacks, drained completely after every task.
-3. **Macrotask queue** — `setTimeout`, `setInterval`, I/O callbacks, processed one-at-a-time.
-
-**Implementation**
-
-```js
-console.log("start");                                    // 1 — sync
-
-setTimeout(() => console.log("timeout"), 0);             // 4 — macrotask
-
-Promise.resolve().then(() => console.log("promise"));    // 3 — microtask
-
-console.log("end");                                      // 2 — sync
+```javascript
+console.log('start');
+setTimeout(() => console.log('timeout'), 0);
+Promise.resolve().then(() => console.log('promise'));
+console.log('end');
 ```
 
-**Output**
+### The answer
 
 ```
 start
@@ -204,160 +183,107 @@ promise
 timeout
 ```
 
-**Complexity**
+### Execution walkthrough
 
-Not applicable — this is a conceptual/tracing question.
+Log `start` (sync). Schedule timeout (macrotask). Schedule promise callback (microtask). Log `end` (sync). Stack empty → drain microtasks → `promise`. Next macrotask → `timeout`.
 
-**Explanation / edge cases**
+### Trap
 
-| Step | Queue | Why |
-|------|-------|-----|
-| `"start"` | Call stack | Direct synchronous call |
-| `setTimeout(…, 0)` | Macrotask scheduled | Browser minimum clamp (~4 ms) exists; fires after current task + microtasks |
-| `Promise.resolve().then(…)` | Microtask scheduled | `.then` callbacks are microtasks |
-| `"end"` | Call stack | Direct synchronous call |
-| `"promise"` | Microtask queue drained | Microtasks run before the browser picks the next macrotask |
-| `"timeout"` | Macrotask queue | Finally dequeued |
+People expect `timeout` before `promise` because `setTimeout` was registered first. Registration order ≠ execution order.
 
-- **Nested microtasks**: a `.then` that schedules another `.then` still runs before any `setTimeout`.
-- **`async/await`**: `await` is syntactic sugar for `.then` — code after `await` is a microtask.
+### Memory hook
 
-```js
-async function demo() {
-  console.log("async start");
-  await Promise.resolve();
-  console.log("after await"); // microtask — before setTimeout
-}
-demo();
-setTimeout(() => console.log("timeout"), 0);
-// → async start, after await, timeout
-```
+Sync first, microtasks until empty, then next macrotask.
 
 ---
 
-### 5. Remove duplicates efficiently
+## 5. Remove duplicates
 
-**Problem summary**
+### What the interviewer is really testing
 
-Return a new array containing only the unique elements of the input array, preserving insertion order, without mutating the original.
+Knowing `Set` preserves insertion order and gives O(n) uniqueness.
 
-**Approach**
+### Think before you code
 
-Use `Set`, which stores only unique values and remembers insertion order. Spread the Set back into a new array.
+Nested loops O(n²). `Set` spread: `[...new Set(arr)]` — O(n).
 
-**Implementation**
+### The solution
 
-```js
+```javascript
 function removeDuplicates(arr) {
   return [...new Set(arr)];
 }
-
-// Usage
-console.log(removeDuplicates([1, 2, 2, 3, 4, 4, 5]));
-// → [1, 2, 3, 4, 5]
 ```
 
-**Complexity**
+### Dry run
 
-- Time: O(n) — Set insertion and iteration are amortised O(1) each  
-- Space: O(n)
+`[1,2,2,3,4,4,5]` → Set `{1,2,3,4,5}` → array same order.
 
-**Explanation / edge cases**
+### Edge cases
 
-- `Set` uses **SameValueZero** equality (`NaN === NaN` is `true` inside a Set).
-- Objects are compared **by reference** — `{ a: 1 }` and `{ a: 1 }` are two different objects and both kept. For structural deduplication, serialize to a key first:
+Objects dedupe by reference only. For structural dedupe, key by `id` with a `Set` of ids + `filter`. `NaN` treated as equal in Set.
 
-```js
-function dedupeByKey(arr, keyFn) {
-  const seen = new Set();
-  return arr.filter(item => {
-    const k = keyFn(item);
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
+### Variations
 
-dedupeByKey([{ id: 1 }, { id: 2 }, { id: 1 }], x => x.id);
-// → [{ id: 1 }, { id: 2 }]
-```
+Sorted array two-pointer in-place. `uniqBy` from lodash pattern.
 
-- **Alternative without Set** (O(n²)): `arr.filter((v, i) => arr.indexOf(v) === i)` — acceptable only for tiny arrays.
+### Memory hook
+
+Set = uniqueness with order; spread back to array.
 
 ---
 
-### 6. Flatten a nested array
+## 6. Flatten nested array
 
-**Problem summary**
+### What the interviewer is really testing
 
-Convert an arbitrarily deep nested array into a single flat array, preserving element order.
+Recursion vs iteration, and whether you know `flat(Infinity)` exists but can implement the loop.
 
-**Approach**
+### Think before you code
 
-Three idiomatic approaches are shown below. The recursive approach is the most educational; `Array.flat(Infinity)` is the production choice.
+Production: `arr.flat(Infinity)`. Interview: recursive `reduce` or stack-based iterative to avoid stack overflow on deep nesting.
 
-**Implementation**
+### The solution
 
-```js
-// --- Option A: built-in (preferred in production) ---
-const flatA = arr => arr.flat(Infinity);
-
-// --- Option B: recursive ---
-function flatB(arr) {
+```javascript
+function flatten(arr) {
   return arr.reduce((acc, item) => {
-    return Array.isArray(item) ? acc.concat(flatB(item)) : acc.concat(item);
+    return Array.isArray(item)
+      ? acc.concat(flatten(item))
+      : acc.concat(item);
   }, []);
 }
-
-// --- Option C: iterative with a stack (no call-stack overflow risk) ---
-function flatC(arr) {
-  const stack = [...arr];
-  const result = [];
-  while (stack.length) {
-    const item = stack.pop();
-    if (Array.isArray(item)) {
-      stack.push(...item); // spread sub-array back onto the stack
-    } else {
-      result.unshift(item); // maintain original left-to-right order
-    }
-  }
-  return result;
-}
-
-// Usage
-console.log(flatA([1, [2, [3, [4]]]])); // → [1, 2, 3, 4]
-console.log(flatB([1, [2, [3, [4]]]])); // → [1, 2, 3, 4]
-console.log(flatC([1, [2, [3, [4]]]])); // → [1, 2, 3, 4]
 ```
 
-**Complexity**
+Time: O(total elements). Space: O(depth) recursion stack.
 
-- Time: O(n) where n is the total number of elements across all nesting levels  
-- Space: O(d) recursive stack depth (Option B) / O(n) for the iterative stack (Option C)
+### Dry run
 
-**Explanation / edge cases**
+`[1,[2,[3]]]` → acc builds `[1,2,3]` as recursion unwinds.
 
-- `flat(Infinity)` skips holes in sparse arrays.
-- Very deep nesting (thousands of levels) can overflow the call stack with Option B — use Option C in that scenario.
-- To flatten only one level: `arr.flat()` or `[].concat(...arr)`.
+### Edge cases
+
+Very deep nesting overflows call stack — use iterative stack. `flat(1)` only one level. Sparse arrays — `flat` skips holes.
+
+### Memory hook
+
+If array, recurse and concat; else append — or `flat(Infinity)` in prod.
 
 ---
 
-## HARD
+## 7. Implement Promise.all
 
-### 7. Implement Promise.all
+### What the interviewer is really testing
 
-**Problem summary**
+Promise mechanics, preserving **result order** even when promises resolve out of order, and fail-fast rejection.
 
-`Promise.all` accepts an iterable of promises and returns a single promise that resolves with an array of resolved values (in input order) once **all** promises settle successfully.
+### Think before you code
 
-**Approach**
+Return new Promise. Counter for settled count. Array prefilled with results at index `i`. Each input wrapped in `Promise.resolve`. On all success → resolve array. On any reject → reject immediately.
 
-Iterate the input array, attach a `.then` handler to each promise that stores the resolved value at the correct index and decrements a counter. When the counter hits zero, resolve the outer promise. Any rejection immediately rejects the outer promise.
+### The solution
 
-**Implementation**
-
-```js
+```javascript
 function promiseAll(promises) {
   return new Promise((resolve, reject) => {
     if (promises.length === 0) return resolve([]);
@@ -366,147 +292,65 @@ function promiseAll(promises) {
     let remaining = promises.length;
 
     promises.forEach((p, i) => {
-      Promise.resolve(p).then(value => {
-        results[i] = value;
-        remaining -= 1;
-        if (remaining === 0) resolve(results);
-      }, reject); // second arg of .then is the rejection handler
+      Promise.resolve(p).then(
+        (value) => {
+          results[i] = value;
+          remaining -= 1;
+          if (remaining === 0) resolve(results);
+        },
+        reject
+      );
     });
   });
 }
-
-// Usage
-promiseAll([Promise.resolve(1), Promise.resolve(2), Promise.resolve(3)])
-  .then(console.log); // → [1, 2, 3]
 ```
 
-**Complexity**
+Time: O(n) setup; wall clock = slowest promise. Space: O(n).
 
-- Time: O(n) to set up handlers; total wall-clock time equals the slowest promise  
-- Space: O(n) for the results array
+### Dry run
 
-**Explanation / edge cases**
+`[P1(100ms→'a'), P2(50ms→'b')]` — P2 finishes first but `results[0]='a'`, `results[1]='b'` at end.
 
-- Wrapping each item in `Promise.resolve(p)` handles non-promise values (plain numbers, strings) transparently.
-- Empty array resolves immediately with `[]`.
-- Order of resolution does **not** affect output order — the index `i` is captured by closure.
+### Edge cases
+
+Empty array → `[]`. Non-promise values wrapped. First rejection wins; others still run but ignored.
+
+### Variations
+
+`Promise.allSettled`, `Promise.race`, `Promise.any`.
+
+### Memory hook
+
+Count down remaining; store at index i; reject on first failure.
 
 ---
 
-### 8. Implement Promise.all (rejection case)
+## 8. Promise.all rejection
 
-**Problem summary**
+Same implementation as §7 — `reject` as second arg to `.then` handles fail-fast. First rejection settles the outer promise; later rejections are no-ops on an already-settled promise.
 
-`Promise.all` must **fail fast**: the moment any input promise rejects, the returned promise rejects immediately with that reason, regardless of remaining promises.
+**Follow-up:** `Promise.allSettled` never rejects — returns `{status, value|reason}` per input.
 
-**Approach**
-
-The same implementation from Q7 already handles this correctly because `reject` is passed directly as the rejection handler. The first `.then(..., reject)` call that fires with a rejection wins the race.
-
-**Implementation**
-
-```js
-// Same implementation as Q7 — rejection is already handled
-function promiseAll(promises) {
-  return new Promise((resolve, reject) => {
-    if (promises.length === 0) return resolve([]);
-
-    const results = new Array(promises.length);
-    let remaining = promises.length;
-
-    promises.forEach((p, i) => {
-      Promise.resolve(p).then(value => {
-        results[i] = value;
-        remaining -= 1;
-        if (remaining === 0) resolve(results);
-      }, reject); // ← first rejection calls reject(); subsequent ones are no-ops
-    });
-  });
-}
-
-// Usage — rejection case
-promiseAll([Promise.resolve(1), Promise.reject("Error"), Promise.resolve(3)])
-  .catch(err => console.log(err)); // → "Error"
-```
-
-**Complexity**
-
-- Same as Q7: O(n) setup, O(1) on rejection path
-
-**Explanation / edge cases**
-
-- Once a `Promise` is settled (resolved or rejected), it cannot be settled again — so calling `reject` multiple times is safe; only the first call takes effect.
-- The other promises **still run** (they are already in-flight); `Promise.all` just ignores their outcomes.
-- `Promise.allSettled` is the variant that waits for every promise and never rejects — useful when you need all outcomes regardless of failure:
-
-```js
-Promise.allSettled([p1, p2]).then(results => {
-  // results: [{ status: "fulfilled", value: 1 }, { status: "rejected", reason: "Error" }]
-});
-```
+**Memory hook:** `all` = fail fast; `allSettled` = wait for everyone and report.
 
 ---
 
-### 9. Deep clone an object
+## 9. Deep clone
 
-**Problem summary**
+### What the interviewer is really testing
 
-Create a completely independent copy of a nested object so that mutations to the clone do not affect the original, and vice-versa.
+Recursion, edge cases (cycles, dates, functions), and knowing `structuredClone` exists.
 
-**Approach**
+### Think before you code
 
-Multiple strategies exist with different trade-offs. The recursive approach is the most instructive for interviews. `structuredClone` is the modern production choice.
+`JSON.parse(JSON.stringify)` fails on cycles, `undefined`, functions, `Date`. Interview: recursive clone + `WeakMap` for cycles. Production: `structuredClone` when sufficient.
 
-**Implementation**
+### The solution
 
-```js
-// --- Option A: structuredClone (modern, handles most built-ins) ---
-const cloneA = obj => structuredClone(obj);
-
-// --- Option B: recursive (interview favourite) ---
-function deepClone(value) {
-  if (value === null || typeof value !== "object") return value; // primitives
-  if (Array.isArray(value)) return value.map(deepClone);        // arrays
-
-  const cloned = {};
-  for (const key of Object.keys(value)) {
-    cloned[key] = deepClone(value[key]);
-  }
-  return cloned;
-}
-
-// --- Option C: JSON round-trip (quick but limited) ---
-const cloneC = obj => JSON.parse(JSON.stringify(obj));
-
-// Usage
-const original = { a: 1, b: { c: 2 } };
-const clone = deepClone(original);
-clone.b.c = 99;
-
-console.log(original.b.c); // → 2  (untouched)
-console.log(clone.b.c);    // → 99
-```
-
-**Complexity**
-
-- Time: O(n) where n is the total number of nodes  
-- Space: O(d) call-stack depth + O(n) for the new object tree
-
-**Explanation / edge cases**
-
-| Issue | Option A | Option B (basic) | Option C |
-|-------|----------|-----------------|----------|
-| Circular refs | ✅ handled | ❌ infinite loop | ❌ throws |
-| `Date`, `RegExp` | ✅ | ❌ becomes plain object | ❌ Date → string |
-| `undefined`, functions | ❌ dropped | ❌ dropped | ❌ dropped |
-| `Map`, `Set` | ✅ | ❌ | ❌ |
-
-For the interview, implement Option B and mention these caveats. Add circular-reference handling with a `WeakMap`:
-
-```js
+```javascript
 function deepClone(value, seen = new WeakMap()) {
-  if (value === null || typeof value !== "object") return value;
-  if (seen.has(value)) return seen.get(value); // break circular ref
+  if (value === null || typeof value !== 'object') return value;
+  if (seen.has(value)) return seen.get(value);
 
   const cloned = Array.isArray(value) ? [] : {};
   seen.set(value, cloned);
@@ -518,89 +362,76 @@ function deepClone(value, seen = new WeakMap()) {
 }
 ```
 
+### Dry run
+
+`{a:1, b:{c:2}}` — clone `b` object, assign to `cloned.b`, primitives copy by value.
+
+### Edge cases
+
+`Date`, `Map`, `Set`, `RegExp` need special handling in full implementation. `structuredClone` handles most in modern runtimes.
+
+### Memory hook
+
+Walk the tree; WeakMap breaks cycles; primitives return as-is.
+
 ---
 
-### 10. Implement memoization
+## 10. Memoization
 
-**Problem summary**
+### What the interviewer is really testing
 
-Wrap any pure function so that results for previously seen argument combinations are returned from a cache rather than recomputed.
+Caching pure functions — foundation of `useMemo` thinking.
 
-**Approach**
+### Think before you code
 
-Maintain a `Map` (or plain object) keyed on a serialized form of the arguments. On each call, check the cache first; compute and store only on a miss.
+`Map` keyed by serialized args. On hit return cached; on miss compute, store, return. Pure function only.
 
-**Implementation**
+### The solution
 
-```js
+```javascript
 function memoize(fn) {
   const cache = new Map();
-
   return function (...args) {
     const key = JSON.stringify(args);
-    if (cache.has(key)) {
-      console.log("cache hit:", key);
-      return cache.get(key);
-    }
+    if (cache.has(key)) return cache.get(key);
     const result = fn.apply(this, args);
     cache.set(key, result);
     return result;
   };
 }
-
-// Usage
-const add = memoize((a, b) => {
-  console.log("computing...");
-  return a + b;
-});
-
-console.log(add(2, 3)); // computing... → 5
-console.log(add(2, 3)); // cache hit: [2,3] → 5  (no recomputation)
-console.log(add(1, 4)); // computing... → 5  (different args, different cache entry)
 ```
 
-**Complexity**
+### Edge cases
 
-- Time: O(1) on cache hit; O(fn) on cache miss  
-- Space: O(u × s) where u = unique call signatures, s = average result size
+`JSON.stringify` fails on circular args — custom key function. Unbounded cache grows forever → LRU (next problem).
 
-**Explanation / edge cases**
+### Memory hook
 
-- `JSON.stringify` fails for arguments that contain circular references or non-serialisable values (functions, `undefined`). For those, use a `WeakMap`-based trie or require callers to provide a custom `keyFn`.
-- **React `useMemo`** is not memoizing a function — it memoizes the **result** of an expression. For memoizing callbacks use `useCallback`; for memoizing expensive computations use `useMemo`.
-
-```js
-// React example: memoized selector
-const expensiveList = useMemo(() => data.filter(heavyFilter), [data]);
-```
-
-- **Cache invalidation**: a simple `Map`-based cache grows forever. For bounded caches see Q11 (LRU).
+Pure function + Map + key = memoize.
 
 ---
 
-### 11. Implement LRU Cache
+## 11. LRU cache
 
-**Problem summary**
+### What the interviewer is really testing
 
-Design a data structure with `get(key)` and `put(key, value)` both running in O(1) time. When capacity is exceeded, evict the **least recently used** item.
+Classic data structure design — O(1) get/put. In JS, `Map` insertion order trick beats hand-rolled doubly-linked list for interviews.
 
-**Approach**
+### Think before you code
 
-Combine a `Map` (for O(1) key lookup) with the fact that `Map` preserves insertion order. On access or insertion, delete and re-insert the key so it moves to the "most recently used" end. Evict the first key (oldest) when over capacity.
+`get`: if missing return -1; else delete+set to move to MRU end. `put`: delete if exists, set, if over capacity delete first key (LRU).
 
-**Implementation**
+### The solution
 
-```js
+```javascript
 class LRUCache {
   constructor(capacity) {
     this.capacity = capacity;
-    this.cache = new Map(); // Map preserves insertion order
+    this.cache = new Map();
   }
 
   get(key) {
     if (!this.cache.has(key)) return -1;
-
-    // Refresh: move to the end (most recently used)
     const value = this.cache.get(key);
     this.cache.delete(key);
     this.cache.set(key, value);
@@ -608,65 +439,43 @@ class LRUCache {
   }
 
   put(key, value) {
-    if (this.cache.has(key)) this.cache.delete(key); // remove stale entry
-    this.cache.set(key, value);                       // insert at end (MRU)
-
+    if (this.cache.has(key)) this.cache.delete(key);
+    this.cache.set(key, value);
     if (this.cache.size > this.capacity) {
-      // Delete the first key (LRU — least recently used)
       const lruKey = this.cache.keys().next().value;
       this.cache.delete(lruKey);
     }
   }
 }
-
-// Usage
-const lru = new LRUCache(2);
-lru.put(1, 1);  // cache: {1=1}
-lru.put(2, 2);  // cache: {1=1, 2=2}
-lru.get(1);     // returns 1, refreshes key 1 → cache: {2=2, 1=1}
-lru.put(3, 3);  // capacity exceeded, evicts key 2 → cache: {1=1, 3=3}
-
-console.log(lru.get(2)); // → -1 (evicted)
-console.log(lru.get(1)); // → 1
-console.log(lru.get(3)); // → 3
 ```
 
-**Complexity**
+### Dry run
 
-- `get`: O(1)  
-- `put`: O(1)  
-- Space: O(capacity)
+cap=2: put(1,1), put(2,2), get(1) refreshes 1, put(3,3) evicts key 2.
 
-**Explanation / edge cases**
+### Memory hook
 
-- The classic alternative uses a **doubly-linked list + HashMap**. The `Map`-based approach is more idiomatic in JS and achieves the same complexity with less code.
-- `put` on an **existing key** must update the value and refresh its recency (delete + re-insert).
-- `get` on a **missing key** must return `-1` (LeetCode convention) or `undefined` depending on the spec.
-- For a **read-through cache** (fetches missing values automatically), extend `get` to call an async loader.
+Map order = age; delete+set = "I just used this"; evict `keys().next()`.
 
 ---
 
-## HARD - React/Frontend
+## 12. Custom useFetch
 
-### 12. Custom useFetch hook
+### What the interviewer is really testing
 
-**Problem summary**
+React effects, race conditions, cleanup — the fetch-in-`useEffect` pattern done correctly.
 
-Build a reusable `useFetch` hook that handles loading/error state and correctly cancels stale requests when the URL changes before the previous fetch completes. Only the most-recent request should update component state.
+### Think before you code
 
-**Approach**
+State: data, loading, error. `useEffect` on `url`. `AbortController` — abort on url change/unmount. Ignore `AbortError`. Check `res.ok`.
 
-Use `useEffect` with `AbortController`. When the URL changes, the effect cleanup function calls `controller.abort()`, which causes the in-flight `fetch` to reject with an `AbortError` — caught and silently ignored. State is only updated if the request was not aborted.
-
-**Implementation**
+### The solution
 
 ```jsx
-import { useState, useEffect } from "react";
-
 function useFetch(url) {
-  const [data, setData]       = useState(null);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!url) return;
@@ -676,76 +485,64 @@ function useFetch(url) {
     setError(null);
 
     fetch(url, { signal: controller.signal })
-      .then(res => {
+      .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
       })
-      .then(json => {
+      .then((json) => {
         setData(json);
         setLoading(false);
       })
-      .catch(err => {
-        if (err.name === "AbortError") return; // stale request — ignore
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
         setError(err.message);
         setLoading(false);
       });
 
-    // Cleanup: abort the in-flight request when url changes or component unmounts
     return () => controller.abort();
   }, [url]);
 
   return { data, loading, error };
 }
-
-// Usage
-function UserList() {
-  const { data, loading, error } = useFetch("/api/users");
-
-  if (loading) return <p>Loading…</p>;
-  if (error)   return <p>Error: {error}</p>;
-  return <ul>{data?.map(u => <li key={u.id}>{u.name}</li>)}</ul>;
-}
 ```
 
-**Complexity**
+### Trap
 
-- Renders: 3 per fetch lifecycle (initiated → settled → -)
-- Network: only the latest URL fires a live request; previous ones are aborted at the OS level
+Without abort, fast url changes let stale responses overwrite fresh data.
 
-**Explanation / edge cases**
+### Follow-ups
 
-- **Race condition without abort**: user types fast → multiple requests in flight → whichever responds last "wins" even if it's stale data. `AbortController` prevents this.
-- **Unmount safety**: if the component unmounts while fetching, the cleanup aborts the request and the subsequent state updates are skipped (`AbortError` is caught), avoiding the "can't update state on unmounted component" warning.
-- **Caching**: for production, prefer `SWR` or `TanStack Query` which add deduplication, revalidation, and a global cache on top of this pattern.
-- **Retry logic**: wrap the fetch in a loop with exponential back-off, checking `controller.signal.aborted` before each attempt.
+TanStack Query for cache/dedupe. Retry with backoff. Generic `useFetch<T>` with TypeScript.
+
+### Memory hook
+
+Effect + AbortController cleanup = no stale fetch updates.
 
 ---
 
-### 13. Pagination with caching
+## 13. Pagination with caching
 
-**Problem summary**
+### What the interviewer is really testing
 
-Build a paginated data view where previously visited pages are served from a local cache, eliminating redundant network requests when navigating back.
+`useRef` for cache that should not trigger re-renders, plus same abort pattern as useFetch.
 
-**Approach**
+### Think before you code
 
-Store fetched pages in a `useRef`-backed `Map` (cache survives re-renders without causing them). On page change, check the cache first; only fetch from the network on a cache miss.
+`Map` in `useRef`: page → data. On page change, cache hit → set data sync; miss → fetch and store. Abort on page change.
 
-**Implementation**
+### The solution
 
 ```jsx
-import { useState, useEffect, useRef, useCallback } from "react";
-
 function usePaginatedFetch(baseUrl, pageSize = 10) {
-  const [page, setPage]       = useState(1);
-  const [data, setData]       = useState([]);
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
-  const cache = useRef(new Map()); // { pageNumber → data[] }
+  const [error, setError] = useState(null);
+  const cache = useRef(new Map());
 
   useEffect(() => {
     if (cache.current.has(page)) {
-      setData(cache.current.get(page)); // instant cache hit
+      setData(cache.current.get(page));
       return;
     }
 
@@ -753,15 +550,17 @@ function usePaginatedFetch(baseUrl, pageSize = 10) {
     setLoading(true);
     setError(null);
 
-    fetch(`${baseUrl}?page=${page}&limit=${pageSize}`, { signal: controller.signal })
-      .then(r => r.json())
-      .then(json => {
+    fetch(`${baseUrl}?page=${page}&limit=${pageSize}`, {
+      signal: controller.signal,
+    })
+      .then((r) => r.json())
+      .then((json) => {
         cache.current.set(page, json);
         setData(json);
         setLoading(false);
       })
-      .catch(err => {
-        if (err.name === "AbortError") return;
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
         setError(err.message);
         setLoading(false);
       });
@@ -769,79 +568,45 @@ function usePaginatedFetch(baseUrl, pageSize = 10) {
     return () => controller.abort();
   }, [page, baseUrl, pageSize]);
 
-  const goTo = useCallback(n => setPage(n), []);
-
-  return { data, loading, error, page, goTo };
-}
-
-// Component
-function PaginatedList() {
-  const { data, loading, error, page, goTo } = usePaginatedFetch("/api/items");
-
-  return (
-    <div>
-      {loading && <p>Loading page {page}…</p>}
-      {error   && <p>Error: {error}</p>}
-
-      <ul>
-        {data.map(item => <li key={item.id}>{item.name}</li>)}
-      </ul>
-
-      <button onClick={() => goTo(p => Math.max(1, p - 1))} disabled={page === 1}>
-        ← Prev
-      </button>
-      <span> Page {page} </span>
-      <button onClick={() => goTo(p => p + 1)}>
-        Next →
-      </button>
-    </div>
-  );
+  return { data, loading, error, page, setPage };
 }
 ```
 
-**Complexity**
+### Dry run
 
-- Cache hit: O(1) lookup, zero network round-trips  
-- Cache miss: O(n) for n items per page  
-- Space: O(p × n) for p cached pages of n items each
+Visit page 1 → fetch, cache. Page 2 → fetch. Back to page 1 → instant from cache, no network.
 
-**Explanation / edge cases**
+### Edge cases
 
-- **`useRef` vs `useState` for cache**: `useRef` mutations do not trigger re-renders — exactly what we want for a transparent cache.
-- **Cache invalidation**: add a `maxAge` timestamp per entry or call `cache.current.clear()` when data changes server-side.
-- **Total pages**: include `totalCount` in the API response; derive `totalPages = Math.ceil(totalCount / pageSize)` to disable the Next button on the last page.
-- **Prefetching**: after loading page N, silently prefetch page N+1 in the background using the same cache pattern.
+Invalidate cache on mutation. Prefetch page+1. Disable Next on last page when API returns total count.
+
+### Memory hook
+
+useRef Map = silent cache; page in deps = when to load.
 
 ---
 
-### 14. Route-based code splitting
+## 14. Route-based code splitting
 
-**Problem summary**
+### What the interviewer is really testing
 
-In a React SPA, load each route's component bundle **on demand** (lazy load) so the initial JavaScript payload is as small as possible. The Dashboard bundle should only be downloaded when the user navigates to `/dashboard`.
+Whether you know `React.lazy` + `Suspense` and how bundlers split chunks.
 
-**Approach**
+### Think before you code
 
-Use `React.lazy` to dynamically import the component and `Suspense` to show a fallback while the chunk downloads. Pair with `react-router-dom` v6 for route matching.
+Each route component = dynamic `import()`. Wrap routes in `Suspense` with fallback. Optional `ErrorBoundary` for chunk load failure. Prefetch on nav hover for polish.
 
-**Implementation**
+### The solution
 
 ```jsx
-// src/App.jsx
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 
-// Each lazy() call creates a separate webpack/Vite chunk
-const Home      = lazy(() => import("./pages/Home"));
-const Dashboard = lazy(() => import("./pages/Dashboard")); // loaded only on /dashboard
-const Profile   = lazy(() => import("./pages/Profile"));
+const Home = lazy(() => import('./pages/Home'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
 
 function PageLoader() {
-  return (
-    <div style={{ display: "grid", placeItems: "center", height: "100vh" }}>
-      Loading…
-    </div>
-  );
+  return <p>Loading…</p>;
 }
 
 export default function App() {
@@ -849,9 +614,8 @@ export default function App() {
     <BrowserRouter>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/"          element={<Home />} />
+          <Route path="/" element={<Home />} />
           <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/profile"   element={<Profile />} />
         </Routes>
       </Suspense>
     </BrowserRouter>
@@ -859,50 +623,25 @@ export default function App() {
 }
 ```
 
-```jsx
-// src/pages/Dashboard.jsx  — this file becomes its own JS chunk
-export default function Dashboard() {
-  return <h1>Dashboard</h1>;
-}
-```
+### Trap
 
-**Complexity**
+`lazy` requires default export. Chunk download failure needs ErrorBoundary, not only Suspense.
 
-- Initial bundle: excludes all lazy-loaded routes  
-- Per-route chunk: O(component size)  
-- Network waterfall: 1 extra round-trip per new route visit (chunk download)
+### Follow-ups
 
-**Explanation / edge cases**
+Prefetch: `onMouseEnter={() => import('./pages/Dashboard')}`. Named exports: `lazy(() => import('./x').then(m => ({ default: m.Named })))`.
 
-- **`React.lazy` requirements**: the import must be a default export. For named exports, re-export as default in the page file.
-- **Error boundaries**: network failures during chunk download throw. Wrap `Suspense` with an `ErrorBoundary` component to show a "Failed to load page" message with a retry button instead of a blank screen.
+### Memory hook
 
-```jsx
-class ErrorBoundary extends React.Component {
-  state = { hasError: false };
+lazy = separate chunk; Suspense = while chunk downloads; route change triggers import.
 
-  static getDerivedStateFromError() { return { hasError: true }; }
+---
 
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div>
-          <p>Failed to load page.</p>
-          <button onClick={() => this.setState({ hasError: false })}>Retry</button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+## Study order
 
-// Usage
-<ErrorBoundary>
-  <Suspense fallback={<PageLoader />}>
-    <Routes>…</Routes>
-  </Suspense>
-</ErrorBoundary>
-```
+1. Easy 1–3 (closures, reduce, strings)
+2. Medium 4–6 (event loop, Set, recursion)
+3. Hard 7–11 (promises, clone, cache)
+4. React 12–14 (effects, cache ref, lazy)
 
-- **Prefetching on hover**: call `import("./pages/Dashboard")` inside a `onMouseEnter` handler on the nav link to start downloading the chunk before the user clicks — eliminating the perceived loading delay.
-- **Vite / webpack**: both bundlers automatically create separate `.js` chunks for each `lazy()` call. Name chunks with the magic comment `/* webpackChunkName: "dashboard" */` for readable network panel debugging.
+**Memory hook for the whole set:** Closures + timers (debounce), reduce/Set (data shaping), promises (all/LRU), effects + abort (fetch), lazy (split).

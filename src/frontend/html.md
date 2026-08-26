@@ -1,9 +1,11 @@
 # HTML
 
-> **Canonical chapter for HTML.** CSS → [CSS](css.md). Browser concepts → [Web Concepts](web-concepts.md).
+Study pages for HTML structure, semantics, metadata, and media. Each topic is a standalone chapter in Type A format.
 
-Covers HTML5 features, document structure, semantic tags, `<meta>` tags, and media elements.
+## Topics
 
----
-
-{{#include ../../01-html-css-web-concepts.md:1:102}}
+- [HTML5 Features](html5-features.md)
+- [Document Structure](document-structure.md)
+- [Semantic HTML](semantic-html.md)
+- [Meta Tags](meta-tags.md)
+- [Media Tags](media-tags.md)

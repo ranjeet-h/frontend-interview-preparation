@@ -1,12 +1,7 @@
 # Summary
 
 [Full Stack Interview Study Book](index.md)
-
----
-
-# Study System
-
-- [Study System & Chapter Recipe](study-system.md)
+- [How to Study This Book](study-system.md)
 
 ---
 
@@ -14,8 +9,26 @@
 
 - [Frontend Fundamentals](frontend/index.md)
   - [HTML](frontend/html.md)
+    - [HTML5 Features](frontend/html/html5-features.md)
+    - [Document Structure](frontend/html/document-structure.md)
+    - [Semantic HTML](frontend/html/semantic-html.md)
+    - [Meta Tags](frontend/html/meta-tags.md)
+    - [Media Tags](frontend/html/media-tags.md)
   - [CSS](frontend/css.md)
+    - [Box Model](frontend/css/box-model.md)
+    - [Specificity](frontend/css/specificity.md)
+    - [Flexbox and Grid](frontend/css/layout-flexbox-grid.md)
+    - [Pseudo-classes and Pseudo-elements](frontend/css/pseudo-classes-elements.md)
+    - [Positioning](frontend/css/positioning.md)
   - [Web Concepts & Performance](frontend/web-concepts.md)
+    - [Core Web Vitals](frontend/web/core-web-vitals.md)
+    - [Performance Optimization](frontend/web/performance-optimization.md)
+    - [Browser Storage](frontend/web/browser-storage.md)
+    - [The DOM](frontend/web/dom.md)
+    - [Web Security (XSS, CSRF, Clickjacking)](frontend/web/security.md)
+    - [Frontend Design Patterns](frontend/web/design-patterns.md)
+    - [React Design Patterns](frontend/web/react-design-patterns.md)
+    - [Rendering Patterns (CSR, SSR, SSG, ISR)](frontend/web/rendering-patterns.md)
   - [Frontend Questions](frontend/question-banks.md)
   - [Frontend Coding Questions](frontend/coding-questions.md)
 
@@ -81,7 +94,6 @@
     - [Virtual List Basics](javascript/concepts/virtual-list-basics.md)
     - [Custom `new`](javascript/concepts/custom-new.md)
     - [Custom `instanceof`](javascript/concepts/custom-instanceof.md)
-  - [JavaScript Missing Concepts Audit](javascript/missing-concepts-audit.md)
   - [Legacy Chapters & Practice](javascript/core-concepts.md)
     - [Prototypes & Loops](javascript/prototypes-loops.md)
     - [ES6 & Modern JavaScript](javascript/es6-modern.md)
@@ -1026,7 +1038,22 @@
     - [Database Modeling Question Bank](full-stack/databases/modeling-management-question-bank.md)
   - [Cloud & DevOps](full-stack/cloud/index.md)
   - [System Design](full-stack/system-design/index.md)
-    - [Foundations & Framework](full-stack/system-design/concepts.md)
+    - [Foundations](full-stack/system-design/concepts.md)
+      - [API Gateway vs Load Balancer](full-stack/system-design/foundations/api-gateway-vs-load-balancer.md)
+      - [Reverse Proxy vs Forward Proxy](full-stack/system-design/foundations/reverse-proxy-vs-forward-proxy.md)
+      - [Horizontal vs Vertical Scaling](full-stack/system-design/foundations/horizontal-vs-vertical-scaling.md)
+      - [Microservices vs Monolith](full-stack/system-design/foundations/microservices-vs-monolith.md)
+      - [Vertical vs Horizontal Partitioning](full-stack/system-design/foundations/vertical-vs-horizontal-partitioning.md)
+      - [Rate Limiter (algorithms)](full-stack/system-design/foundations/rate-limiter.md)
+      - [Single Sign-On (SSO)](full-stack/system-design/foundations/single-sign-on.md)
+      - [Apache Kafka](full-stack/system-design/foundations/apache-kafka.md)
+      - [Kafka vs RabbitMQ vs ActiveMQ](full-stack/system-design/foundations/kafka-vs-rabbitmq-vs-activemq.md)
+      - [JWT vs OAuth vs SAML](full-stack/system-design/foundations/jwt-vs-oauth-vs-saml.md)
+      - [CAP Theorem](full-stack/system-design/foundations/cap-theorem.md)
+      - [PACELC Theorem](full-stack/system-design/foundations/pacelc-theorem.md)
+      - [Strong vs Eventual Consistency](full-stack/system-design/foundations/strong-vs-eventual-consistency.md)
+      - [Database Indexing](full-stack/system-design/foundations/database-indexing.md)
+      - [Consistent Hashing](full-stack/system-design/foundations/consistent-hashing.md)
     - [Easy System Design Problems](full-stack/system-design/easy.md)
     - [Medium System Design Problems](full-stack/system-design/medium.md)
     - [Hard System Design Problems](full-stack/system-design/hard.md)
@@ -1038,6 +1065,6 @@
 
 # Appendix
 
-- [Appendix](appendix/index.md)
-  - [Source Map](appendix/source-map.md)
-  - [Content Format Audit](appendix/content-format-audit.md)
+- [Original Sources](appendix/index.md)
+- [Source Map](appendix/source-map.md)
+- [Rewrite Progress](appendix/rewrite-progress.md)

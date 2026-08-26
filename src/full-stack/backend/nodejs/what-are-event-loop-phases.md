@@ -1,126 +1,235 @@
 # What are event loop phases
 
-## Detailed explanation
+## 1. Why This Exists — The Problem First
 
-What are event loop phases is a core Node.js topic that interviewers use to check whether you can connect definitions to production backend behavior. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+You scheduled cleanup with `setImmediate` and logging with `setTimeout(fn, 0)`. You expected cleanup first. Instead, logs sometimes run first—or the opposite, depending on whether the code ran at startup or inside a `fs.readFile` callback.
 
-## 1. One-line mental model
+You did not do anything "wrong" with Promises. You hit **phase ordering**: Node's event loop is not one queue. It is a fixed tour of stations. Callbacks land in different stations depending on how they were scheduled. Interviewers love this because it separates people who memorized "async magic" from people who know [how Node actually works](./how-does-node-js-work.md).
 
-Understand what are event loop phases by linking what it is, why it exists, and how it fails in production.
+## 2. The Analogy — Make It Obvious
 
-## 2. Problem it solves
+Imagine a **train that must visit six stations every lap**, in order, no skipping.
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+1. **Timers Station** — passengers whose watches say "depart now" (`setTimeout`, `setInterval`).
+2. **Pending Station** — passengers deferred from last lap's system issues.
+3. **Idle / Prepare** — rail company internal checks (you rarely book tickets here).
+4. **Poll Station** — the busy platform where freight arrives (network packets, completed disk reads). The train may **wait here** if no freight is ready but shipments are expected.
+5. **Check Station** — passengers holding "run after freight" tickets (`setImmediate`).
+6. **Close Station** — passengers leaving the train (`socket.on('close')`, etc.).
 
-## 3. Core idea
+Between **every** station, a **shuttle bus** runs first: all [process.nextTick](./what-is-process-nexttick.md) passengers, then all Promise passengers (microtasks). The train cannot leave for the next station until the shuttle finishes its rounds.
 
-- Define the concept in backend terms.
-- Explain the problem it solves.
-- Show where it appears in real services.
-- Call out security, performance, or reliability impact.
-- Compare it with nearby concepts.
+Your callback's **ticket type** determines which station it boards—not when you shouted for it.
 
-## 4. Visual / analogy
+## 3. How It Actually Works — The Full Explanation
+
+[libuv](./what-is-libuv.md) implements these phases. The [Node.js event loop](./what-is-node-js-event-loop.md) is this phased cycle plus microtasks between phases.
+
+### Phase 1: Timers
+
+Executes callbacks for timers whose threshold expired. `setTimeout(fn, 100)` and `setInterval` live here.
+
+Important: **minimum delay**, not exact. If poll or sync code runs long, timer fires late.
+
+### Phase 2: Pending callbacks
+
+Runs some deferred system callbacks (e.g. certain TCP errors reported as `ECONNRESET`). You rarely schedule work here directly.
+
+### Phase 3: Idle / Prepare
+
+Internal libuv housekeeping. Application code does not schedule here.
+
+### Phase 4: Poll
+
+The workhorse phase:
+
+- Retrieves new I/O events
+- Executes I/O callbacks (network data ready, `fs.readFile` completion, etc.)
+- **May block** waiting for I/O if no timers are ready and libuv expects events
+
+If poll is continuously busy (flood of I/O), later phases in the same iteration may delay—**check starvation** for `setImmediate`.
+
+### Phase 5: Check
+
+Runs `setImmediate` callbacks. Designed to run **after** poll I/O in the same loop turn.
+
+### Phase 6: Close callbacks
+
+Runs close callbacks like `socket.on('close')`.
+
+### Microtasks between phases
+
+After each phase completes:
+
+1. Drain entire `nextTickQueue` (can recurse—dangerous)
+2. Drain Promise microtasks until empty
+
+Then advance to next phase.
+
+### The famous `setTimeout` vs `setImmediate` puzzle
+
+**Outside I/O (main module):**
+
+Often timers phase runs before check phase in the first iteration → `setTimeout` before `setImmediate`.
+
+**Inside I/O callback (already in poll):**
+
+Timers phase for this turn already passed → next lap starts with timers → but `setImmediate` in check phase of **current** turn may run before next timer.
+
+Hence inside `fs.readFile` callback:
 
 ```txt
-Request/API/service -> concept applied -> safer production behavior
+setImmediate (check, same turn) often before setTimeout (timers, next turn)
 ```
 
-## 5. Minimal example
+### Poll blocking behavior
 
-```txt
-Input  -> validate
-Work   -> apply Node.js rule
-Output -> success or structured error
+Poll waits for I/O when appropriate. That is good for efficiency but means timer precision and `setImmediate` timing interact with I/O load.
+
+## 4. Real Code — See It Working
+
+**Main module vs inside I/O:**
+
+```js
+// phases-demo.js
+const fs = require('fs');
+
+setTimeout(() => console.log('main: timeout'), 0);
+setImmediate(() => console.log('main: immediate'));
+
+fs.readFile(__filename, () => {
+  console.log('--- inside I/O ---');
+  setTimeout(() => console.log('io: timeout'), 0);
+  setImmediate(() => console.log('io: immediate'));
+});
 ```
 
-## 6. Real-world example
+Typical output:
 
-In a production full-stack app, what are event loop phases affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+```
+main: timeout
+main: immediate
+--- inside I/O ---
+io: immediate
+io: timeout
+```
 
-## 7. Common interview questions
+**Microtasks between phases:**
 
-#### What are the phases of the Node.js event loop?
-- **The Engine Mechanism (Why it behaves this way):** The Node.js event loop (libuv) runs in six phases: (1) **Timers** — executes `setTimeout` and `setInterval` callbacks whose delay has elapsed. (2) **Pending Callbacks** — executes I/O callbacks deferred to the next iteration. (3) **Idle/Prepare** — internal libuv use. (4) **Poll** — the most important phase: retrieves new I/O events, executes I/O callbacks, and blocks here if there are pending I/O operations. (5) **Check** — executes `setImmediate` callbacks. (6) **Close Callbacks** — executes close event callbacks (e.g., `socket.on('close')`). After each phase, microtasks (`process.nextTick` and Promises) are processed before moving to the next phase.
-- **The Unforgettable Mental Model:** The **Six-Station Assembly Line**. The event loop is like an assembly line with six stations. Each station (phase) does specific work. Products (callbacks) move from station to station. The poll station is the busiest — it handles most I/O work.
-- **The Trap:** Thinking all callbacks execute in the same phase. Different scheduling methods place callbacks in different phases, affecting execution order.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The Node.js event loop has six phases: timers (setTimeout/setInterval), pending callbacks, idle/prepare (internal), poll (I/O callbacks — the busiest phase), check (setImmediate), and close callbacks. After each phase, microtasks (process.nextTick, Promises) are processed. The poll phase is the most important — it retrieves I/O events and executes their callbacks. Understanding these phases helps me predict callback execution order and debug timing issues."
+```js
+const fs = require('fs');
 
-#### Why do event loop phases matter in backend/full-stack systems?
-- **The Engine Mechanism (Why it behaves this way):** Event loop phases determine callback execution order, which affects application behavior. `setImmediate` callbacks always run after I/O callbacks (check phase after poll), while `setTimeout` callbacks run in the timers phase (before poll). This ordering matters for debugging, testing, and writing correct async code. In production, understanding phases helps identify why certain callbacks execute before others, and why timing-sensitive code behaves differently in different contexts.
-- **The Unforgettable Mental Model:** The **Train Schedule**. Event loop phases are like a train schedule — each train (phase) departs at a specific time. If you miss your train (schedule a callback in the wrong phase), you wait for the next cycle.
-- **The Trap:** Relying on specific phase ordering for application logic — it's an implementation detail that can change.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Event loop phases determine callback execution order, which affects application behavior. `setImmediate` runs after I/O (check after poll), `setTimeout` runs before I/O (timers before poll). This matters for debugging timing issues and writing correct async code. In production, I use phase understanding to identify why certain callbacks execute before others. But I don't rely on specific phase ordering for application logic — it's an implementation detail."
+setTimeout(() => {
+  console.log('timer');
+  Promise.resolve().then(() => console.log('promise inside timer'));
+}, 0);
 
-#### What is a simple implementation or design?
-- **The Engine Mechanism (Why it behaves this way):** The phase design ensures predictable callback ordering: `setTimeout(() => console.log('timer'), 0); fs.readFile('/tmp/test', () => console.log('I/O')); setImmediate(() => console.log('immediate'))`. In the first iteration: timer (timers phase) → I/O (poll phase) → immediate (check phase). Inside an I/O callback: `setTimeout` runs before `setImmediate` because the event loop is already past the timers phase when the I/O callback executes, so the next iteration starts with timers.
-- **The Unforgettable Mental Model:** The **Phase Diagram**. Drawing the six phases in order with callbacks placed in their respective phases makes the ordering clear.
-- **The Trap:** Not understanding that setTimeout vs. setImmediate ordering depends on the execution context (main module vs. I/O callback).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The phase design ensures predictable ordering. In the main module: setTimeout (timers) → I/O (poll) → setImmediate (check). Inside an I/O callback: setTimeout runs before setImmediate because the event loop is past the timers phase, so the next iteration starts with timers. I demonstrate this with code — the output order changes based on context. This is a classic interview question that tests deep event loop understanding."
+fs.readFile(__filename, () => {
+  console.log('io');
+});
 
-#### What edge cases can break it?
-- **The Engine Mechanism (Why it behaves this way):** The poll phase blocking bug: if the poll queue is never empty (continuous I/O), the event loop never reaches the check phase — `setImmediate` callbacks are starved. The timer drift bug: if the poll phase takes longer than the timer delay, the timer callback is delayed — `setTimeout` doesn't guarantee exact timing. The recursive nextTick bug: `process.nextTick` runs between phases, not during — recursive nextTick calls starve all phases. The close callback bug: close callbacks run in the close phase, which is after check — cleanup code scheduled with `setImmediate` runs before close callbacks.
-- **The Unforgettable Mental Model:** The **Traffic Jam**. If one phase (poll) never clears, traffic (callbacks) backs up and never reaches later phases (check, close).
-- **The Trap:** Assuming `setImmediate` always runs after `setTimeout` — in the main module, it's the opposite.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The most common phase edge case is poll phase starvation — if the poll queue is never empty, setImmediate callbacks are starved. Timer drift happens when the poll phase takes longer than the timer delay. Recursive process.nextTick starves all phases. I avoid relying on specific phase ordering for application logic. For guaranteed ordering, I chain callbacks explicitly rather than relying on phase timing."
+Promise.resolve().then(() => console.log('promise'));
+```
 
-#### How would you test it?
-- **The Engine Mechanism (Why it behaves this way):** Testing event loop phases involves verifying callback ordering in different contexts. Main module tests: verify setTimeout runs before setImmediate. I/O callback tests: verify setTimeout runs before setImmediate inside I/O callbacks. Microtask tests: verify process.nextTick runs before Promises, and both run between phases. Phase starvation tests: verify that continuous I/O starves setImmediate. Load tests: verify phase ordering under concurrent requests.
-- **The Unforgettable Mental Model:** The **Ordering Test**. Testing phases is like testing a recipe — you verify each ingredient (callback) is added at the right step (phase).
-- **The Trap:** Only testing in the main module — behavior differs inside I/O callbacks.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I test event loop phases by verifying callback ordering in different contexts. In the main module: setTimeout before setImmediate. Inside I/O callbacks: setTimeout before setImmediate (next iteration). Microtask ordering: process.nextTick before Promises, both between phases. I test phase starvation by creating continuous I/O and verifying setImmediate is delayed. I test under load to ensure phase ordering is consistent with concurrent requests."
+Shows microtasks interleaved as phases progress.
 
-#### How does it affect frontend clients?
-- **The Engine Mechanism (Why it behaves this way):** Event loop phases affect API response timing — callbacks in earlier phases execute sooner, affecting response latency. SSR rendering timing depends on phase execution — if rendering is scheduled in the timers phase vs. the check phase, it affects when HTML is generated. WebSocket message delivery timing depends on the poll phase — messages are delivered when I/O callbacks execute. Understanding phases helps optimize response times for frontend clients.
-- **The Unforgettable Mental Model:** The **Response Timer**. Event loop phases are like a response timer — earlier phases mean faster responses, later phases mean delayed responses.
-- **The Trap:** Not realizing that backend phase timing directly affects frontend response times.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Event loop phases affect API response timing — callbacks in earlier phases execute sooner. SSR rendering timing depends on phase execution — scheduling in earlier phases means faster HTML delivery. WebSocket message delivery depends on the poll phase. I optimize by scheduling critical work in earlier phases and deferring non-critical work to later phases or setImmediate. The key is that phase timing directly affects frontend response times."
+**setImmediate starvation sketch (heavy I/O):**
 
-#### What would you monitor in production?
-- **The Engine Mechanism (Why it behaves this way):** Production phase monitoring includes: phase duration (time spent in each phase), poll queue length (pending I/O callbacks), timer delay accuracy (actual vs. expected), and setImmediate starvation detection. Tools: `perf_hooks` for timing, clinic.js for profiling, custom phase duration logging. Alerts for poll phase duration spikes (I/O bottleneck), timer drift (event loop blocking), and setImmediate starvation (poll queue never empty).
-- **The Unforgettable Mental Model:** The **Phase Dashboard**. Phase monitoring is like a dashboard with gauges for each phase — you can see which phase is slow and why.
-- **The Trap:** Not monitoring phase duration — overall event loop lag doesn't tell you which phase is the bottleneck.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I monitor phase duration (time spent in each phase), poll queue length (pending I/O), timer delay accuracy, and setImmediate starvation. I use perf_hooks for timing, clinic.js for profiling, and custom logging for phase duration. I set alerts for poll phase duration spikes (I/O bottleneck), timer drift (event loop blocking), and setImmediate starvation. Phase-level monitoring helps me identify the specific bottleneck, not just that there is one."
+```js
+const fs = require('fs');
 
-## 8. Active recall test
+setImmediate(() => console.log('immediate ran'));
 
-1. **What are the six phases of the Node.js event loop?**
-   - **Explanation:** timers → pending callbacks → idle/prepare → poll (I/O) → check (setImmediate) → close callbacks. Microtasks run between phases.
+for (let i = 0; i < 20; i++) {
+  fs.readFile(__filename, () => {
+    // many I/O callbacks keep poll busy
+  });
+}
+```
 
-2. **In which phase do setTimeout callbacks execute?**
-   - **Explanation:** The timers phase — the first phase of each event loop iteration. Callbacks execute when their delay has elapsed.
+If I/O never pauses, `immediate ran` may print late—all poll work first in each iteration.
 
-3. **In which phase do setImmediate callbacks execute?**
-   - **Explanation:** The check phase — after the poll phase. This ensures setImmediate runs after I/O callbacks.
+## 5. The Interview Questions — All of Them, Done Properly
 
-4. **Why does setTimeout run before setImmediate inside an I/O callback?**
-   - **Explanation:** Inside an I/O callback, the event loop is in the poll phase. The next iteration starts with the timers phase, so setTimeout runs before setImmediate (check phase).
+**Q: What are the six phases of the Node.js event loop?**
 
-5. **What is poll phase starvation?**
-   - **Explanation:** When the poll queue is never empty (continuous I/O), the event loop never reaches the check phase, starving setImmediate callbacks.
+Timers → pending callbacks → idle/prepare → poll → check → close callbacks. Microtasks (`nextTick`, then Promises) run between phases. Implemented by libuv; see [What is libuv](./what-is-libuv.md).
 
-6. **When are microtasks processed in the event loop?**
-   - **Explanation:** Between phases — after each phase completes and before the next phase begins. process.nextTick runs before Promise microtasks.
+**Q: In which phase do `setTimeout` callbacks run?**
 
-## 9. Mistakes / traps
+Timers phase—the first phase of each iteration (when their delay has elapsed).
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+**Q: In which phase do `setImmediate` callbacks run?**
 
-## 10. Compare with related concepts
+Check phase—after poll I/O callbacks in the same loop turn.
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+**Q: Why does `setTimeout` run before `setImmediate` in the main module?**
 
-## 11. Summary from memory
+First iteration: timers phase comes before check phase. Both may be scheduled at startup; timer fires in timers, immediate in check.
 
-Explain What are event loop phases in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+**Q: Why does `setImmediate` run before `setTimeout` inside an I/O callback?**
 
-## 12. Spaced revision prompts
+The I/O callback runs in poll phase. Check phase still runs later in the **same** turn (immediate). `setTimeout(0)` waits for the **next** timers phase—next iteration—so immediate often wins.
 
-- Day 1: Define What are event loop phases in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**Q: What is poll phase starvation?**
+
+Continuous I/O keeps poll busy; check phase (`setImmediate`) delays. Deferred work scheduled with `setImmediate` piles up.
+
+**Q: When are microtasks processed?**
+
+Between phases—after each phase's callbacks, before the next phase. `process.nextTick` runs before Promise microtasks.
+
+**Q: Should application logic rely on phase ordering?**
+
+No for business correctness. Phases explain debugging and interview questions—not stable contracts for app behavior. For guaranteed order, chain explicitly (`await`, queues, job processors).
+
+**Q: What is the most important phase for API servers?**
+
+Poll—most incoming HTTP data and completed async I/O fire here. Timers drive timeouts; check runs `setImmediate`; close handles connection cleanup.
+
+## 6. The Traps — What Goes Wrong
+
+**Trap: Building logic on "setImmediate always after setTimeout."**
+
+Context-dependent. Classic interview trap; wrong in production assumptions.
+
+**Trap: Using `setImmediate` for user-facing ordering guarantees.**
+
+Use explicit state machines or queues. Phase order is an implementation detail for app logic.
+
+**Trap: Recursive `process.nextTick` between phases.**
+
+Prevents advancing phases—timers and I/O starve.
+
+**Trap: Assuming timer fires exactly on schedule.**
+
+Event loop load shifts timers. Use monotonic deadlines for critical timing, not `setTimeout` precision.
+
+**Trap: Ignoring poll blocking during benchmarks.**
+
+Idle server vs flood of uploads changes when check phase runs—benchmarks must match production I/O patterns.
+
+**Trap: Confusing browser phases with Node phases.**
+
+Browser has no check phase or libuv poll. See [Browser vs Node event loop](./browser-event-loop-vs-node-js-event-loop.md).
+
+## 7. Compare With Related Concepts
+
+| Concept | Role |
+|---------|------|
+| [Event loop](./what-is-node-js-event-loop.md) | Whole scheduling model |
+| [libuv](./what-is-libuv.md) | Implements phases |
+| [process.nextTick](./what-is-process-nexttick.md) | Between phases, not in a phase |
+| [setImmediate](./what-is-setimmediate.md) | Check phase |
+| [Microtask queue](./what-is-microtask-queue.md) | Promises between phases |
+| [Callback queue](./what-is-callback-queue.md) | Phase/macrotask queues |
+
+**Phases vs microtasks:** Phases are libuv's tour; microtasks are Node's extra shuttle between stations. `nextTick` beats Promises on the shuttle.
+
+**Phases vs [browser event loop](./browser-event-loop-vs-node-js-event-loop.md):** Browser = one macrotask + all microtasks + render. Node = six macrotask-like phases + microtasks between each.
+
+**Rule:** Know which **ticket** your callback used—timer, I/O/poll, immediate/check, close, nextTick, Promise.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+The event loop is a **train with six mandatory stops**; `setTimeout` boards at **Timers**, finished disk/network work exits at **Poll**, `setImmediate` boards at **Check**—and a **shuttle bus** ([nextTick](./what-is-process-nexttick.md) then Promises) runs between every stop. Inside Poll station, Check still comes later **this lap**; Timers is **next lap**—that's why immediate beats timeout in I/O callbacks.

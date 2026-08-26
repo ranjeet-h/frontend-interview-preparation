@@ -1,0 +1,132 @@
+<script>
+(function () {
+  var COPY_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
+  var CHECK_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"></path></svg>';
+
+  function getPageText() {
+    var main = document.querySelector(".content main") || document.querySelector("main");
+    if (!main) return "";
+
+    var clone = main.cloneNode(true);
+    clone.querySelectorAll("script, style, .buttons").forEach(function (el) {
+      el.remove();
+    });
+    return (clone.innerText || "").trim();
+  }
+
+  function copyWithExecCommand(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.width = "1px";
+    ta.style.height = "1px";
+    ta.style.padding = "0";
+    ta.style.border = "none";
+    ta.style.outline = "none";
+    ta.style.boxShadow = "none";
+    ta.style.background = "transparent";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+
+    var ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } finally {
+      document.body.removeChild(ta);
+    }
+    if (!ok) throw new Error("execCommand copy failed");
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text).catch(function () {
+        copyWithExecCommand(text);
+      });
+    }
+    copyWithExecCommand(text);
+    return Promise.resolve();
+  }
+
+  function flashCopied(button, icon) {
+    var previousTitle = button.title;
+    button.title = "Copied!";
+    button.setAttribute("aria-label", "Copied!");
+    icon.innerHTML = CHECK_SVG;
+    button.classList.add("copy-page-copied");
+
+    window.setTimeout(function () {
+      button.title = previousTitle;
+      button.setAttribute("aria-label", previousTitle);
+      icon.innerHTML = COPY_SVG;
+      button.classList.remove("copy-page-copied");
+    }, 1500);
+  }
+
+  function flashFailed(button) {
+    var previousTitle = button.title;
+    button.title = "Copy failed";
+    button.setAttribute("aria-label", "Copy failed");
+    window.setTimeout(function () {
+      button.title = previousTitle;
+      button.setAttribute("aria-label", previousTitle);
+    }, 2000);
+  }
+
+  function addCopyPageButton() {
+    var rightButtons = document.querySelector(".right-buttons");
+    if (!rightButtons || document.getElementById("copy-page-button")) return;
+
+    var printLink = rightButtons.querySelector('a[href$="print.html"]');
+    var button = document.createElement("a");
+    button.href = "#";
+    button.id = "copy-page-button";
+    button.title = "Copy page";
+    button.setAttribute("aria-label", "Copy page");
+    button.setAttribute("role", "button");
+
+    var icon = document.createElement("span");
+    icon.id = "copy-page-icon";
+    icon.innerHTML = COPY_SVG;
+    button.appendChild(icon);
+
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var text = getPageText();
+      if (!text) {
+        flashFailed(button);
+        return;
+      }
+      Promise.resolve(copyText(text))
+        .then(function () {
+          flashCopied(button, icon);
+        })
+        .catch(function (err) {
+          console.error("Copy page failed:", err);
+          flashFailed(button);
+        });
+    });
+
+    if (printLink) {
+      rightButtons.insertBefore(button, printLink);
+    } else {
+      rightButtons.appendChild(button);
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", addCopyPageButton);
+  } else {
+    addCopyPageButton();
+  }
+})();
+</script>

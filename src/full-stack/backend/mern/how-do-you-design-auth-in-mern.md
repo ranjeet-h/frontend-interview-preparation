@@ -1,111 +1,494 @@
 # How do you design auth in MERN
 
-## Detailed explanation
+## 1. The Real-World Problem — When You Actually Hit This
 
-How do you design auth in MERN is a full-stack integration topic that checks whether frontend and backend contracts work together safely. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Your app has been running fine for months. Users log in, they see their dashboard, everything works. Then one day you get a panicked email from a customer — someone posted as them on your public forum, deleted their data, and changed their email address. You check the logs and see the requests came from a legitimate token, but the user claims they never logged in from that device.
 
-## 1. One-line mental model
+You dig deeper and realize your JWTs live in `localStorage`. A few weeks ago, one of your frontend dependencies had a known XSS vulnerability. An attacker injected a script that read every user's tokens and sent them to an external server. Those tokens don't expire for 30 days, so the attacker can keep using them until you force everyone to re-login.
 
-Make frontend and backend agree on auth, data contracts, errors, retries, and state.
+At the same time, you discover your admin routes only had React route guards — no actual Express middleware. The attacker didn't even need the stolen tokens for admin actions; they just called `/api/admin/delete-user` directly with curl.
 
-## 2. Problem it solves
+This is the moment you realize authentication in MERN is not "store a token and check it on the frontend." It's a complete system of password hashing, short-lived tokens, refresh rotation, server-side enforcement, and revocation — and getting any piece wrong breaks your security.
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+## 2. The Analogy — Make the Mechanic Obvious
 
-## 3. Core idea
+Think of authentication like checking into a hotel.
 
-- Define frontend-backend contract.
-- Handle auth, cookies/tokens, CORS, and errors.
-- Prevent duplicate or stale requests.
-- Map backend validation to frontend UX.
-- Keep contracts versioned and testable.
+**Registration** is creating a guest profile in the hotel's ledger. The front desk writes down your name and stores your room key signature. They don't write down your actual key — they store a scrambled version that proves you have the right key when you return.
 
-## 4. Visual / analogy
+**Login** is the front desk verifying your identity and giving you two things: a day pass that gets you into the building for a few hours, and a reservation stub that lets you get new day passes without showing ID again. The day pass is temporary and easy to lose, but the reservation stub is more valuable and needs to be protected.
 
-```txt
-React UI -> API client -> backend endpoint -> response/error contract -> UI state
+**Protected areas** like the gym or executive floor have security at the elevator. You show your day pass, they verify it's real and not expired, and they let you through. The pass doesn't say who you are — it just proves the front desk issued it to someone with access.
+
+**Authorization** is which floors your key card actually opens. You might have a day pass, but if your card only opens floors 1-5, security stops you at floor 6. This check happens at every restricted elevator, not just at the building entrance.
+
+**Refresh** is when your day pass expires. You go back to the front desk, show your reservation stub, and they issue a new day pass. They also give you a new reservation stub and invalidate the old one — so if someone stole your old stub, it's now useless.
+
+**Logout** is returning your reservation stub. The front desk marks it as used in their system, so even if someone finds it later, they can't get new day passes with it.
+
+React is like the hotel directory in your room — it shows you which floors you're allowed to visit, but it doesn't actually stop you from walking to the wrong floor. Express middleware is the actual security at every elevator.
+
+## 3. The Full Explanation — How It Actually Works
+
+**Registration starts with password hashing.**
+
+When a user registers, React sends their email and password to Express. The server first validates the input with something like Zod — check that the email is actually an email, that the password meets your complexity rules. Then it checks if the email already exists in MongoDB. If everything passes, it hashes the password with bcrypt before storing it.
+
+Bcrypt is slow on purpose. It adds a computational cost factor (usually 10-12) so that hashing a password takes about 100-250ms. This makes brute-force attacks impractical — an attacker trying millions of password combinations would need massive computing power. bcrypt also automatically salts the hash, so two users with the same password get different hashes.
+
+You never store the plain password. You never send it back to the client. The only thing you can do with the stored hash is verify whether a submitted password matches it.
+
+**Login is password verification plus token issuance.**
+
+When a user logs in, Express finds their document by email, then uses `bcrypt.compare` to check the password. If it matches, you issue two tokens: an access token and a refresh token.
+
+The access token is a JWT signed with a secret only your server knows. It lives for 5-15 minutes — short enough that if it's stolen, the attacker has a limited window. The payload only contains the user's ID (`sub`) and their role. Never put secrets, passwords, or PII in a JWT payload because it's just base64-encoded — anyone can read it.
+
+The refresh token is a random string you generate with `crypto.randomBytes`. You hash it with SHA-256 and store that hash in MongoDB (or Redis for better performance at scale). You send the raw refresh token to the client as an httpOnly cookie. The httpOnly flag means JavaScript cannot read it — only the browser sends it automatically with requests. In production, you also set `secure: true` so it only travels over HTTPS, and `sameSite: 'strict'` or `'none'` to prevent CSRF attacks.
+
+The access token goes back in the JSON response body. The client stores it in memory — React state or context — not in localStorage. Memory is cleared when the tab closes, and XSS cannot easily read from React state.
+
+**Protected routes use middleware, not frontend checks.**
+
+Every Express route that requires authentication wraps in `requireAuth` middleware. This middleware pulls the token from the `Authorization` header (which should be `Bearer <token>`), verifies the JWT signature with your secret, checks that it's not expired, and attaches the decoded payload to `req.user`. If anything fails, it returns 401 immediately.
+
+The middleware is reusable — you put it before your route handlers. The route handler then trusts that `req.user` exists and contains valid data.
+
+**Authorization is a separate layer.**
+
+Authentication proves who someone is. Authorization proves what they're allowed to do. You need separate middleware for this — like `requireRole('admin')` that checks `req.user.role` after authentication runs. Or resource ownership checks where you verify that `req.user.id` matches the `userId` on the document they're trying to modify.
+
+This check must run on the server for every sensitive operation. React can hide admin buttons or redirect unauthorized users, but that's only for user experience — not security.
+
+**Refresh keeps users logged in without long-lived tokens.**
+
+When the access token expires (after 5-15 minutes), the client gets a 401 response. The client then POSTs to `/auth/refresh`. The browser automatically sends the httpOnly refresh cookie. The server hashes the incoming refresh token and looks it up in the database. If it exists and hasn't expired, the server issues a new access token and a new refresh token, invalidates the old refresh token (delete it from the DB or mark it used), and sends back the new access token in JSON and the new refresh token as a fresh httpOnly cookie.
+
+This rotation means a stolen refresh token can only be used once. When the real user refreshes, the stolen token is already invalidated.
+
+**Logout is server-side revocation.**
+
+When a user logs out, the client POSTs to `/auth/logout`. The server deletes the refresh token from the database and clears the httpOnly cookie by setting it with an expired date. The access token is still valid until it expires naturally, but it's only 5-15 minutes old, so the risk window is small. If you need immediate revocation, you can maintain a blacklist of access tokens in Redis, but that adds complexity and database load.
+
+**Frontend auth state is for UX, not security.**
+
+React tracks whether the user is logged in using context or state. When the app loads, it calls `/auth/me` with the current access token to get the user's profile. If that fails, it redirects to login. Protected routes in React check this state and redirect if the user isn't authenticated.
+
+This is purely for user experience — it prevents showing admin UI to regular users, or redirecting to a dashboard when the user isn't logged in. But any attacker can bypass React entirely by calling your API directly with curl or Postman. That's why server middleware is the real security boundary.
+
+## 4. See It In Practice — Real Code or Queries
+
+**User model with bcrypt comparison**
+
+```js
+// server/models/User.js
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+
+const userSchema = new mongoose.Schema(
+  {
+    email: { type: String, required: true, unique: true, lowercase: true },
+    passwordHash: { type: String, required: true },
+    role: { type: String, enum: ["user", "admin"], default: "user" },
+  },
+  { timestamps: true }
+);
+
+// Instance method to compare password - bcrypt handles the salting internally
+userSchema.methods.comparePassword = function (plain) {
+  return bcrypt.compare(plain, this.passwordHash);
+};
+
+module.exports = mongoose.model("User", userSchema);
 ```
 
-## 5. Minimal example
+**Refresh token model for rotation and revocation**
 
-```txt
-Input  -> validate
-Work   -> apply MERN backend rule
-Output -> success or structured error
+```js
+// server/models/RefreshToken.js
+const mongoose = require("mongoose");
+
+const refreshTokenSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    tokenHash: { type: String, required: true, index: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { timestamps: true }
+);
+
+// Index to clean up expired tokens automatically
+refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+module.exports = mongoose.model("RefreshToken", refreshTokenSchema);
 ```
 
-## 6. Real-world example
+**Login route with access token and refresh token**
 
-In a production full-stack app, how do you design auth in mern affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+```js
+// server/routes/auth.js
+const router = require("express").Router();
+const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const User = require("../models/User");
+const RefreshToken = require("../models/RefreshToken");
 
-## 7. Common interview questions
+// Sign access token - short-lived, contains minimal data
+function signAccess(user) {
+  return jwt.sign(
+    { sub: user._id.toString(), role: user.role },
+    process.env.JWT_ACCESS_SECRET,
+    { expiresIn: "15m" }
+  );
+}
 
-#### How do you design authentication in a MERN app?
-- **The Engine Mechanism (Why it behaves this way):** Full auth flow: (1) **Register** — React sends POST /auth/register with email/password. Express validates, hashes password with bcrypt, creates user in MongoDB, returns JWT. (2) **Login** — React sends POST /auth/login. Express verifies password with bcrypt.compare(), generates JWT (access + refresh tokens), returns access token and sets refresh token in httpOnly cookie. (3) **Protected requests** — React includes access token in Authorization header. Express auth middleware verifies token, sets req.user. (4) **Token refresh** — on 401, React calls POST /auth/refresh. Express verifies refresh token, issues new access token. (5) **Logout** — React calls POST /auth/logout. Express invalidates refresh token in database.
-- **The Unforgettable Mental Model:** The **Hotel System**. Register = getting a reservation. Login = checking in and getting a room key (access token) + reservation confirmation (refresh token). Protected areas = room key required. Key expired = use reservation to get new key. Checkout = return key and cancel reservation.
-- **The Trap:** Storing access tokens in localStorage — XSS attacks can steal them. Use httpOnly cookies for refresh tokens and short-lived access tokens.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I design MERN auth with JWT-based authentication. Registration validates and hashes passwords with bcrypt. Login verifies credentials and returns a short-lived access token plus a refresh token stored in an httpOnly cookie. Protected routes verify the access token via middleware. When the access token expires, the frontend calls a refresh endpoint that validates the refresh token and issues a new access token. Logout invalidates the refresh token server-side. The frontend uses an API client interceptor to handle token attachment and automatic refresh."
+router.post("/login", async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
 
-#### What's the difference between authentication and authorization in MERN?
-- **The Engine Mechanism (Why it behaves this way):** Authentication (who are you?) happens on both frontend and backend. Frontend checks if a token exists to show/hide UI elements. Backend verifies the token signature to confirm identity. Authorization (what can you do?) also happens on both layers. Frontend hides/disables UI elements based on user role. Backend enforces role checks in middleware before processing requests. Frontend auth is UX — backend auth is security. Frontend authorization can be bypassed; backend authorization cannot.
-- **The Unforgettable Mental Model:** **ID Check vs. Access Level**. Authentication is checking your ID at the door (both frontend and backend verify who you are). Authorization is checking your clearance level — frontend hides restricted rooms from your view, backend locks the doors so you can't enter even if you know they exist.
-- **The Trap:** Relying only on frontend auth/authorization. A user can bypass React's route protection and directly call API endpoints. Backend enforcement is the only real security.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Authentication verifies identity — frontend checks for a token to show the right UI, backend verifies the token signature to confirm identity. Authorization verifies permissions — frontend hides restricted UI elements, backend enforces role checks in middleware. Frontend auth is for UX, backend auth is for security. Frontend can be bypassed; backend cannot. I implement both: frontend for a good user experience, backend for actual security."
+    // Use generic error message to prevent email enumeration
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({
+        error: { code: "INVALID_CREDENTIALS", message: "Invalid email or password" },
+      });
+    }
 
-#### How do you handle auth state in React?
-- **The Engine Mechanism (Why it behaves this way):** Use React Context or a state management library (Zustand) to track auth state globally: `const AuthContext = createContext(); const AuthProvider = ({ children }) => { const [user, setUser] = useState(null); const [loading, setLoading] = useState(true); useEffect(() => { const checkAuth = async () => { try { const res = await api.get('/auth/me'); setUser(res.data); } catch { setUser(null); } finally { setLoading(false); } }; checkAuth(); }, []); ... };`. The provider checks auth status on app load, provides login/logout functions, and makes user data available to all components. Protected routes check `user` state before rendering.
-- **The Unforgettable Mental Model:** The **Building Directory**. The auth context is the directory at the entrance — it tells everyone who's in the building (user state), whether they're verified (authenticated), and what floors they can access (roles). Every room (component) checks the directory.
-- **The Trap:** Checking auth state synchronously on app load — the check is async (API call), so you need a loading state to prevent showing unauthenticated UI briefly before the check completes.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use React Context to manage auth state globally. On app load, I call /auth/me to verify the current session. I track user, loading, and isAuthenticated state. Protected routes check these states before rendering. Login sets the user state, logout clears it. The key is handling the loading state — without it, the app briefly shows unauthenticated UI while the auth check is in progress. I also handle token refresh failures by clearing auth state and redirecting to login."
+    // Generate short-lived access token
+    const accessToken = signAccess(user);
 
-#### How do you implement protected routes in React?
-- **The Engine Mechanism (Why it behaves this way):** Create a wrapper component: `const ProtectedRoute = ({ children }) => { const { user, loading } = useAuth(); if (loading) return <Spinner />; if (!user) return <Navigate to="/login" replace />; return children; };`. Use in router: `<Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />`. For role-based protection: `const AdminRoute = ({ children }) => { const { user } = useAuth(); if (user?.role !== 'admin') return <Navigate to="/" replace />; return children; };`. The `replace` prop prevents the user from navigating back to the protected page after redirect.
-- **The Unforgettable Mental Model:** The **Security Gate**. Before entering a restricted area (protected route), the gate (ProtectedRoute) checks your credentials (auth context). If valid, you pass through (children render). If not, you're redirected to the lobby (login page).
-- **The Trap:** Not handling the loading state — if loading is true and user is null, the route redirects to login even though the user might be authenticated (the check hasn't completed yet).
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I create a ProtectedRoute component that checks auth state from context. If loading, show a spinner. If not authenticated, redirect to login. If authenticated, render the children. For role-based protection, I create AdminRoute that additionally checks the user's role. I use the replace prop on Navigate to prevent back-navigation to protected pages. The critical detail is handling the loading state — without it, users get redirected to login during the initial auth check."
+    // Generate random refresh token and hash it for storage
+    const refreshRaw = crypto.randomBytes(40).toString("hex");
+    const refreshHash = crypto.createHash("sha256").update(refreshRaw).digest("hex");
 
-#### How do you handle session persistence across page refreshes?
-- **The Engine Mechanism (Why it behaves this way):** On app load, call a /auth/me or /auth/session endpoint that verifies the current session (via httpOnly cookie or stored token) and returns user data. The auth provider runs this check in a useEffect on mount. If the session is valid, set user state. If invalid or expired, clear auth state. For httpOnly cookies, the browser sends them automatically — no token storage needed. For localStorage tokens, read the token on load and include it in the /auth/me request. The loading state prevents UI flicker during the check.
-- **The Unforgettable Mental Model:** The **Memory Test**. After a nap (page refresh), you check your pockets (session) to see if you still have your ID (auth). If yes, you continue. If no, you go back to get a new one (login).
-- **The Trap:** Assuming the user is still authenticated after a page refresh without verifying with the backend. Tokens can expire or be invalidated server-side.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: On app load, I call /auth/me to verify the current session. For httpOnly cookies, the browser sends them automatically. For stored tokens, I include them in the request. If the session is valid, I set the user state. If not, I clear auth state and redirect to login. I track a loading state during this check to prevent showing unauthenticated UI briefly. This ensures session persistence across page refreshes while always verifying with the backend."
+    // Store hash in DB for revocation and rotation
+    await RefreshToken.create({
+      userId: user._id,
+      tokenHash: refreshHash,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+    });
 
-## 8. Active recall test
+    // Set httpOnly cookie - JavaScript cannot read this
+    res.cookie("refreshToken", refreshRaw, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production", // HTTPS only in production
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
 
-1. **What is the full MERN auth flow?**
-   - **Explanation:** Register (hash password, create user), Login (verify password, issue JWT), Protected requests (verify token), Token refresh (validate refresh token, issue new access token), Logout (invalidate refresh token).
+    // Return access token in body (client stores in memory)
+    res.json({
+      data: {
+        accessToken,
+        user: { id: user._id, email: user.email, role: user.role },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+```
 
-2. **Why is backend auth enforcement more important than frontend?**
-   - **Explanation:** Frontend auth can be bypassed by directly calling API endpoints. Backend auth is the security boundary — it's the only enforcement that actually protects data.
+**Refresh endpoint with token rotation**
 
-3. **How do you manage auth state in React?**
-   - **Explanation:** Use React Context or Zustand. On app load, call /auth/me to verify session. Track user, loading, and isAuthenticated state. Provide login/logout functions globally.
+```js
+router.post("/refresh", async (req, res, next) => {
+  try {
+    const refreshRaw = req.cookies.refreshToken;
+    if (!refreshRaw) {
+      return res.status(401).json({
+        error: { code: "MISSING_REFRESH", message: "Refresh token required" },
+      });
+    }
 
-4. **What does a ProtectedRoute component do?**
-   - **Explanation:** Checks auth state — if loading, shows spinner; if not authenticated, redirects to login; if authenticated, renders children. For role-based protection, additionally checks user role.
+    const refreshHash = crypto.createHash("sha256").update(refreshRaw).digest("hex");
+    const tokenRecord = await RefreshToken.findOne({ tokenHash: refreshHash });
 
-5. **How do you handle session persistence after page refresh?**
-   - **Explanation:** Call /auth/me on app load to verify the current session. Use a loading state during the check. If valid, restore user state. If invalid, clear auth and redirect to login.
+    if (!tokenRecord || new Date() > tokenRecord.expiresAt) {
+      return res.status(401).json({
+        error: { code: "INVALID_REFRESH", message: "Invalid or expired refresh token" },
+      });
+    }
 
-## 9. Mistakes / traps
+    const user = await User.findById(tokenRecord.userId);
+    if (!user) {
+      return res.status(401).json({
+        error: { code: "USER_NOT_FOUND", message: "User not found" },
+      });
+    }
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+    // Issue new access token
+    const accessToken = signAccess(user);
 
-## 10. Compare with related concepts
+    // Rotate refresh token - invalidate old, issue new
+    await RefreshToken.deleteOne({ _id: tokenRecord._id });
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+    const newRefreshRaw = crypto.randomBytes(40).toString("hex");
+    const newRefreshHash = crypto.createHash("sha256").update(newRefreshRaw).digest("hex");
 
-## 11. Summary from memory
+    await RefreshToken.create({
+      userId: user._id,
+      tokenHash: newRefreshHash,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
 
-Explain How do you design auth in MERN in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+    res.cookie("refreshToken", newRefreshRaw, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
 
-## 12. Spaced revision prompts
+    res.json({ data: { accessToken } });
+  } catch (err) {
+    next(err);
+  }
+});
+```
 
-- Day 1: Define How do you design auth in MERN in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**Logout with server-side revocation**
+
+```js
+router.post("/logout", async (req, res, next) => {
+  try {
+    const refreshRaw = req.cookies.refreshToken;
+    if (refreshRaw) {
+      const refreshHash = crypto.createHash("sha256").update(refreshRaw).digest("hex");
+      await RefreshToken.deleteOne({ tokenHash: refreshHash });
+    }
+
+    // Clear cookie by setting it with expired date
+    res.clearCookie("refreshToken");
+    res.json({ data: { message: "Logged out successfully" } });
+  } catch (err) {
+    next(err);
+  }
+});
+```
+
+**Authentication middleware for protected routes**
+
+```js
+// server/middleware/requireAuth.js
+const jwt = require("jsonwebtoken");
+
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
+
+  if (!token) {
+    return res.status(401).json({
+      error: { code: "UNAUTHORIZED", message: "Missing authorization token" },
+    });
+  }
+
+  try {
+    const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+    req.user = { id: payload.sub, role: payload.role };
+    next();
+  } catch (err) {
+    return res.status(401).json({
+      error: { code: "TOKEN_EXPIRED", message: "Invalid or expired token" },
+    });
+  }
+}
+
+function requireRole(role) {
+  return (req, res, next) => {
+    if (!req.user || req.user.role !== role) {
+      return res.status(403).json({
+        error: { code: "FORBIDDEN", message: "Insufficient permissions" },
+      });
+    }
+    next();
+  };
+}
+
+module.exports = { requireAuth, requireRole };
+```
+
+**Using middleware in protected routes**
+
+```js
+// server/routes/users.js
+const router = require("express").Router();
+const { requireAuth, requireRole } = require("../middleware/requireAuth");
+const User = require("../models/User");
+
+// Public route
+router.get("/public", (req, res) => {
+  res.json({ data: { message: "Anyone can see this" } });
+});
+
+// Protected route - requires authentication
+router.get("/profile", requireAuth, async (req, res) => {
+  const user = await User.findById(req.user.id).select("-passwordHash");
+  res.json({ data: user });
+});
+
+// Admin-only route - requires authentication + admin role
+router.delete("/:id", requireAuth, requireRole("admin"), async (req, res) => {
+  await User.findByIdAndDelete(req.params.id);
+  res.json({ data: { message: "User deleted" } });
+});
+
+module.exports = router;
+```
+
+**React auth provider for frontend state**
+
+```tsx
+// client/src/auth/AuthProvider.tsx
+import { createContext, useContext, useEffect, useState } from "react";
+import { api } from "../lib/apiClient";
+
+type User = { id: string; email: string; role: string };
+
+interface AuthContextType {
+  user: User | null;
+  accessToken: string | null;
+  setAccessToken: (token: string | null) => void;
+  logout: () => void;
+}
+
+const AuthCtx = createContext<AuthContextType>({
+  user: null,
+  accessToken: null,
+  setAccessToken: () => {},
+  logout: () => {},
+});
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+
+  // Fetch user profile whenever access token changes
+  useEffect(() => {
+    if (!accessToken) {
+      setUser(null);
+      return;
+    }
+
+    api<{ data: User }>("/auth/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then((r) => setUser(r.data))
+      .catch(() => {
+        setUser(null);
+        setAccessToken(null);
+      });
+  }, [accessToken]);
+
+  const logout = () => {
+    api.post("/auth/logout").catch(() => {});
+    setAccessToken(null);
+    setUser(null);
+  };
+
+  return (
+    <AuthCtx.Provider value={{ user, accessToken, setAccessToken, logout }}>
+      {children}
+    </AuthCtx.Provider>
+  );
+}
+
+export const useAuth = () => useContext(AuthCtx);
+```
+
+## 5. Interview Questions — All of Them, Done Properly
+
+**Q: Walk through the complete authentication flow in a MERN application.**
+
+Registration starts with React sending email and password to Express. The server validates input, checks for duplicate emails, hashes the password with bcrypt, and stores the hash in MongoDB. Login does the reverse — Express finds the user by email, uses bcrypt.compare to verify the password, then issues two tokens: a short-lived access JWT (5-15 minutes) returned in the JSON body, and a refresh token sent as an httpOnly cookie. The refresh token hash is stored in MongoDB for rotation and revocation. Protected routes use Express middleware to verify the JWT from the Authorization header, attaching the decoded user to req.user. When the access token expires, the client calls /auth/refresh — the httpOnly cookie is sent automatically, the server validates it against the DB, issues a new access token and a new refresh token while invalidating the old one. Logout deletes the refresh token from the DB and clears the cookie. React maintains auth state in context for UX, but all security enforcement happens on the server.
+
+**Q: What's the difference between authentication and authorization in MERN?**
+
+Authentication answers "who is this user?" — it's the process of verifying identity, typically through login, token verification, and middleware like requireAuth that ensures the request comes from a valid user. Authorization answers "what is this user allowed to do?" — it's checking permissions after you know who they are, like requireRole('admin') or verifying that req.user.id matches the resource owner. Both must run on Express middleware. React can hide UI elements based on permissions for better UX, but that doesn't enforce security — an attacker can always call your API directly.
+
+**Q: Where should you store passwords, access tokens, and refresh tokens?**
+
+Passwords should never be stored in plain text. Hash them with bcrypt (cost factor 10-12) and store only the hash in MongoDB. Access tokens are short-lived JWTs — store them in React memory (state or context), never in localStorage, because XSS can read localStorage. Refresh tokens are long-lived secrets — store them in httpOnly, secure, sameSite cookies so JavaScript cannot read them, and store a hash of each refresh token in MongoDB or Redis for rotation and revocation. The hash allows you to validate tokens without storing the raw value, and lets you invalidate tokens by deleting the hash.
+
+**Q: Why use short access tokens with refresh tokens instead of one long-lived token?**
+
+Short access tokens limit the damage if they're stolen. A token that expires in 15 minutes gives an attacker a very small window. Refresh tokens allow users to stay logged in without constantly re-entering passwords, but they're protected differently — stored in httpOnly cookies (harder to steal via XSS) and rotated on every use. If you used one long-lived token (like a 30-day JWT in localStorage), stealing it gives the attacker full access for a month with no way to revoke it. The short-access + refresh pattern gives you the security of short-lived tokens with the UX of long-lived sessions.
+
+**Q: How do you handle "remember me" functionality?**
+
+"Remember me" just means longer refresh token TTL — instead of 7 days, you might use 30 days. The security trade-off is that a stolen refresh token remains valid longer. You can mitigate this by adding device or IP fingerprinting to the refresh token record, so a refresh request from an unknown device triggers additional verification (like re-entering password or 2FA). You should also provide a "revoke all sessions" feature in user settings that deletes all refresh tokens for that user, forcing them to log in again everywhere. The core pattern doesn't change — you still rotate refresh tokens and store hashes server-side.
+
+**Q: What happens if an attacker steals a refresh token?**
+
+If you're not rotating refresh tokens, the attacker can keep getting new access tokens until the refresh token expires. That's why rotation is critical — when the real user refreshes, the server issues a new refresh token and invalidates the old one. The attacker's stolen token stops working immediately. If the attacker uses the stolen token before the real user does, they invalidate the real user's session — the real user will be forced to log in again, which is annoying but not a security breach. This is the "detect and respond" pattern: token theft causes a logout, not permanent compromise. You can add heuristics like detecting refresh from a new IP or device and requiring re-authentication, but rotation is the baseline protection.
+
+**Q: Should you put user data in the JWT payload?**
+
+Only put minimal, non-sensitive data in JWT payloads — things like user ID (`sub`) and role are fine. Never put passwords, email addresses, PII, or any secrets. JWT payloads are just base64-encoded, not encrypted — anyone who has the token can decode and read the payload. Also, larger payloads mean larger tokens on every request. If you need user data on the client, fetch it from an endpoint like `/auth/me` after validating the token. The JWT should only contain what the middleware needs to attach to req.user.
+
+## 6. The Traps — What Goes Wrong in Production
+
+**Storing JWTs in localStorage is the most common security hole.**
+
+Many developers put access tokens in localStorage because it's easy — it persists across page reloads and you can access it from any tab. But any XSS vulnerability, including compromised npm dependencies, can read localStorage and exfiltrate tokens. The attacker then has full access until the token expires. If you're using long-lived tokens (days or weeks), the damage window is huge. The fix is short access tokens in memory and refresh tokens in httpOnly cookies.
+
+**Skipping server-side refresh token revocation.**
+
+If you issue refresh tokens but don't store them server-side, you can't revoke them. A stolen refresh token works until it naturally expires. If a user reports suspicious activity or changes their password, you have no way to invalidate their existing sessions. The fix is storing hashed refresh tokens in MongoDB or Redis, deleting them on logout, and optionally providing a "revoke all sessions" button that wipes all tokens for that user.
+
+**Putting sensitive data in JWT payloads.**
+
+Developers sometimes put email, name, or other user data in JWTs to avoid database lookups. But JWTs are not encrypted — they're just signed. Anyone with the token can decode the payload and read everything. This leaks PII and makes debugging easier for attackers. Only put the minimum data needed for authorization: user ID and role. Everything else should come from the database.
+
+**Only protecting routes on the frontend.**
+
+React Router can redirect unauthorized users away from admin pages, but that's just UX. An attacker can call `/api/admin/delete-user` directly with curl, and React never runs. Every sensitive route must have Express middleware checking authentication and authorization. The frontend guards are for user experience only — they prevent showing UI the user can't use, but they don't enforce security.
+
+**Trusting role or user ID from the client.**
+
+Never accept `role` or `userId` from request bodies or query parameters. An attacker can send `{ role: 'admin' }` in their request and promote themselves. Always read these values from the verified JWT payload or from the database after authentication. The middleware should attach `req.user` from the token, and all authorization checks should use that.
+
+**Using the same secret for access and refresh tokens.**
+
+Access tokens and refresh tokens should use different signing secrets. If an attacker somehow steals your signing secret (through a server breach or misconfigured environment variable), they can forge both token types. Using separate secrets limits the blast radius — compromising one doesn't automatically compromise the other.
+
+**Not rotating refresh tokens.**
+
+If you use the same refresh token indefinitely, stealing it gives permanent access until expiry. Every refresh request should issue a new refresh token and invalidate the old one. This way, a stolen token can only be used once — either the attacker uses it (invalidating the real user's session) or the real user uses it (invalidating the attacker's token). Either way, the theft is detected and contained.
+
+**Sending access tokens in cookies instead of Authorization headers.**
+
+If you put access tokens in cookies, you lose the ability to easily set different lifetimes, and you're more vulnerable to CSRF attacks. The Authorization header pattern is standard and easier to control. Keep access tokens in memory and send them via the Bearer header. Only refresh tokens go in httpOnly cookies.
+
+**Forgetting to set secure and sameSite on cookies.**
+
+In production, cookies must have `secure: true` so they only travel over HTTPS. Without this, a man-in-the-middle attacker on the same network can intercept cookies. The `sameSite` attribute prevents CSRF attacks by restricting when cookies are sent with cross-site requests. In production, use `sameSite: 'none'` if your frontend and backend are on different domains, or `'strict'` if they're on the same domain.
+
+**Using generic error messages that leak information.**
+
+Returning "User not found" on login tells attackers which emails exist in your system. Use the same message for both "user not found" and "wrong password" — something like "Invalid email or password." This prevents email enumeration attacks where attackers try many emails to find valid accounts.
+
+## 7. Compare With Related Concepts
+
+**JWT access tokens vs session-based authentication**
+
+JWTs are stateless — the server doesn't need to store them or look them up in a database. This scales horizontally because any server instance can verify the signature using the shared secret. But JWTs are hard to revoke before they expire, and you can't invalidate them without maintaining a blacklist. Session-based auth stores a session ID in a cookie and the session data in a database or Redis. This makes revocation easy (just delete the session), but every request requires a database lookup, which can become a bottleneck at scale. The MERN hybrid pattern — short JWTs for access, server-stored refresh tokens for rotation — gives you the scaling benefits of JWTs with the revocation capability of sessions.
+
+**OAuth (Google/GitHub login) vs email/password auth**
+
+OAuth doesn't replace your auth system — it just replaces the identity verification step. When a user logs in with Google, Google tells you "this person is who they say they are," but you still need to issue your own access and refresh tokens, store a user record in MongoDB, and enforce your own authorization rules. The flow is: user clicks "Login with Google" → redirect to Google → user approves → Google redirects back with an authorization code → your server exchanges that code for user info → you create or find the user in MongoDB → you issue your own tokens. OAuth reduces your responsibility for password storage and recovery, but your backend auth architecture doesn't change much.
+
+**Passport.js vs custom authentication middleware**
+
+Passport.js is a library that standardizes authentication strategies — it has pre-built strategies for local passwords, OAuth providers, SAML, and more. It handles the boilerplate of callback URLs, token exchange, and session management. For simple email/password with JWT, custom middleware is often simpler and gives you more control. But if you need multiple authentication methods (password, Google, GitHub, SAML) or you're using OAuth, Passport saves a lot of work. The underlying pattern — verify credentials, issue tokens, protect routes with middleware — is the same either way.
+
+**bcrypt vs other password hashing algorithms**
+
+bcrypt is the default choice because it's deliberately slow and includes a built-in work factor you can adjust as hardware gets faster. Argon2 is newer and considered more secure against GPU-based attacks, but bcrypt is still widely used and battle-tested. SHA-256 or MD5 are wrong choices for passwords — they're too fast, making brute-force attacks trivial. Never roll your own password hashing. bcrypt with a cost factor of 10-12 is the standard for MERN apps.
+
+**Authorization at the route level vs at the resource level**
+
+Route-level authorization uses middleware like `requireRole('admin')` on entire route groups. This is simple but coarse-grained — all routes under that prefix require the same role. Resource-level authorization checks ownership per request — like verifying that `req.user.id === post.authorId` before allowing a post update. You often need both: route-level checks for broad permissions (admin area, user dashboard) and resource-level checks for fine-grained permissions (users can only edit their own posts). Never rely solely on route-level checks if users can access resources they don't own.
+
+## 8. 🧠 The Memory Hook
+
+Auth is hotel check-in: bcrypt ledger for passwords, 15-minute day pass (access JWT in memory), reservation stub (refresh token in httpOnly cookie + DB hash). React shows which elevator buttons exist for UX, but Express middleware owns the actual locks.

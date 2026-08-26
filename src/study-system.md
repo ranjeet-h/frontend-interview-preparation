@@ -1,78 +1,33 @@
 # Study System
 
-This mdBook uses one memory-first structure for concept chapters. Every new concept page should follow this format unless it is clearly a landing page, pure coding challenge, output question, source map, or index.
+This book is rewritten one leaf page at a time. Speed comes from many workers in parallel. Quality comes from each worker reading one full page and teaching it properly. Never generate a folder of pages from a script or a shared template fill-in.
 
-## Concept Chapter Template
+## Where the full format lives
 
-```md
-# Concept Name
+Workers do not invent the chapter shape. They read this plan section and follow it:
 
-## Detailed explanation
-Explain the concept properly before the learning sections. This should be the first real teaching block: define the concept, explain how it works, when it appears in real projects, and why interviewers care about it.
+`docs/superpowers/plans/2026-08-25-sequential-study-note-rewrite.md`
 
-## 1. One-line mental model
-Explain the concept in one simple sentence.
+Heading: **Canonical Type A–E Rewrite Spec**
 
-## 2. Problem it solves
-What pain existed before this concept?
+That section contains the complete Type A, B, C, D, and E writing instructions, the exact markdown headings, and the rules that apply to every page.
 
-## 3. Core idea
-Explain the concept in 3-5 clear points.
+## How work is assigned
 
-## 4. Visual / analogy
-Use one diagram, analogy, or flow.
+The master agent owns the queue. It hands each worker exactly one markdown file. Several workers can run at once on different files. A worker that finishes does not grab “the rest of the folder.” The master assigns the next file.
 
-## 5. Minimal example
-Show the smallest possible working example.
+Skip indexes, `SUMMARY.md`, include-only dumps, and multi-question banks. Those are not one topic.
 
-## 6. Real-world example
-Show how it appears in production code.
+## Detect the topic type first
 
-## 7. Common interview questions
-Add 5-10 questions.
+Read the page. Pick exactly one type before writing:
 
-## 8. Active recall test
-Ask questions without answers first.
+- **Type A — Concept / Theory.** How something works: JS runtime, React, HTTP, caching, auth flows.
+- **Type B — Coding Problem.** Implement something: algorithms, polyfills, hooks, APIs.
+- **Type C — Output / Predict the Result.** What does this code print, and why, in engine order.
+- **Type D — System Design.** Design a real service at scale.
+- **Type E — Database / Backend Pattern.** Indexes, transactions, ORMs, Node/FastAPI patterns, API design.
 
-## 9. Mistakes / traps
-Mention common wrong answers and misconceptions.
+Then apply the matching format from the canonical spec. Do not keep the old 12-section template. Do not use `Engine Mechanism` or `Senior Interview Playbook`.
 
-## 10. Compare with related concepts
-Explain what it is not.
-
-## 11. Summary from memory
-Ask the reader to explain the concept in their own words.
-
-## 12. Spaced revision prompts
-Create quick revision questions for later.
-```
-
-## Chapter Type Rules
-
-- **Concept chapters:** use the 12-section template exactly.
-- **Question banks:** may group many questions, but each detailed answer should still use the same mental-model, problem, example, traps, and comparison flow.
-- **Coding challenge chapters:** keep problem, constraints, solution, walkthrough, complexity, traps, and follow-ups.
-- **Output question chapters:** keep question, prediction, answer, why, trap, and variation.
-- **Index pages:** only navigation and study guidance.
-- **Legacy source include pages:** acceptable during migration, but new hand-written material should use the 12-section template.
-
-## Cross-topic principles
-
-- Start with the idea, not the answer.
-- Explain the invariant in plain language.
-- Use one worked example before optimizing.
-- Compare trade-offs explicitly.
-- Transfer the pattern to similar questions instead of memorizing isolated answers.
-
-## Track design rules
-
-- Every new domain starts with a landing page before it gets many chapters.
-- Keep the chapter map and source map aligned whenever a track grows.
-- Split large topics into smaller pages instead of extending one file forever.
-
-## Difficulty-aware depth
-
-- **Easy**: concise but complete walkthrough, traps, and recap.
-- **Medium**: clearer state tracking and stronger invariants.
-- **Hard**: proof-oriented reasoning, comparisons, and edge cases.
-- **Very hard**: decomposition, multiple examples, and failure-mode analysis.
+Open with the problem, not a definition. Write as long as the topic needs. Analogies must match the mechanic. Code must be correct. The memory hook is a sticky insight, not a restated definition.

@@ -1,9 +1,11 @@
 # CSS
 
-> **Canonical chapter for CSS.** HTML structure → [HTML](html.md). Web performance → [Web Concepts](web-concepts.md).
+Study pages for layout, specificity, and positioning. Each topic is a standalone chapter in Type A format.
 
-Covers the CSS box model, specificity, Flexbox vs Grid, pseudo-classes vs pseudo-elements, and positioning.
+## Topics
 
----
-
-{{#include ../../01-html-css-web-concepts.md:103:178}}
+- [Box Model](css/box-model.md)
+- [Specificity](css/specificity.md)
+- [Flexbox and Grid](css/layout-flexbox-grid.md)
+- [Pseudo-classes and Pseudo-elements](css/pseudo-classes-elements.md)
+- [Positioning](css/positioning.md)

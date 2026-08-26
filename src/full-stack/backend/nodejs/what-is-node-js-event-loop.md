@@ -1,126 +1,212 @@
 # What is Node.js event loop
 
-## Detailed explanation
+## 1. Why This Exists — The Problem First
 
-What is Node.js event loop is a core Node.js topic that interviewers use to check whether you can connect definitions to production backend behavior. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+You wrote async code. You used `Promise`, `setTimeout`, and `await`. It works in tests. In production, logs appear in a "wrong" order. A bug only shows up when two requests overlap. A `setImmediate` callback never seems to run because I/O never stops.
 
-## 1. One-line mental model
+The confusion is not JavaScript syntax—it is **when** your callbacks actually run. Node.js does not run async code on new threads. It runs one JavaScript thread and a **scheduler** that decides which callback goes next when the current function finishes.
 
-Understand what is node.js event loop by linking what it is, why it exists, and how it fails in production.
+That scheduler is the **event loop**. Misunderstand it and you mis-debug concurrency, starve I/O, or block every user with one synchronous loop.
 
-## 2. Problem it solves
+## 2. The Analogy — Make It Obvious
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+Picture a **conveyor belt with inspection stations** (phases).
 
-## 3. Core idea
+A worker (V8) stands at the belt and can only handle **one box at a time** (one call stack frame). When the worker's hands are empty (stack empty), they look at the next station:
 
-- Define the concept in backend terms.
-- Explain the problem it solves.
-- Show where it appears in real services.
-- Call out security, performance, or reliability impact.
-- Compare it with nearby concepts.
+- **Timers station** — boxes labeled "run after 5 seconds"
+- **Poll station** — boxes from trucks that just arrived (network data, finished disk reads)
+- **Check station** — boxes labeled "run after I/O this turn"
 
-## 4. Visual / analogy
+Between stations, a **priority cart** rolls through: first [process.nextTick](./what-is-process-nexttick.md) boxes, then Promise boxes (microtasks). Those carts run **between every station**—before the worker moves to the next phase.
 
-```txt
-Request/API/service -> concept applied -> safer production behavior
+The belt keeps moving as long as there are boxes, timers, or trucks expected. When everything is idle and no I/O is pending, the process can exit.
+
+The event loop is not "a queue." It is this **round of stations**, with microtasks interrupting between stations.
+
+## 3. How It Actually Works — The Full Explanation
+
+The Node.js event loop is implemented by [libuv](./what-is-libuv.md). It coordinates:
+
+- The **call stack** (synchronous JavaScript V8 is executing)
+- **Microtask queues** (`process.nextTick`, then Promises)
+- **Phase queues** (timers, I/O, `setImmediate`, close callbacks)
+
+See [event loop phases](./what-are-event-loop-phases.md) for the full phase list.
+
+### Basic algorithm
+
+1. Run synchronous code until the call stack is empty.
+2. Drain **all** `process.nextTick` callbacks (if any schedule more, drain again—dangerous if recursive).
+3. Drain **all** Promise microtasks (`.then`, `await` continuations).
+4. Enter the next event loop phase; run callbacks in that phase's queue until empty or phase-specific limits.
+5. After each phase, repeat steps 2–3 (microtasks between phases).
+6. Repeat until no work remains.
+
+### Call stack vs callback queues
+
+When you call `setTimeout(fn, 0)`, `fn` is **not** run immediately. It is registered for a future timers phase. When you `await fetch(...)`, the continuation after await is a microtask.
+
+The event loop's job: whenever the stack clears, feed it the next callback according to priority rules.
+
+### Single-threaded JavaScript
+
+All your route handlers, middleware, and `console.log` in callbacks run on **one thread**. Long CPU work in any callback delays every other callback—there is no fair per-request threading.
+
+I/O waiting does not occupy that thread; [non-blocking I/O](./what-is-non-blocking-i-o.md) delegates waiting to libuv/OS.
+
+### Relationship to `async/await`
+
+`async function` returns a Promise. `await` suspends the function and schedules the rest as a microtask when the awaited Promise settles. Other event loop work can run during the wait.
+
+### When the process exits
+
+`process.exit()` forces exit. Otherwise Node stays alive while:
+
+- Active handles (servers, open sockets, timers) exist
+- libuv expects I/O
+- Ref'd timers/intervals are pending
+
+### Event loop lag
+
+If synchronous code runs too long, the loop cannot advance phases promptly—**lag** increases. Monitor with `perf_hooks.monitorEventLoopDelay()`. This is the top Node-specific health metric.
+
+## 4. Real Code — See It Working
+
+**Classic ordering demo:**
+
+```js
+// loop-order.js
+console.log('sync 1');
+
+setTimeout(() => console.log('timeout'), 0);
+
+setImmediate(() => console.log('immediate'));
+
+Promise.resolve().then(() => console.log('promise'));
+
+process.nextTick(() => console.log('nextTick'));
+
+console.log('sync 2');
 ```
 
-## 5. Minimal example
+Output:
 
-```txt
-Input  -> validate
-Work   -> apply Node.js rule
-Output -> success or structured error
+```
+sync 1
+sync 2
+nextTick
+promise
+timeout
+immediate
 ```
 
-## 6. Real-world example
+**Microtask starvation (do not do this in production):**
 
-In a production full-stack app, what is node.js event loop affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+```js
+// starvation.js
+let count = 0;
+function spin() {
+  process.nextTick(() => {
+    count += 1;
+    if (count < 1_000_000) spin();
+  });
+}
+spin();
 
-## 7. Common interview questions
+setTimeout(() => console.log('timer finally'), 0);
+// timer may be very delayed — nextTick queue never lets phases advance cleanly
+```
 
-#### What is the Node.js event loop?
-- **The Engine Mechanism (Why it behaves this way):** The Node.js event loop is a single-threaded loop that monitors the call stack and callback queue. When the call stack is empty, the event loop picks the next callback from the queue and pushes it onto the stack for execution. The event loop runs in phases managed by libuv: timers (setTimeout/setInterval), pending callbacks, idle/prepare, poll (I/O callbacks), check (setImmediate), and close callbacks. Each phase has its own FIFO queue. The event loop continues cycling through phases as long as there are pending callbacks, active timers, or ongoing I/O operations. When all work is done, the process exits.
-- **The Unforgettable Mental Model:** The **Conveyor Belt Inspector**. The event loop is like an inspector on a conveyor belt — it checks each station (phase), processes items (callbacks) at that station, then moves to the next station. The belt keeps running as long as there are items to process.
-- **The Trap:** Thinking the event loop is a simple first-come-first-served queue. It's a phased loop — different callback types execute in different phases.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The Node.js event loop is a single-threaded loop that processes callbacks in phases managed by libuv. When the call stack is empty, it picks callbacks from the queue and executes them. The phases are: timers, pending callbacks, idle/prepare, poll (I/O), check (setImmediate), and close. Each phase has its own FIFO queue. The event loop keeps cycling as long as there's work to do. Understanding the phases helps me predict callback execution order and debug timing issues."
+**Event loop delay monitor:**
 
-#### Why does the event loop matter in backend/full-stack systems?
-- **The Engine Mechanism (Why it behaves this way):** The event loop is the heart of Node.js's non-blocking architecture. Its efficiency determines how many concurrent requests the server can handle. Blocking the event loop (synchronous operations, CPU-heavy computations) freezes all concurrent requests. Understanding the event loop helps you write non-blocking code, debug timing issues, and optimize performance. In production, event loop lag is the most important metric — it indicates blocking operations that degrade user experience.
-- **The Unforgettable Mental Model:** The **Heartbeat**. The event loop is like the heart of Node.js — each cycle is a heartbeat. If the heart skips (blocking), the whole body (service) suffers.
-- **The Trap:** Not understanding that the event loop is single-threaded — all JavaScript code runs on the same thread, so one slow operation blocks everything.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The event loop is the heart of Node.js's non-blocking architecture. Its efficiency determines concurrent request handling. Blocking the event loop freezes all requests — I never use synchronous operations in request handlers. I monitor event loop lag in production — it's the most important metric, indicating blocking. Understanding the event loop helps me write non-blocking code, debug timing issues, and optimize performance. For CPU-heavy work, I use worker threads or offload to separate services."
+```js
+// loop-delay.js
+const { monitorEventLoopDelay } = require('perf_hooks');
+const h = monitorEventLoopDelay({ resolution: 10 });
+h.enable();
 
-#### What is a simple implementation or design?
-- **The Engine Mechanism (Why it behaves this way):** The event loop design is: execute JavaScript → call stack empties → event loop checks phases → executes callbacks → repeat. In code: `setTimeout(() => console.log('timer'), 0); setImmediate(() => console.log('immediate')); Promise.resolve().then(() => console.log('promise'))`. Output order: promise (microtask), timer (timers phase), immediate (check phase). Microtasks (Promises, process.nextTick) run between phases, not during phases. This ordering is critical for understanding async code behavior.
-- **The Unforgettable Mental Model:** The **Priority Queue**. The event loop is like a priority queue — microtasks (Promises) have highest priority (run between phases), timers run in the timers phase, I/O callbacks run in the poll phase, and setImmediate runs in the check phase.
-- **The Trap:** Assuming `setTimeout(fn, 0)` runs before `setImmediate(fn)`. In the first iteration, setImmediate runs first. In subsequent iterations (inside I/O callbacks), setTimeout runs first.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The event loop executes JavaScript, then processes callbacks in phases. Microtasks (Promises, process.nextTick) run between phases — they have highest priority. The execution order is: microtasks → timers → I/O callbacks → setImmediate. I demonstrate with `setTimeout`, `setImmediate`, and `Promise` — the output order shows the phase priority. Understanding this ordering is critical for debugging async code and predicting callback execution."
+setInterval(() => {
+  console.log('p99 ms', (h.percentile(99) / 1e6).toFixed(2));
+  h.reset();
+}, 1000);
+```
 
-#### What edge cases can break it?
-- **The Engine Mechanism (Why it behaves this way):** The blocking operation bug: synchronous operations (JSON.parse on huge strings, regex on huge strings, crypto.sync) block the event loop. The microtask starvation bug: recursively scheduling microtasks (`function loop() { process.nextTick(loop); }`) prevents the event loop from reaching other phases. The timer inaccuracy bug: `setTimeout` guarantees *at least* the specified delay, not exact timing — system load affects actual delay. The infinite loop bug: `while(true)` blocks the event loop forever. The unhandled rejection bug: unhandled Promise rejections crash the process (Node.js 15+).
-- **The Unforgettable Mental Model:** The **Runaway Train**. Microtask starvation is like a runaway train — it keeps going (scheduling more microtasks) and never stops at the stations (other phases).
-- **The Trap:** Using `process.nextTick` recursively — it starves the event loop, preventing I/O callbacks and timers from executing.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The most common event loop bugs are blocking operations and microtask starvation. I never use synchronous operations in request handlers. I avoid recursive `process.nextTick` — it starves the event loop. `setTimeout` doesn't guarantee exact timing — it guarantees *at least* the delay. Infinite loops block the event loop forever. Unhandled Promise rejections crash the process in Node.js 15+. I handle all rejections with `process.on('unhandledRejection')`."
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### How would you test it?
-- **The Engine Mechanism (Why it behaves this way):** Testing the event loop involves verifying callback ordering, measuring lag, and detecting blocking. Callback ordering tests verify that microtasks run before timers, timers before setImmediate. Event loop lag tests use `perf_hooks.monitorEventLoopDelay()` to measure blocking. Blocking detection tests run synchronous operations and measure lag increase. Load tests verify that the event loop handles concurrent requests without degradation. Phase-specific tests verify that callbacks execute in the correct phase.
-- **The Unforgettable Mental Model:** The **Timing Lab**. Testing the event loop is like a timing lab — you measure how long each operation takes and verify the order of execution.
-- **The Trap:** Not testing callback ordering — it's subtle but critical for async code correctness.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I test the event loop with callback ordering tests (microtasks before timers before setImmediate), event loop lag measurements (`perf_hooks.monitorEventLoopDelay()`), and blocking detection tests. I verify that synchronous operations cause lag spikes. I load test concurrent requests to verify the event loop handles them without degradation. I also test phase-specific behavior — ensuring callbacks execute in the correct phase. These tests catch timing bugs before production."
+**Q: What is the Node.js event loop?**
 
-#### How does it affect frontend clients?
-- **The Engine Mechanism (Why it behaves this way):** Event loop performance directly affects frontend clients — blocking means slow API responses, microtask starvation means delayed I/O, and timer inaccuracy means unpredictable response times. Efficient event loop handling means fast, predictable API responses. SSR performance (Next.js) depends on the event loop — blocking during server rendering delays HTML delivery. WebSocket handling depends on the event loop — blocking delays message delivery to frontend clients.
-- **The Unforgettable Mental Model:** The **Response Pipeline**. The event loop is like a response pipeline — if it's blocked, frontend requests pile up waiting. If it's efficient, responses flow smoothly.
-- **The Trap:** Not realizing that backend event loop blocking directly affects frontend user experience.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The event loop directly affects frontend clients. Blocking means slow API responses. Microtask starvation means delayed I/O. Timer inaccuracy means unpredictable response times. I monitor event loop lag to ensure the backend doesn't become the bottleneck. SSR performance depends on the event loop — blocking during rendering delays HTML delivery. WebSocket handling depends on the event loop — blocking delays real-time messages. The key is that event loop efficiency translates directly to frontend user experience."
+A single-threaded scheduling mechanism that runs callbacks when the JavaScript call stack is empty. libuv drives it through phases (timers, poll, check, etc.). Between phases, `process.nextTick` and Promise microtasks run. It enables non-blocking I/O: while waiting on network or disk, other callbacks execute.
 
-#### What would you monitor in production?
-- **The Engine Mechanism (Why it behaves this way):** Production event loop monitoring includes: event loop lag (blocking detection, target < 100ms), phase duration (time spent in each phase), callback queue length (pending work), and microtask execution time. Tools: `perf_hooks.monitorEventLoopDelay()`, clinic.js for profiling, and APM tools for application-level metrics. Alerts for lag spikes, phase duration anomalies, and queue length growth. Health checks verify the event loop is responsive by measuring lag periodically.
-- **The Unforgettable Mental Model:** The **Pulse Monitor**. Event loop monitoring is like a pulse monitor — lag is the heart rate, phase duration is the rhythm, queue length is the blood pressure.
-- **The Trap:** Not monitoring event loop lag — it's the most important Node.js-specific metric.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I monitor event loop lag first — target < 100ms. I also monitor phase duration (time spent in each phase), callback queue length (pending work), and microtask execution time. I use `perf_hooks.monitorEventLoopDelay()` for lag, clinic.js for profiling, and APM tools for application metrics. I set alerts for lag spikes, phase duration anomalies, and queue length growth. Health checks verify the event loop is responsive. Event loop lag is the most important Node.js production metric."
+**Q: What is the execution order of `setTimeout`, `setImmediate`, and `Promise`?**
 
-## 8. Active recall test
+Sync code first. Then `process.nextTick` (if any). Then Promise microtasks. Then timers phase (`setTimeout`). Then I/O callbacks in poll. Then `setImmediate` in check phase. Exact order varies with context—inside an I/O callback, `setImmediate` can run before the next `setTimeout`. See [phases](./what-are-event-loop-phases.md).
 
-1. **What is the Node.js event loop?**
-   - **Explanation:** A single-threaded loop that processes callbacks in phases (timers, pending, idle, poll, check, close). When the call stack is empty, it picks the next callback from the queue and executes it.
+**Q: What blocks the event loop?**
 
-2. **What is the execution order of setTimeout, setImmediate, and Promise?**
-   - **Explanation:** Promise (microtask, runs between phases) → setTimeout (timers phase) → setImmediate (check phase). Microtasks always run before phase callbacks.
+Synchronous CPU work: loops, sync file I/O, large `JSON.parse`, regex on huge input, `bcrypt.hashSync`. Also infinite `while` loops and recursive `process.nextTick`. See [blocking code](./what-is-blocking-code.md).
 
-3. **What blocks the event loop?**
-   - **Explanation:** Synchronous operations (JSON.parse on huge strings, regex on huge strings, crypto.sync), infinite loops, CPU-heavy computations, and recursive process.nextTick.
+**Q: What is event loop lag and what is a healthy target?**
 
-4. **What is event loop lag and what is the target?**
-   - **Explanation:** Event loop lag measures delay between iterations. Target < 100ms in production. Measure with `perf_hooks.monitorEventLoopDelay()`.
+Time between event loop iterations. Under load, p99 under ~100ms is a common healthy target for API servers; tighter for real-time. Spikes mean something blocked the main thread.
 
-5. **What is microtask starvation?**
-   - **Explanation:** Recursively scheduling microtasks (process.nextTick or Promise.then) prevents the event loop from reaching other phases, starving I/O callbacks and timers.
+**Q: What is microtask starvation?**
 
-6. **Does setTimeout guarantee exact timing?**
-   - **Explanation:** No. It guarantees *at least* the specified delay. Actual timing depends on system load and event loop activity. The callback may execute later than specified.
+Scheduling microtasks (`nextTick` or Promise chains) faster than the loop advances phases. I/O callbacks and timers wait. Recursive `process.nextTick` is the classic starvation pattern.
 
-## 9. Mistakes / traps
+**Q: Does `setTimeout` guarantee exact timing?**
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+No. It guarantees **at least** the delay. Busy poll phases, long sync code, or many timers push actual execution later.
 
-## 10. Compare with related concepts
+**Q: How is the event loop different in the browser?**
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+Browser has macrotasks/microtasks and **rendering** between turns. Node has libuv phases, `setImmediate`, `process.nextTick`, and a thread pool. See [Browser vs Node event loop](./browser-event-loop-vs-node-js-event-loop.md).
 
-## 11. Summary from memory
+**Q: Why does the event loop matter for APIs?**
 
-Explain What is Node.js event loop in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+Every request handler shares one loop. One blocked handler blocks health checks, WebSockets, and logging. Non-blocking I/O only helps if you do not block the thread while handling results.
 
-## 12. Spaced revision prompts
+## 6. The Traps — What Goes Wrong
 
-- Day 1: Define What is Node.js event loop in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**Trap: "The event loop is just a callback queue."**
+
+Queues exist per phase, plus separate microtask queues. Order is phase-driven, not FIFO globally.
+
+**Trap: Assuming `setTimeout(fn, 0)` runs before `setImmediate(fn)` always.**
+
+In the main module, often `setTimeout` then `setImmediate`. Inside I/O callbacks, often reversed on the next turn.
+
+**Trap: Recursive `process.nextTick` for "better performance."**
+
+It starves I/O and timers—worse performance for the whole server.
+
+**Trap: `async` functions cannot block.**
+
+They block if the body contains sync CPU work or `await` on nothing async. `await` does not offload CPU.
+
+**Trap: Unhandled rejections.**
+
+Async errors skip try/catch unless awaited or `.catch()`. Modern Node exits on unhandled rejections by default.
+
+**Trap: Ignoring lag metrics.**
+
+Average response time looks fine while p99 dies because occasional sync work stalls the loop.
+
+## 7. Compare With Related Concepts
+
+| Concept | Relationship |
+|---------|--------------|
+| [libuv](./what-is-libuv.md) | Implements the loop and I/O |
+| [Event loop phases](./what-are-event-loop-phases.md) | Stations on the belt |
+| [process.nextTick](./what-is-process-nexttick.md) | Highest-priority scheduling, between phases |
+| [setImmediate](./what-is-setimmediate.md) | Check phase scheduling |
+| [Microtask queue](./what-is-microtask-queue.md) | Promise/`queueMicrotask` queue |
+| [Callback queue](./what-is-callback-queue.md) | Macrotask/phase queues |
+
+**Event loop vs threads:** Loop multiplexes many connections on one JS thread; threads run code in parallel. Node uses both—one JS thread plus libuv pool and optional workers.
+
+**Rule:** If stack is busy, loop is stuck. If stack is empty but responses slow, check I/O, pool saturation, or microtask floods.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+The event loop is **one worker** who only picks up the next box when their hands are empty: first the express cart ([nextTick](./what-is-process-nexttick.md)), then Promise notes, then each **station** (timers → I/O → immediate). If the worker spends ten seconds inspecting one box (sync CPU), every station behind them freezes.

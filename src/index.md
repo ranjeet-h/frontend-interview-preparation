@@ -6,8 +6,9 @@ navigation or study flow.
 
 ## How to use this book
 
-Start with the core tracks, then move into the expansion tracks when you want broader interview
-coverage.
+Read [How to Study This Book](study-system.md) once: each page is one topic, and you should try
+to answer before you read. Then start with the core tracks and move into expansion tracks when
+you want broader coverage.
 
 | Track | What it covers | Status |
 |---|---|---|

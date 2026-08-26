@@ -1,16 +1,14 @@
 # Source Map
 
-Maps every `{{#include}}` range to its canonical book chapter.
+Maps archived root files and CSV imports to their **canonical book chapters**. After a rewrite, prefer the linked chapter — not the old source file.
 
 ## `01-html-css-web-concepts.md` → Frontend Fundamentals
 
-| Source section | Lines | Book chapter |
+| Source section | Lines | Book chapters |
 |---|---|---|
-| `## HTML` (Q1–Q5) | L1–102 | [HTML](../frontend/html.md) |
-| `## CSS` (Q6–Q10) | L103–178 | [CSS](../frontend/css.md) |
-| `## Web Vitals & Performance` (Q11–Q12) | L179–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
-| `## Browser & Web Concepts` (Q13–Q15) | L179–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
-| `## Design Patterns` (Q16–Q18) | L179–280 | [Web Concepts & Performance](../frontend/web-concepts.md) |
+| HTML (Q1–Q5) | L1–102 | [HTML5 Features](../frontend/html/html5-features.md), [Document Structure](../frontend/html/document-structure.md), [Semantic HTML](../frontend/html/semantic-html.md), [Meta Tags](../frontend/html/meta-tags.md), [Media Tags](../frontend/html/media-tags.md) |
+| CSS (Q6–Q10) | L103–178 | [Box Model](../frontend/css/box-model.md), [Specificity](../frontend/css/specificity.md), [Flexbox & Grid](../frontend/css/layout-flexbox-grid.md), [Pseudo-classes](../frontend/css/pseudo-classes-elements.md), [Positioning](../frontend/css/positioning.md) |
+| Web & performance (Q11–Q18) | L179–280 | [Core Web Vitals](../frontend/web/core-web-vitals.md), [Performance](../frontend/web/performance-optimization.md), [Storage](../frontend/web/browser-storage.md), [DOM](../frontend/web/dom.md), [Security](../frontend/web/security.md), [Design patterns](../frontend/web/design-patterns.md), [React patterns](../frontend/web/react-design-patterns.md), [Rendering](../frontend/web/rendering-patterns.md) |
 
 ## `02-javascript-theory-concepts.md` → JavaScript (theory)
 

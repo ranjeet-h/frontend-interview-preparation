@@ -1,24 +1,38 @@
-# Appendix
+# Original Sources
 
-This appendix preserves the original source material and provides a cross-reference map.
+The book is built from older root-level notes and CSV question banks. Those files stay in the repo as an archive — **do not edit them**. All study content you read in the main chapters is the rewritten version.
 
-## Original source files (preserved in repository root — do not edit)
+Use this page when you need to know where something came from. Use [Source Map](source-map.md) for line-by-line mapping. Use [Rewrite Progress](rewrite-progress.md) to see what has been upgraded to the new study format.
 
-| File | Lines | Description |
-|---|---|---|
-| `01-html-css-web-concepts.md` | 280 | 18 Q&A: HTML5, CSS, Web Vitals, browser APIs, design patterns |
-| `02-javascript-theory-concepts.md` | 3139 | JS theory — prototypes, async, ES6+, browser, performance, design patterns |
-| `03-javascript-coding-problems.md` | 5521 | 40 theory deep-dives + coding Qs + output Qs + polyfills |
-| `04-react-theory-concepts.md` | 2195 | React theory — hooks, state, performance, architecture |
-| `05-react-coding-challenges.md` | 1917 | React coding challenges + output questions |
-| `06-javascript-coding-DSA-problems.md` | 4984 | DSA problems + 53 implementation challenges |
-| `100_System_Design_Interview_Questions_Complete_Guide.md` | 2390 | System design guide split into navigable chapter pages |
-| `Frontend_Questions.csv` | 20 | Frontend theory question-bank source |
-| `Frontend_Coding_Questions.csv` | 15 | Frontend coding question-bank source |
-| `Backend_Questions.csv` | 21 | Backend theory question-bank source |
-| `Backend_Coding_Questions.csv` | 20 | Backend coding question-bank source |
-| `ops-tree-interview-qna.md` | 1406 | Ops and tree-based Q&A (archived, not yet integrated) |
-| `the-transformation-group.md` | 2037 | Miscellaneous notes (archived) |
-| `prp-plan.md` | 296 | Original implementation plan |
+## Archived markdown files
 
-See [Source Map](source-map.md) for the full line-range mapping.
+| File | What it contains |
+|---|---|
+| `01-html-css-web-concepts.md` | Original HTML, CSS, and web concepts Q&A |
+| `02-javascript-theory-concepts.md` | JavaScript theory — prototypes, async, ES6+, browser |
+| `03-javascript-coding-problems.md` | JS coding problems, output questions, polyfills |
+| `04-react-theory-concepts.md` | React theory — hooks, state, performance |
+| `05-react-coding-challenges.md` | React coding challenges and output questions |
+| `06-javascript-coding-DSA-problems.md` | DSA problems and implementation challenges |
+| `100_System_Design_Interview_Questions_Complete_Guide.md` | System design question bank (now split into chapters) |
+
+## Question bank CSVs
+
+| File | Book chapter |
+|---|---|
+| `Frontend_Questions.csv` | [Frontend Questions](../frontend/question-banks.md) |
+| `Frontend_Coding_Questions.csv` | [Frontend Coding Questions](../frontend/coding-questions.md) |
+| `Backend_Questions.csv` | [Backend Questions](../full-stack/backend/question-banks.md) |
+| `Backend_Coding_Questions.csv` | [Backend Coding Questions](../full-stack/backend/coding-questions.md) |
+
+## Not integrated yet
+
+| File | Notes |
+|---|---|
+| `ops-tree-interview-qna.md` | Ops/tree topics — archived |
+| `the-transformation-group.md` | Miscellaneous notes — archived |
+| `prp-plan.md` | Early implementation plan — historical |
+
+## How rewriting works
+
+Each topic page is rewritten one at a time into the **Type A–E format** (see [Study System](../study-system.md) and the full spec in `docs/superpowers/plans/2026-08-25-sequential-study-note-rewrite.md`). The goal is understanding you can explain in your own words — not bullet lists or interview scripts.

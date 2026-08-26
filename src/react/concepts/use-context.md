@@ -1,127 +1,415 @@
-# useContext
+# # `useContext`: Ambient Data Sharing Without Prop Drilling
 
-## Detailed explanation
-`useContext` reads a value from the nearest matching React Context provider above the component. It is useful for values that many components need without passing props through every intermediate layer, such as theme, current user shell data, locale, or dependency injection.
+## 1. Why This Exists — The Problem First
 
-Context is not automatically a performance optimization or full state management solution. When the provider value changes, consumers re-render. For high-frequency updates, split contexts or use selector-based stores.
+Imagine an enterprise dashboard with a component tree twelve layers deep. At the root sits `<App />`, cascading down through `<Shell />`, `<DashboardLayout />`, `<MainGrid />`, `<WidgetRow />`, and finally into `<ThemeToggle />`. The user clicks a button to toggle dark mode.
 
-## 1. One-line mental model
-`useContext` lets a component read shared provider data without prop drilling.
+Without Context, every single intermediate component in that twelve-layer chain has to accept `theme` and `setTheme` as props purely to forward them to the next child down. `DashboardLayout` does not care about colors. `WidgetRow` does not care about themes. Yet their TypeScript interfaces are polluted, their prop lists are bloated, and refactoring any intermediate layout component requires updating every layer of the chain. This is **prop drilling**.
 
-## 2. Problem it solves
-Deeply nested components sometimes need common values, and passing props through every layer creates noise.
-
-## 3. Core idea
-- Create a context.
-- Wrap part of the tree with a provider.
-- Read the value with `useContext`.
-- Consumers re-render when provider value changes.
-- Keep provider values stable and scoped.
-
-## 4. Visual / analogy
-Context is like a building-wide announcement system: any room inside the building can hear the current message.
-
-```mermaid
-flowchart TD
-  Provider["ThemeProvider"] --> Layout
-  Layout --> Sidebar
-  Sidebar --> Button["Button uses context"]
-```
-
-## 5. Minimal example
+To fix this, a team often attempts to put everything into a single global Context:
 
 ```tsx
-const ThemeContext = React.createContext("light");
+// The naive "God Context" trap
+<AppContext.Provider value={{ user, theme, cart, notifications, setNotifications, toggleTheme }}>
+  <App />
+</AppContext.Provider>
+```
 
-function Button() {
-  const theme = React.useContext(ThemeContext);
-  return <button data-theme={theme}>Save</button>;
+Then a live WebSocket notification arrives, updating `notifications`. Suddenly, five hundred consumer components across the application freeze the main thread for 80ms while re-rendering—including pure canvas widgets and buttons that only ever read `theme`. Even worse, because the provider passed an inline object literal (`value={{ ... }}`), every re-render of the root allocates a brand-new object reference. This forces an application-wide re-render cascade on every parent tick, completely ignoring and bypassing `React.memo` boundaries throughout the tree.
+
+`useContext` exists to solve prop drilling by establishing ambient communication channels across the React Fiber tree. Understanding how it operates at the engine level is what separates a clean, scalable architecture from an unresponsive UI.
+
+---
+
+## 2. The Analogy — Make It Obvious
+
+Think of prop drilling versus Context like communication in a 50-story corporate headquarters.
+
+### Prop Drilling: Physical Courier Hand-Off
+If the CEO on Floor 50 wants to deliver a badge access code to the security guard in the basement, a courier walks from Floor 50 to 49, hands the envelope to a manager, who hands it to Floor 48, and so on. Every single floor's manager must stop what they are doing, sign for the envelope, and pass it down—even though 48 floors have no interest in the security code.
+
+### Context: The Dedicated FM Radio Broadcast
+Context is installing an FM transmitter on Floor 50. The CEO broadcasts the access code over frequency **98.5 FM**.
+- Intermediate floors work in total peace; the envelope never touches their desks.
+- The security guard in the basement turns on their portable radio, tunes to 98.5 FM, and receives the code directly out of thin air.
+
+```
+[ Root Provider (Transmitter: 98.5 FM) ]
+                 │
+                 ├── [ Layout (Doesn't listen) ]
+                 │         │
+                 │         └── [ Sidebar (Doesn't listen) ]
+                 │                   │
+                 │                   └── [ ThemeToggle (Tuned to 98.5 FM) ] ◄── Receives signal
+                 │
+                 └── [ ContentArea (Doesn't listen) ]
+```
+
+### The Catch in the Analogy (The Broadcast Blast Radius)
+If the transmitter broadcasts weather, cafeteria menus, stock prices, and emergency codes on the **exact same radio frequency**, every employee listening for weather will get interrupted every time the cafeteria menu changes. 
+
+To prevent this, a well-run building sets up multiple dedicated radio stations: 98.5 FM for Theme, 102.1 FM for Auth, and 106.7 FM for Notifications (**Context Splitting**).
+
+---
+
+## 3. How It Actually Works — The Full Explanation
+
+React Context operates via three core primitives:
+
+1. `createContext(defaultValue)`: Instantiates a Context object with a unique identity and an optional fallback value.
+2. `<Context.Provider value={currentValue}>`: Renders a Provider Fiber node in the virtual DOM tree, exposing the active value to all descendants.
+3. `useContext(ContextObject)`: Reads the nearest ancestor Provider's value from the current component's position in the tree.
+
+### The Fiber Mechanics: How React Tracks Consumers
+When a component calls `useContext(MyContext)` during render, React does not perform a live DOM lookup. Instead, it inspects the internal Fiber tree:
+
+1. **Dependency Registration**: React appends a context dependency record to the current component's `fiber.dependencies` linked list. This registers the component as an active subscriber to that specific Context instance.
+2. **Upward Provider Scan**: React traverses upward through the `return` pointers of the Fiber tree until it discovers the closest matching `ContextProvider` Fiber. It reads the current `value` prop from that Provider and returns it to the hook.
+3. **Fallback to Default**: If no matching Provider exists anywhere in the ancestor chain, React returns the `defaultValue` passed into `createContext(defaultValue)`.
+
+```
+Fiber Tree Structure:
+
+[App Fiber]
+    └── [ThemeProvider.Provider value="dark"]  ◄── Provider Fiber
+            └── [DashboardLayout Fiber]        (Bypassed during read)
+                    └── [Sidebar Fiber]        (Bypassed during read)
+                            └── [NavButton Fiber]  ◄── fiber.dependencies contains ThemeContext
+```
+
+### The Context Re-render Cascade
+When a state change causes a Provider component to re-render:
+
+1. React evaluates `Object.is(previousProviderValue, nextProviderValue)`.
+2. If `Object.is` returns `true`, the value is identical by reference. React skips notifying context subscribers.
+3. If `Object.is` returns `false`, React invokes its internal function `propagateContextChange()`.
+4. React traverses the descendant Fiber subtree. When it encounters any Fiber whose `dependencies` list matches the changed Context, it marks that Fiber with a dirty lane (e.g. `fiber.lanes |= renderLanes`).
+
+### Why `React.memo` Does NOT Stop Context Re-renders
+A common point of confusion is why wrapping a consumer component in `React.memo` fails to prevent it from re-rendering when Context updates:
+
+```tsx
+// This component STILL re-renders when ThemeContext changes!
+const ThemedButton = React.memo(function ThemedButton(props) {
+  const theme = useContext(ThemeContext);
+  return <button className={theme}>{props.label}</button>;
+});
+```
+
+Here is why:
+- `React.memo` only checks whether incoming **props** have changed.
+- When `propagateContextChange()` marks the consumer's Fiber as dirty, the reconciler schedules that component specifically for a context update.
+- When React processes the render queue, it sees that `ThemedButton` has scheduled work on its context lane. It enters the component function, executes `useContext`, gets the fresh value, and re-renders.
+
+`React.memo` successfully stops parent-driven prop re-renders from spilling into children, but it never overrides an explicit context subscription inside a child.
+
+### The Context Splitting Architecture
+Because Context has an all-or-nothing broadcast model (any change to `value` re-renders all subscribers), keeping state and dispatch in the same object is an anti-pattern for values that update regularly.
+
+By splitting a domain into two contexts:
+- `ThemeStateContext` holds dynamic data (`{ mode: 'dark', fontSize: 14 }`).
+- `ThemeDispatchContext` holds stable updater functions (`dispatch` from `useReducer` or setters from `useState`).
+
+Components that only trigger actions (like a "Toggle Theme" button) subscribe exclusively to `ThemeDispatchContext`. Because `dispatch` has a stable reference across the entire application lifecycle, action buttons **never re-render** when the state changes.
+
+---
+
+## 4. Real Code — See It Working
+
+Here is a production-grade implementation of the **Split Context + Custom Hook** pattern featuring fail-fast runtime guards, memoized values, and strict TypeScript definitions.
+
+### Step 1: Context Definition & Custom Provider (`ThemeContext.tsx`)
+
+```tsx
+import React, { createContext, useContext, useReducer, useMemo, type ReactNode } from "react";
+
+// 1. Define explicit types for state and actions
+type ThemeMode = "light" | "dark" | "system";
+
+interface ThemeState {
+  mode: ThemeMode;
+  highContrast: boolean;
+}
+
+type ThemeAction =
+  | { type: "SET_MODE"; payload: ThemeMode }
+  | { type: "TOGGLE_CONTRAST" };
+
+// 2. Separate contexts for State (frequently read) and Dispatch (stable identity)
+const ThemeStateContext = createContext<ThemeState | null>(null);
+const ThemeDispatchContext = createContext<React.Dispatch<ThemeAction> | null>(null);
+
+// 3. Pure reducer handling business logic
+function themeReducer(state: ThemeState, action: ThemeAction): ThemeState {
+  switch (action.type) {
+    case "SET_MODE":
+      return { ...state, mode: action.payload };
+    case "TOGGLE_CONTRAST":
+      return { ...state, highContrast: !state.highContrast };
+    default:
+      return state;
+  }
+}
+
+// 4. Provider encapsulating state initialization and reference stability
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(themeReducer, {
+    mode: "light",
+    highContrast: false,
+  });
+
+  // Memoize state object to guarantee reference equality unless internal values change
+  const memoizedState = useMemo(() => state, [state.mode, state.highContrast]);
+
+  return (
+    <ThemeDispatchContext.Provider value={dispatch}>
+      <ThemeStateContext.Provider value={memoizedState}>
+        {children}
+      </ThemeStateContext.Provider>
+    </ThemeDispatchContext.Provider>
+  );
+}
+
+// 5. Fail-fast custom hooks with descriptive errors
+export function useThemeState(): ThemeState {
+  const context = useContext(ThemeStateContext);
+  if (!context) {
+    throw new Error("useThemeState must be used within a <ThemeProvider>");
+  }
+  return context;
+}
+
+export function useThemeDispatch(): React.Dispatch<ThemeAction> {
+  const context = useContext(ThemeDispatchContext);
+  if (!context) {
+    throw new Error("useThemeDispatch must be used within a <ThemeProvider>");
+  }
+  return context;
 }
 ```
 
-## 6. Real-world example
+### Step 2: Consuming Separated Contexts Without Wasteful Renders
 
 ```tsx
-function useAuth() {
-  const auth = React.useContext(AuthContext);
-  if (!auth) throw new Error("useAuth must be used inside AuthProvider");
-  return auth;
+import React, { memo } from "react";
+import { useThemeState, useThemeDispatch } from "./ThemeContext";
+
+// CONSUMER A: Only reads state. Re-renders ONLY when mode/contrast changes.
+export function ThemeBadge() {
+  const { mode, highContrast } = useThemeState();
+  console.log("ThemeBadge rendered!");
+
+  return (
+    <span className={`badge ${mode} ${highContrast ? "contrast" : ""}`}>
+      Active: {mode.toUpperCase()}
+    </span>
+  );
+}
+
+// CONSUMER B: Only dispatches actions. NEVER re-renders on theme changes!
+export const ToggleButton = memo(function ToggleButton() {
+  const dispatch = useThemeDispatch();
+  console.log("ToggleButton rendered!");
+
+  return (
+    <button
+      onClick={() => dispatch({ type: "SET_MODE", payload: "dark" })}
+      type="button"
+    >
+      Switch to Dark Mode
+    </button>
+  );
+});
+
+// INTERMEDIATE COMPONENT: Demonstrating React.memo bailout
+export const DashboardHeader = memo(function DashboardHeader() {
+  console.log("DashboardHeader rendered!");
+
+  return (
+    <header className="header">
+      <h2>App Control Center</h2>
+      {/* ToggleButton never re-renders; ThemeBadge re-renders independently */}
+      <ThemeBadge />
+      <ToggleButton />
+    </header>
+  );
+});
+```
+
+---
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+### **Q: How does `useContext` work under the hood in React's Fiber architecture?**
+
+`useContext(Context)` links the executing component's Fiber node to a Context object by appending a dependency item to `fiber.dependencies`. During render, React walks up the Fiber return tree to locate the nearest matching `ContextProvider` Fiber and reads its `value` prop.
+
+When the Provider component re-renders with a new `value`, React uses `Object.is(prevValue, nextValue)` to evaluate the change. If the check returns `false`, React runs `propagateContextChange()`, walking down the Provider's Fiber subtree. It locates every Fiber containing that Context in its `dependencies` list and marks their lanes as dirty. During the reconciliation phase, React bypasses parent bailouts and directly renders every marked consumer Fiber.
+
+---
+
+### **Q: Why doesn't `React.memo` on an intermediate component prevent its child context consumer from re-rendering?**
+
+`React.memo` guards against **prop changes** coming from parent renders. When a parent re-renders, `React.memo` performs a shallow comparison of the component's incoming props against its previous props. If they match, React bails out of that component and its entire sub-tree.
+
+However, Context updates do not flow through props. When a Context Provider's value changes, React's `propagateContextChange` marks the consumer Fiber node itself as dirty directly in the work loop. When the reconciler encounters the memoized intermediate component, it skips re-rendering the intermediate component itself, but it still traverses down to reconcile the dirty consumer Fiber nested beneath it.
+
+---
+
+### **Q: Is React Context a state management library like Redux or Zustand?**
+
+No. React Context is a **dependency injection and transport mechanism**, not a state management engine.
+
+| Capability | React Context | Zustand / Redux |
+| :--- | :--- | :--- |
+| **Primary Purpose** | Ambient data propagation down a tree | Centralized state management & mutation |
+| **Storage** | Lives within the React Fiber tree | Lives in an external store outside React |
+| **Subscriptions** | All-or-nothing (coarse broadcast) | Fine-grained selector-based subscriptions |
+| **Middleware & DevTools** | None (must build with custom hooks) | Redux DevTools, time-travel, action logging |
+| **Update Frequency** | Best for low-frequency changes | Optimized for high-frequency updates |
+
+Context only transports whatever value you pass to `<Provider value={...}>`. Managing how that data changes, when it updates, and how components subscribe selectively requires state hooks (`useState`, `useReducer`) or external libraries.
+
+---
+
+### **Q: What is the Context Splitting pattern and why is it critical?**
+
+Context Splitting is an architectural pattern where a single domain is broken into two distinct Contexts:
+1. **State Context** (holds the data object).
+2. **Dispatch Context** (holds the stable action handler or state setter).
+
+Because React Context lacks selectors, any change to a context's value triggers a re-render in every component calling `useContext` for that context. If state and dispatch share one object (`value={{ state, dispatch }}`), a button that only calls `dispatch()` will re-render whenever `state` changes. Separating them ensures that dispatch-only components maintain reference stability and never re-render unnecessarily.
+
+---
+
+### **Q: What happens if a component calls `useContext` when no matching `<Provider>` exists in the ancestor tree?**
+
+React returns the `defaultValue` that was passed to `createContext(defaultValue)`. 
+
+A critical detail: `defaultValue` is **never** used if a Provider exists and passes `value={undefined}` or `value={null}`. The default value is strictly a fallback for a missing Provider in the tree. In production applications, best practice is to set `createContext<T | null>(null)` and throw a descriptive error inside a custom hook if `useContext` returns `null`, failing fast during development.
+
+---
+
+### **Q: How can you optimize a Context Provider to prevent accidental re-renders across consumers?**
+
+1. **Memoize the Value Object**: Always wrap object and array literals passed to the provider in `useMemo` so their references remain stable unless dependencies change.
+2. **Split State and Dispatch**: Keep setters and data in separate context channels.
+3. **Colocate Providers**: Place providers as close to their consuming subtree as possible rather than mounting everything at the application root.
+4. **Use Component Composition**: Leverage the `children` prop on the Provider component so children are created outside the Provider's render function, preventing them from re-rendering when the Provider re-renders.
+
+---
+
+## 6. The Traps — What Goes Wrong
+
+### Trap 1: The Inline Object Literal Reference Trap
+
+```tsx
+// ❌ BROKEN: A new object reference is created on EVERY render of App
+function App() {
+  const [user, setUser] = useState({ name: "Alex" });
+  return (
+    <UserContext.Provider value={{ user, setUser }}>
+      <Dashboard />
+    </UserContext.Provider>
+  );
 }
 ```
 
-## 7. Common interview questions
-#### What is `useContext`?
-- **The Engine Mechanism (Why it behaves this way):** `useContext(ContextObject)` walks up the React component tree from the current Fiber node, searching for the nearest `Context.Provider` Fiber that matches the context's internal identifier. When found, React reads the `value` prop from that provider and returns it. If no provider is found, React returns the `defaultValue` that was passed to `createContext()`. React subscribes the consuming Fiber to the provider, so when the provider's value changes, all consumers are scheduled for re-render.
-- **The Unforgettable Mental Model:** The **Building Intercom**. Instead of walking floor by floor passing a message (prop drilling), you pick up the intercom and instantly hear whatever the building manager (provider) is broadcasting. Every room with an intercom (consumer) gets the same message.
-- **The Trap:** Thinking `useContext` is a performance optimization. It actually causes all consumers to re-render when the provider value changes, which can be worse than prop drilling if the value changes frequently.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: `useContext` is a hook that lets a component read a value from the nearest matching Context provider above it in the tree. It eliminates prop drilling by allowing deeply nested components to access shared values like themes, authentication state, or locale directly. When the provider's value changes, all consuming components re-render. It's a tool for avoiding intermediate prop passing, not a general-purpose state management solution."
+**Why it fails**: Every time `App` renders (due to any unrelated state or parent update), `{ user, setUser }` generates a new memory address. React checks `Object.is(prev, next)`, sees a reference mismatch, and forces all consumers of `UserContext` across the entire application to re-render, even though `user` never changed.
 
-#### How does Context avoid prop drilling?
-- **The Engine Mechanism (Why it behaves this way):** Without Context, data flows exclusively through props — each component in the tree must explicitly receive and forward values it may not use itself. Context creates a "wormhole" in the component tree: a provider at any level makes its value available to any descendant, regardless of depth. React's Fiber tree traversal during rendering checks each component's context dependencies, and if a component calls `useContext`, React resolves the value from the nearest provider Fiber without requiring intermediate components to participate.
-- **The Unforgettable Mental Model:** The **Elevator vs. the Stairs**. Prop drilling is taking the stairs — you stop at every floor (component) even if you don't need anything there. Context is the elevator — you go directly from the penthouse (provider) to the lobby (consumer) without stopping at intermediate floors.
-- **The Trap:** Overusing Context for values that only need to pass through 1-2 levels. Prop drilling through a few components is more explicit and easier to trace than a global Context.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Context avoids prop drilling by creating a direct communication channel between a provider and any descendant consumer. Instead of passing a value through every intermediate component that doesn't use it, the provider makes the value available at the tree level, and any component below can read it with `useContext`. This keeps intermediate components clean and focused on their own concerns. However, I only use it when the value needs to cross three or more component levels — for shorter distances, explicit props are clearer."
+**The Fix**: Memoize the value with `useMemo`.
 
-#### When should you use Context?
-- **The Engine Mechanism (Why it behaves this way):** Context is ideal for values that are genuinely global or semi-global within a subtree and change infrequently. Because every consumer re-renders when the provider value changes, Context works best for low-frequency updates like theme toggles, locale changes, authentication state, or feature flags. React's reconciliation handles these efficiently because the re-render cost is proportional to the consumer tree size, which is manageable for infrequent changes.
-- **The Unforgettable Mental Model:** The **Town Square Bulletin Board**. Perfect for announcements that everyone needs to see but don't change every minute — the mayor's speech, holiday schedules, emergency contacts. Terrible for a live stock ticker that updates every second.
-- **The Trap:** Using Context for high-frequency state like form input values, scroll positions, or animation frames. This causes massive re-render cascades across all consumers.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use Context for values that many components need but change infrequently — things like theme, current user, locale, feature flags, or dependency injection. The key criterion is update frequency: if the value changes rarely, Context's re-render cost is negligible. If it changes frequently, I'd split the context, use a selector-based store like Zustand, or keep the state localized. Context is about avoiding prop drilling, not about managing all application state."
+```tsx
+// ✅ FIXED: Reference remains identical until user state changes
+function App() {
+  const [user, setUser] = useState({ name: "Alex" });
+  const value = useMemo(() => ({ user, setUser }), [user]);
 
-#### When should you not use Context?
-- **The Engine Mechanism (Why it behaves this way):** Context triggers re-renders for all consumers whenever the provider value changes, with no built-in mechanism for selective subscription. If you store rapidly changing data (form inputs, mouse positions, animation frames) in a single broad context, every consumer re-renders on every change, regardless of whether it uses the changed portion. This is because React's context subscription is all-or-nothing — there's no selector mechanism to subscribe to only a slice of the context value.
-- **The Unforgettable Mental Model:** The **Fire Alarm System**. When the alarm rings (context value changes), every room in the building (every consumer) gets notified, even if the fire is only in the kitchen. For high-frequency updates, this broadcast model is too expensive.
-- **The Trap:** Putting an entire application state object in a single Context provider. Every state change re-renders every consumer, even those that only need one field.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I avoid Context for high-frequency state updates, complex state management with derived values, or data that only a few components need. Context's all-or-nothing subscription model means every consumer re-renders on every value change. For complex state, I prefer libraries with selectors like Zustand or Redux Toolkit. For data that changes rapidly, I keep state localized or split contexts by update frequency. And for server data, I use dedicated data-fetching libraries with caching."
+  return (
+    <UserContext.Provider value={value}>
+      <Dashboard />
+    </UserContext.Provider>
+  );
+}
+```
 
-#### Why can Context cause re-renders?
-- **The Engine Mechanism (Why it behaves this way):** When a Context provider's `value` prop changes, React marks all Fiber nodes that called `useContext` for that context as needing re-render. This happens during the reconciliation phase — React traverses the tree, finds all consumers, and schedules them. The comparison is done via `Object.is()` on the entire provider value. If you pass a new object or array literal as the value on every render (`value={{ theme, user }}`), `Object.is()` always returns `false`, triggering re-renders even if the contents haven't changed.
-- **The Unforgettable Mental Model:** The **Loudspeaker Announcement**. Every time the provider speaks (value changes), everyone listening (consumers) stops what they're doing and pays attention. If the provider speaks every second with a new object reference, everyone is constantly interrupted — even if the message content is the same.
-- **The Trap:** Creating the provider value inline: `<ThemeContext value={{ dark: isDark }}>`. This creates a new object every render, causing all consumers to re-render even when `isDark` hasn't changed.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Context causes re-renders because React subscribes every consumer to the provider's value. When the value reference changes — detected via `Object.is()` — all consumers are scheduled for re-render. A common mistake is creating the value inline as a new object each render, which always triggers re-renders. To prevent this, I memoize the provider value with `useMemo` or split contexts so that only the relevant consumers re-render for each piece of state."
+---
 
-#### How do you optimize Context?
-- **The Engine Mechanism (Why it behaves this way):** Optimization strategies work by reducing the number of consumers that re-render or the frequency of value changes. (1) Memoizing the provider value with `useMemo` prevents unnecessary reference changes. (2) Splitting contexts separates high-frequency and low-frequency values so only relevant consumers update. (3) Extracting consumers into memoized components with `React.memo` prevents re-renders of children that don't use the changed value. (4) Using selector patterns with libraries like `use-context-selector` allows components to subscribe to only a slice of the context value.
-- **The Unforgettable Mental Model:** The **Departmental Memos**. Instead of sending every memo to every employee (single broad context), you split memos by department (split contexts), only send them when there's actual new information (memoized value), and let each employee choose which memos to read (selectors).
-- **The Trap:** Trying to optimize a single monolithic context with `React.memo` on consumers. If the context value reference changes, `React.memo` can't prevent the re-render because the context subscription happens before the memo check.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I optimize Context in three ways. First, I memoize the provider value with `useMemo` to avoid creating new object references on every render. Second, I split contexts by update frequency — theme in one context, user data in another — so only relevant consumers re-render. Third, for complex state, I use selector-based libraries or extract consumers into memoized components. The goal is to minimize the blast radius of each context change."
+### Trap 2: Using Context for High-Frequency State
 
-#### Context vs Redux/Zustand?
-- **The Engine Mechanism (Why it behaves this way):** Context is a built-in React mechanism with all-or-nothing subscriptions — every consumer re-renders on any value change. Redux and Zustand are external state management libraries that implement selective subscriptions: components subscribe to specific slices of state via selectors, and only re-render when their selected slice changes. Redux uses a single store with reducers and middleware; Zustand uses a hook-based store with direct state access. Both provide devtools, time-travel debugging, and middleware ecosystems that Context lacks.
-- **The Unforgettable Mental Model:** The **Radio vs. the Podcast Feed**. Context is like a radio station — everyone hears everything that's broadcast. Redux/Zustand is like a podcast feed — you subscribe only to the shows you care about, and you're notified only when new episodes of those shows drop.
-- **The Trap:** Using Context as a full Redux replacement. Context lacks selectors, middleware, devtools, time-travel debugging, and the ecosystem that makes Redux/Zustand powerful for complex applications.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Context is great for avoiding prop drilling with low-frequency values like theme or auth. But for complex application state, I prefer Redux or Zustand because they offer selective subscriptions — components only re-render when their specific slice of state changes. They also provide middleware, devtools, time-travel debugging, and predictable state transitions. Context is a transport mechanism; Redux/Zustand are full state management ecosystems. I choose based on complexity: simple shared values use Context, complex state uses a dedicated store."
+Placing rapid updates like input keystrokes, scroll positions, mouse coordinates, or animation frames in Context creates massive render bottlenecks. Because Context broadcasts to all subscribers on every change without fine-grained selectors, streaming 60 updates per second through Context will exhaust the main thread's frame budget.
 
-## 8. Active recall test
-1. **What provider does `useContext` read from?**
-   - **Explanation:** The nearest matching `Context.Provider` above the component in the React tree. If no provider exists, it returns the `defaultValue` from `createContext()`.
-2. **What happens when provider value changes?**
-   - **Explanation:** All components that called `useContext` for that context are scheduled for re-render. React uses `Object.is()` to detect value changes — if the reference changes, all consumers update.
-3. **What data is good for context?**
-   - **Explanation:** Low-frequency, semi-global values: theme, locale, authenticated user, feature flags, dependency injection tokens. Values that many components need but change rarely.
-4. **Why split providers?**
-   - **Explanation:** To isolate re-render blast radius. If theme and user data are in separate contexts, changing theme only re-renders theme consumers, not user data consumers.
-5. **Why wrap context access in a custom hook?**
-   - **Explanation:** For encapsulation, validation, and future-proofing. A custom hook like `useAuth()` can throw if used outside a provider, add default behavior, and allow the underlying implementation to change without touching every consumer.
+**The Fix**: Keep high-frequency state local to the component, use ref callbacks for unmanaged DOM nodes, or adopt an external selector-based store like Zustand.
 
-## 9. Mistakes / traps
-- Putting rapidly changing state in one broad context.
-- Creating a new provider value object every render.
-- Using context for everything global.
-- Forgetting default value behavior.
-- Hiding dependencies too deeply.
+---
 
-## 10. Compare with related concepts
-- **Context vs props:** context skips intermediate props; props are explicit.
-- **Context vs global store:** global stores often provide selectors and finer subscriptions.
-- **Context vs server state:** context does not solve caching or invalidation.
+### Trap 3: Confusing `defaultValue` with Initial State
 
-## 11. Summary from memory
-Explain how a theme provider works and why context can cause unnecessary re-renders.
+```tsx
+// ❌ WRONG ASSUMPTION: Assuming "light" will be used when value is undefined
+const ThemeContext = createContext("light");
 
-## 12. Spaced revision prompts
-- After 1 day: Define `useContext`.
-- After 3 days: Explain provider value changes.
-- After 7 days: Optimize a context provider.
-- After 14 days: Compare context and Zustand.
+function App() {
+  const [theme, setTheme] = useState(); // theme is undefined initially
+  return (
+    <ThemeContext.Provider value={theme}>
+      <Consumer />
+    </ThemeContext.Provider>
+  );
+}
+```
+
+**Why it fails**: When `Consumer` calls `useContext(ThemeContext)`, it receives `undefined`, not `"light"`. React only reads `"light"` if `<ThemeContext.Provider>` is completely absent from the ancestor hierarchy. Once a Provider is present in the tree, its `value` prop is authoritative, even if that value is `undefined`.
+
+---
+
+### Trap 4: The Monolithic "God Context"
+
+Grouping unrelated state slices into a single context turns the entire application into a single re-render zone:
+
+```tsx
+// ❌ ANTI-PATTERN: Monolithic Context
+interface AppState {
+  theme: string;
+  user: UserProfile;
+  cart: CartItem[];
+  unreadMessagesCount: number;
+}
+```
+
+Whenever `unreadMessagesCount` increments, every component rendering user profile info, shopping cart totals, and theme toggles will re-render simultaneously. Split contexts by **update frequency** and **domain boundary**.
+
+---
+
+## 7. Compare With Related Concepts
+
+### 1. `useContext` vs. Props (Prop Drilling)
+- **Difference**: Props pass data explicitly layer-by-layer; Context creates an ambient broadcast channel that skips intermediate components.
+- **Decision Rule**: Use props for 1–2 levels of direct parent-child communication. Use Context for data required by many components across deep subtrees (theme, auth session, localization).
+
+### 2. `useContext` vs. Zustand / Redux
+- **Difference**: Context broadcasts to all consumers on every change (`all-or-nothing`). Zustand and Redux use selector functions (`useStore(state => state.user.name)`) to subscribe components only to the exact primitive slice of data they read, skipping renders when other slice properties mutate.
+- **Decision Rule**: Use Context for low-frequency global config (theme, auth, locale). Use Zustand/Redux for complex, relational, or frequently mutating client state.
+
+### 3. `useContext` vs. Component Composition (`children` prop)
+- **Difference**: Context shares data downwards; component composition hoists JSX creation upwards so intermediate components never need to know about the child's props.
+- **Decision Rule**: If you only need to bypass 2–3 intermediate layout containers, pass rendered elements via `children` before reaching for Context.
+
+```tsx
+// Solving prop drilling WITHOUT Context via Composition:
+function PageLayout({ userMenu }: { userMenu: ReactNode }) {
+  return <div className="layout"><Header>{userMenu}</Header></div>;
+}
+```
+
+### 4. `useContext` vs. Server State (TanStack Query / SWR)
+- **Difference**: Context stores synchronous client state with no built-in caching, background refetching, or request deduplication. TanStack Query manages asynchronous server state lifecycles.
+- **Decision Rule**: Never cache API response data in Context. Use TanStack Query for remote data and reserve Context strictly for synchronous UI state.
+
+---
+
+## 8. 🧠 The Memory Hook
+
+> **Context is an FM radio broadcast, not a courier:** It skips intermediate floors completely, but everyone tuned to the frequency hears every word. To prevent chaotic noise, broadcast on separate frequencies and keep stable microphones on the dispatchers.
+
 

@@ -6,7 +6,7 @@ This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-
 
 ## Current JavaScript concept queue
 
-39 of 56 JavaScript concept pages are reviewed and committed. The commit for each accepted page is recorded here.
+56 of 56 JavaScript concept pages are reviewed and committed. The commit for each accepted page is recorded here.
 
 1. `src/javascript/concepts/memory-heap.md` — `be5f70d`, wording refinement `205763a`
 2. `src/javascript/concepts/execution-context.md` — `c540720`
@@ -47,14 +47,31 @@ This file replaces the retired `REWRITTEN_FILES.md` list. The detailed, page-by-
 37. `src/javascript/concepts/indexeddb.md` — `ebd36a9`
 38. `src/javascript/concepts/storage-event.md` — `36e18a4`
 39. `src/javascript/concepts/broadcast-channel.md` — `3d2c18e`
+40. `src/javascript/concepts/history-api.md` — `3c2b14b`
+41. `src/javascript/concepts/file-api.md` — `4058e0e`
+42. `src/javascript/concepts/clipboard-api.md` — `c19e94f`
+43. `src/javascript/concepts/performance-api.md` — `9f4e48f`
+44. `src/javascript/concepts/dom-based-xss.md` — `122089a`
+45. `src/javascript/concepts/open-redirects.md` — `39a0a5c`
+46. `src/javascript/concepts/browser-storage-token-risks.md` — `d65309b`
+47. `src/javascript/concepts/xss-csrf-cors-csp.md` — `f6c27b0`
+48. `src/javascript/concepts/detached-dom-nodes.md` — `d2c87b2`
+49. `src/javascript/concepts/layout-thrashing.md` — `e99faaa`
+50. `src/javascript/concepts/heap-snapshots.md` — `1049dc8`
+51. `src/javascript/concepts/garbage-collection-memory-leaks.md` — `2081c80`
+52. `src/javascript/concepts/debounce-and-throttle.md` — `cb8231b`
+53. `src/javascript/concepts/query-string-parser.md` — `8b46d8e`
+54. `src/javascript/concepts/custom-new.md` — `7a2beef`
+55. `src/javascript/concepts/custom-instanceof.md` — `8ba1db3`
+56. `src/javascript/concepts/virtual-list-basics.md` — `8f5eedf`
 
 ## Active JavaScript pages
 
-- `src/javascript/concepts/history-api.md` — Luna worker active; review pending
-- `src/javascript/concepts/file-api.md` — Luna worker active; review pending
+
+None; all 56 JavaScript concept pages have passed scoped review and been committed.
 
 ## Cross-project synchronization
 
-- The detailed tracker currently has 203 page rows marked `rewritten` and 18 rows marked `assigned`.
+- The detailed tracker currently has 231 page rows marked `rewritten` and 10 rows marked `assigned`.
 - The broader rollup in `REWRITE-PROGRESS.md` includes the other completed frontend, React, system-design, Node.js, MongoDB, Mongoose, and MERN work.
 - Update the detailed tracker only after a page has passed its scoped review and target-only commit.
