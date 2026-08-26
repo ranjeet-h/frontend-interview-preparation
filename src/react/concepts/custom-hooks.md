@@ -1,133 +1,242 @@
 # Custom Hooks
 
-## Detailed explanation
-Custom hooks are functions that use React hooks to package reusable stateful logic. They let components share behavior without render props, higher-order components, or duplicated hook code.
+## 1. Why This Exists — The Problem First
 
-A custom hook must follow the Rules of Hooks and usually starts with `use`, such as `useDebounce`, `useOnlineStatus`, or `useLocalStorage`. It should expose a clear API and hide implementation details.
+Two screens often need the same behavior: delay a search until typing stops, subscribe to the browser's online status, or keep a form value in local storage. Copying that logic makes the screens drift. One copy eventually forgets timer cleanup, another uses a stale value, and a third exposes a slightly different API. Fixing the bug means finding every copy.
 
-## 1. One-line mental model
-A custom hook extracts reusable React logic into a function.
+The opposite mistake is hiding the behavior inside a wrapper component that renders no useful UI. Several wrappers make the tree hard to follow and force data through render props. A custom hook gives the behavior one home while letting each component keep control of its own markup.
 
-## 2. Problem it solves
-Components often repeat state, subscriptions, timers, data handling, or browser API logic.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Custom hooks are JavaScript functions.
-- They can call built-in hooks.
-- Names should start with `use`.
-- Each call gets its own state.
-- They share logic, not state by default.
+Think of a custom hook as a sewing pattern, not a shared garment.
 
-## 4. Visual / analogy
-A custom hook is like a reusable recipe: each kitchen follows the same steps but gets its own meal.
+The pattern describes where to measure, which pieces to cut, and how to stitch them together. Two tailors can use the same pattern, but each produces a separate jacket with separate fabric and measurements. Changing one jacket does not change the other. In React, the pattern is the hook function, while each call from a rendered component gets its own `useState`, `useRef`, memoized value, and effect state.
 
-```mermaid
-flowchart TD
-  ComponentA --> Hook["useDebounce"]
-  ComponentB --> Hook
-  Hook --> Logic["Reusable hook logic"]
-```
+The pattern also has a public fitting guide: the values and actions it returns. The hook can hide timer IDs, subscriptions, and cleanup details, just as the pattern hides seam allowances. It should not decide the consumer's UI. A search screen and a command palette can use the same debounce hook and render completely different interfaces.
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+A custom hook is an ordinary JavaScript or TypeScript function that calls hooks. The `use` prefix is the convention that tells humans and the React Hooks linter, “this function participates in the Rules of Hooks.” React does not call a special `createCustomHook` API.
+
+When a component renders, it calls the custom hook like any other function. The custom hook calls its built-in hooks in a fixed order, and those calls are part of the calling component's render. React associates each hook call with that component's current hook state by position. If `useSearchModel` calls `useState` and then `useMemo`, those calls occupy two stable positions in the component's hook sequence. If a later render skips `useSearchModel` or makes it call a hook conditionally, the sequence no longer matches and React reports a Rules of Hooks violation.
+
+That is why a custom hook must be called at the top level of a component or another custom hook—not inside an `if`, loop, event handler, nested function, or after an early return. Conditions belong inside the hook's logic. For example, `useOnlineStatus()` can always subscribe through `useSyncExternalStore`; a caller that does not need the result can avoid rendering that component rather than conditionally calling the hook.
+
+Each call is isolated. If `Header` and `Checkout` both call `useDebouncedValue(query, 300)`, each has a separate current value and timer. The code is shared; the hook state is not. Shared state requires a shared owner such as lifted state, context, or an external store. A custom hook can read or write shared state, but that sharing comes from the store or context—not from the hook function itself.
+
+Composition is just nesting ordinary function calls while preserving hook order. `useCheckoutSearch` may call `useDebouncedValue` and `useOnlineStatus`; all of their internal hook calls still belong to the component that called `useCheckoutSearch`. This lets a large behavior be built from focused pieces, but it does not create a new state boundary.
+
+The return value is the hook's API. Return the smallest useful contract: a value, a tuple when the relationship is obvious, or an object when names make several values clearer. Return actions that express intent (`toggle`, `retry`, `reset`) rather than exposing internal setters unless the setter is genuinely part of the contract. Stability is part of that API: memoize a returned callback only when consumers need referential stability, such as a dependency array or a memoized child. Memoizing every object and function adds complexity without automatically improving performance.
+
+Hooks that synchronize with an external system still need correct lifecycle behavior. A debounce hook owns a timer, so its effect clears the old timer before scheduling a new one and on unmount. A browser subscription should use an API designed for external stores when possible. Data fetching belongs in the repository's data-fetching approach (for example, TanStack Query) rather than every custom hook inventing loading, cancellation, caching, and race handling.
+
+## 4. Real Code — See It Working
+
+The following file assumes React 18+ and TypeScript in a browser build such as Vite. It is complete enough to paste into `src/SearchPage.tsx`; the `searchProducts` function is an injected production boundary, so the hook does not own network caching.
 
 ```tsx
-function useBoolean(initial = false) {
-  const [value, setValue] = React.useState(initial);
-  return {
-    value,
-    toggle: () => setValue((current) => !current),
+import { useEffect, useMemo, useState } from "react";
+
+type Product = { id: string; name: string };
+
+type SearchPageProps = {
+  searchProducts: (query: string, signal: AbortSignal) => Promise<Product[]>;
+};
+
+export function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    // Every new value gets a fresh timer; cleanup prevents an old value from winning later.
+    const timerId = window.setTimeout(() => {
+      setDebouncedValue(value);
+    }, delayMs);
+
+    return () => window.clearTimeout(timerId);
+  }, [value, delayMs]);
+
+  return debouncedValue;
+}
+
+export function useSearchProducts(
+  query: string,
+  searchProducts: SearchPageProps["searchProducts"],
+) {
+  const debouncedQuery = useDebouncedValue(query.trim(), 300);
+  const [state, setState] = useState<{
+    status: "idle" | "loading" | "success" | "error";
+    products: Product[];
+    error: string | null;
+  }>({ status: "idle", products: [], error: null });
+
+  useEffect(() => {
+    if (!debouncedQuery) {
+      setState({ status: "idle", products: [], error: null });
+      return;
+    }
+
+    const controller = new AbortController();
+    setState((current) => ({ ...current, status: "loading", error: null }));
+
+    void searchProducts(debouncedQuery, controller.signal)
+      .then((products) => setState({ status: "success", products, error: null }))
+      .catch((error: unknown) => {
+        // Abort is expected when the user types a newer query; it is not a user error.
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setState({ status: "error", products: [], error: "Search failed" });
+      });
+
+    return () => controller.abort();
+  }, [debouncedQuery, searchProducts]);
+
+  return state;
+}
+
+export function SearchPage({ searchProducts }: SearchPageProps) {
+  const [query, setQuery] = useState("");
+  const result = useSearchProducts(query, searchProducts);
+  const resultLabel = useMemo(() => {
+    if (result.status === "loading") return "Searching…";
+    if (result.status === "error") return result.error;
+    if (!query.trim()) return "Type to search";
+    return `${result.products.length} result(s)`;
+  }, [query, result]);
+
+  return (
+    <main>
+      <label>
+        Product search
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Try “keyboard”"
+        />
+      </label>
+      <p aria-live="polite">{resultLabel}</p>
+      <ul>
+        {result.products.map((product) => <li key={product.id}>{product.name}</li>)}
+      </ul>
+    </main>
+  );
+}
+```
+
+The debounce hook owns only time. The search hook owns request lifecycle and aborts the request when its query changes or the component unmounts. In a real app, `searchProducts` should be stable—define it outside the component, memoize it, or obtain it from a stable client—otherwise its changing identity will restart the request on every render.
+
+Here is a second complete hook that demonstrates composition without shared state. It uses the browser's external-store contract, so React can subscribe and read snapshots safely:
+
+```tsx
+import { useState, useSyncExternalStore } from "react";
+
+function subscribeToOnlineStatus(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
   };
 }
-```
 
-## 6. Real-world example
+export function useOnlineStatus() {
+  return useSyncExternalStore(
+    subscribeToOnlineStatus,
+    () => window.navigator.onLine,
+    () => true, // Server-rendered HTML assumes online until hydration can read the browser.
+  );
+}
 
-```tsx
-function useDebounce<T>(value: T, delay: number) {
-  const [debounced, setDebounced] = React.useState(value);
+export function SaveButton({ onSave }: { onSave: () => Promise<void> }) {
+  const online = useOnlineStatus();
+  const [saving, setSaving] = useState(false);
 
-  React.useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(value), delay);
-    return () => window.clearTimeout(id);
-  }, [value, delay]);
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave();
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  return debounced;
+  return (
+    <button disabled={!online || saving} onClick={() => void handleSave()}>
+      {online ? (saving ? "Saving…" : "Save") : "Offline"}
+    </button>
+  );
 }
 ```
 
-## 7. Common interview questions
-#### What is a custom hook?
-- **The Engine Mechanism (Why it behaves this way):** A custom hook is a JavaScript function whose name starts with `use` and that calls one or more built-in React hooks internally. When a component calls a custom hook, React doesn't treat it specially — it simply executes the function. Each built-in hook called inside the custom hook registers itself on the calling component's Fiber node, using the same hook list that the component's direct hook calls use. The custom hook is essentially a function that groups multiple hook calls together, and each call site gets its own independent set of hook states on its own Fiber.
-- **The Unforgettable Mental Model:** The **Recipe Card**. A recipe card (custom hook) groups together individual steps (built-in hooks). Each cook (component) who follows the recipe gets their own meal (state) — the recipe doesn't share ingredients between cooks.
-- **The Trap:** Thinking custom hooks are a special React feature. They're just JavaScript functions that happen to call hooks. There's no `createCustomHook` API — the `use` prefix is the only convention.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A custom hook is a JavaScript function that starts with `use` and calls React hooks internally. It's not a special React API — it's just a function that groups hook calls together for reusability. Each component that calls a custom hook gets its own independent state and effects. Custom hooks let you extract and share stateful logic without duplicating code, replacing older patterns like render props and higher-order components."
+## 5. The Interview Questions — All of Them, Done Properly
 
-#### Why must hook names start with `use`?
-- **The Engine Mechanism (Why it behaves this way):** React's ESLint plugin (`eslint-plugin-react-hooks`) uses the `use` prefix to identify which functions are hooks and therefore subject to the Rules of Hooks. The linter tracks all functions starting with `use` and ensures they're only called at the top level of components or other hooks. Without the prefix, the linter can't distinguish a custom hook from a regular function, and it won't enforce the rules. Additionally, React DevTools uses the prefix to display hook information in the component inspector.
-- **The Unforgettable Mental Model:** The **Uniform**. The `use` prefix is like a uniform that tells the linter "I'm a hook — apply the hook rules to me." Without the uniform, the linter treats the function as a regular function and doesn't enforce hook constraints.
-- **The Trap:** Naming a custom hook without the `use` prefix: `function fetchData() { useState(...) }`. The linter won't catch rule violations, and DevTools won't display it properly.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The `use` prefix is a convention that serves two purposes. First, it tells the ESLint plugin that this function is a hook, so it enforces the Rules of Hooks — ensuring hooks aren't called conditionally or in loops. Second, it tells React DevTools to display the hook's state in the component inspector. Without the prefix, the linter won't catch violations and DevTools won't recognize it. It's not enforced by React at runtime, but it's essential for tooling and code safety."
+**Q: What makes a function a custom hook?**
 
-#### Do custom hooks share state?
-- **The Engine Mechanism (Why it behaves this way):** No. Each component that calls a custom hook gets its own independent set of hook states. When React processes a component's hooks, it builds a linked list of hook objects on that component's Fiber node. Each call site — whether it's a direct `useState` in the component or a `useState` inside a custom hook — creates a new entry in that component's hook list. Two different components calling the same custom hook each have their own Fiber, their own hook list, and their own state values. There is no shared state between them.
-- **The Unforgettable Mental Model:** The **Franchise Restaurant**. Every branch (component) follows the same recipe (custom hook), but each has its own kitchen, its own ingredients, and its own meals. One branch running out of tomatoes doesn't affect the others.
-- **The Trap:** Assuming that because two components call the same custom hook, they share state. They don't — each call creates independent state.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: No, custom hooks do not share state between components. Each component that calls a custom hook gets its own independent state, effects, and memoized values. The custom hook is just a function that groups hook calls — and each component's hooks are stored on its own Fiber node. If you need shared state, you'd use Context, a global store like Zustand, or lift state up to a common parent. Custom hooks share logic, not state."
+It is a function that participates in the Hooks rules by calling React hooks, directly or through another custom hook, and conventionally starts with `use`. There is no special runtime registration step. The value is the reusable stateful behavior and the small API it returns, not a new component or a special kind of JavaScript function.
 
-#### How do custom hooks replace render props?
-- **The Engine Mechanism (Why it behaves this way):** Render props pattern passes a function as a prop that returns JSX, allowing a component to share stateful logic with its children. This creates deeply nested component trees ("wrapper hell") when multiple render props are composed. Custom hooks achieve the same logic sharing by calling hooks directly in the component body, keeping the component tree flat. The hook returns data and functions that the component uses in its own JSX, eliminating the need for wrapper components and prop functions.
-- **The Unforgettable Mental Model:** The **Russian Dolls vs. the Buffet**. Render props are like Russian dolls — each wrapper contains another, and you dig through layers to get to the content. Custom hooks are like a buffet — you pick what you need directly, no nesting required.
-- **The Trap:** Over-engineering custom hooks to replicate the exact API of a render prop component. Custom hooks should return data and functions, not JSX.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Render props share logic by wrapping components with a function-as-child pattern, which creates deep nesting when you compose multiple render props. Custom hooks achieve the same logic sharing by calling hooks directly in the component body. Instead of wrapping `<DataProvider render={data => <Child data={data} />}>`, you call `const data = useData()` and use the result directly. This keeps the component tree flat, makes the code easier to read, and eliminates wrapper hell. Custom hooks are the modern replacement for both render props and higher-order components."
+**Q: Do two components share state when they call the same custom hook?**
 
-#### How do you test custom hooks?
-- **The Engine Mechanism (Why it behaves this way):** Custom hooks can't be called outside a React component, so testing them requires rendering a test component that uses the hook. The `@testing-library/react-hooks` library (now merged into `@testing-library/react` via `renderHook`) creates a test harness that renders a minimal component, calls the hook, and exposes its return value for assertions. The test component goes through the full React lifecycle — mount, render, commit, effect execution — so the hook behaves exactly as it would in a real component. You can then assert on returned values, trigger returned functions, and verify side effects.
-- **The Unforgettable Mental Model:** The **Test Kitchen**. You can't taste a recipe without cooking it first. The test harness is a test kitchen — it provides the environment (React component) where the recipe (custom hook) can be prepared and tasted (tested).
-- **The Trap:** Trying to call a custom hook directly in a Jest test: `const result = useMyHook()`. This violates the Rules of Hooks because the call isn't inside a React component.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I test custom hooks using `renderHook` from Testing Library, which creates a minimal test component that calls the hook. This gives me access to the hook's return value, and I can assert on it, trigger returned functions, and verify side effects. For hooks with effects, I use `act()` to ensure all updates are flushed. I also test edge cases — initial values, dependency changes, cleanup behavior — the same way I'd test any component logic. The key is that the hook runs in a real React environment, not in isolation."
+No. Each call runs during a different component render and gets state associated with that component instance. Two calls share the hook implementation, but not its `useState` values, refs, memoized values, or effect lifecycles. To share state, put ownership in a common parent, context, or external store and let a hook provide a convenient access API.
 
-#### What should a custom hook return?
-- **The Engine Mechanism (Why it behaves this way):** A custom hook should return the data and functions that the calling component needs to render and interact with the hook's internal state. The return value can be a single value, an array (like `useState`), or an object (preferred for hooks with more than two return values). Objects are preferred because they're self-documenting — `const { data, loading, error } = useFetch(url)` is clearer than array destructuring. The returned functions should be stable (wrapped in `useCallback` when needed) to avoid unnecessary re-renders in consuming components.
-- **The Unforgettable Mental Model:** The **Vending Machine Output**. The machine (hook) takes your input and returns exactly what you need: the product (data), a status light (loading/error), and maybe a receipt (metadata). Nothing more, nothing less.
-- **The Trap:** Returning too much internal state or returning unstable objects/functions that cause consuming components to re-render unnecessarily.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A custom hook should return the minimal API that consuming components need — typically the data, loading state, error state, and any action functions. For hooks with more than two return values, I prefer returning an object because it's self-documenting: `const { data, loading, error } = useFetch(url)`. I also ensure returned functions are stable by wrapping them in `useCallback` when they'll be used in dependency arrays or passed to memoized children. The hook should hide implementation details and expose a clean, intentional interface."
+**Q: Why must custom hooks start with `use`? Is React enforcing the name?**
 
-#### How do custom hooks compose?
-- **The Engine Mechanism (Why it behaves this way):** Custom hooks compose by calling other custom hooks within their body. When Hook A calls Hook B, React processes Hook B's internal hooks as part of Hook A's calling component's Fiber. The hook chain is flattened — React doesn't create a nested hook structure. Each built-in hook call, regardless of how many custom hook layers deep it is, registers on the same Fiber's hook list. This means composed hooks follow the same Rules of Hooks: they must be called unconditionally and in the same order every render.
-- **The Unforgettable Mental Model:** The **Lego Tower**. Each custom hook is a Lego block. You can stack blocks on blocks (hooks calling hooks), but the final tower (Fiber's hook list) is still a single linear structure. The blocks don't create sub-towers — they're all part of one tower.
-- **The Trap:** Calling a composed hook conditionally: `if (condition) useHookA()`. This breaks the hook order for the entire chain, including all hooks called inside `useHookA`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Custom hooks compose by calling other hooks within their body. When Hook A calls Hook B, React flattens the entire chain — every built-in hook call registers on the calling component's Fiber, regardless of how many custom hook layers deep it is. This means composed hooks must follow the same Rules of Hooks: unconditional calls in the same order. I use composition to build complex hooks from simpler ones — for example, `useAuthenticatedFetch` might compose `useAuth` and `useFetch`. The key is keeping each hook focused on one responsibility."
+The prefix is primarily a tooling and communication contract. The Hooks linter uses it to recognize custom hooks and check their callers, and DevTools can present the hook meaningfully. React's runtime does not reject every function that lacks the prefix, but omitting it hides the function from the rule checker and invites unsafe calls. A function that calls hooks should follow the convention.
 
-## 8. Active recall test
-1. **What makes a function a custom hook?**
-   - **Explanation:** It's a JavaScript function whose name starts with `use` and that calls one or more built-in React hooks internally. There's no special API — just the naming convention and hook calls.
-2. **Does state inside a custom hook get shared automatically?**
-   - **Explanation:** No. Each component that calls the custom hook gets its own independent state on its own Fiber node. Custom hooks share logic, not state.
-3. **Why use the `use` prefix?**
-   - **Explanation:** It tells the ESLint plugin to enforce the Rules of Hooks and tells React DevTools to display the hook's state. Without it, tooling can't identify the function as a hook.
-4. **What is one custom hook you can build?**
-   - **Explanation:** `useDebounce` — it takes a value and a delay, uses `useState` to store the debounced value and `useEffect` with a timer to update it after the delay passes.
-5. **What should custom hooks hide?**
-   - **Explanation:** Implementation details — internal state management, effect cleanup logic, timer IDs, subscription handling. They should expose only the data and functions the consumer needs.
+**Q: Why can a custom hook not be called conditionally?**
 
-## 9. Mistakes / traps
-- Calling hooks conditionally inside custom hooks.
-- Assuming hook state is global.
-- Returning unstable APIs unnecessarily.
-- Making custom hooks too broad.
-- Hiding too many unrelated responsibilities in one hook.
+React matches hook state by the stable order of hook calls during a component render. If the first render calls a custom hook and the next render skips it, all later hook positions shift. React can then associate stored state with the wrong call. Keep the custom hook call unconditional and put the condition inside the hook, or render a different keyed component when a genuinely separate lifecycle is required.
 
-## 10. Compare with related concepts
-- **Custom hook vs utility function:** custom hook can call React hooks; utility cannot.
-- **Custom hook vs component:** hook returns logic/data; component returns UI.
-- **Custom hook vs context:** hook can read context, but context provides shared values.
+**Q: When should logic be a custom hook instead of a utility function?**
 
-## 11. Summary from memory
-Explain how `useDebounce` extracts timer logic from a search component.
+Use a utility for pure work that needs no React lifecycle: parsing, formatting, validation, or transforming data. Use a custom hook when the behavior needs state, a ref, a subscription, memoization tied to render inputs, or React context. Keeping pure work in utilities makes it callable outside React and easy to test without a component harness.
 
-## 12. Spaced revision prompts
-- After 1 day: Define custom hook.
-- After 3 days: Build `useBoolean`.
-- After 7 days: Explain custom hook state isolation.
-- After 14 days: Test a custom hook.
+**Q: How do custom hooks replace render props or higher-order components?**
 
+Render props and higher-order components share behavior through extra component layers. A hook shares the non-visual behavior directly in the consuming component, so the consumer chooses its own JSX and the tree stays flatter. They are not identical replacements: a render-prop component can deliberately own DOM structure and provide a rendering boundary, while a hook is best when the reusable result is data and actions rather than markup.
+
+**Q: What should a custom hook return?**
+
+Return the smallest stable contract that consumers need. A single value is ideal for `useOnlineStatus`; an object such as `{ status, data, error, retry }` is clearer for several named values. Do not leak timer IDs, controllers, or internal setters unless callers truly need them. Stabilize returned functions or objects only when identity affects a consumer; otherwise, memoization is noise rather than a guarantee of faster rendering.
+
+**Q: How do you test a custom hook?**
+
+Test observable behavior in a real React environment. For a reusable, UI-independent hook, `renderHook` from the current React Testing Library setup can provide a small harness; use `act` around actions that schedule updates and provide a `wrapper` when the hook needs context. For a hook whose meaning is tightly coupled to a form, DOM, or user flow, render the real component instead. Assert returned values, rendered behavior, transitions, errors, and cleanup—not internal state names or the number of hook calls.
+
+## 6. The Traps — What Goes Wrong
+
+Calling a hook from a normal helper is not made safe by giving the helper a `use`-sounding name. The caller must be a component or custom hook, and the call must be top-level. A function like `formatAndUseTheme()` called from a click handler violates the render-time contract; split the pure formatting from the component's top-level `useTheme()` call.
+
+Assuming a custom hook is a singleton causes subtle product bugs. Two `useDraft()` calls do not magically edit one draft. If synchronization is required, choose an explicit owner and synchronization mechanism. The hook can wrap that context or store, but the shared lifetime must be visible in the architecture.
+
+Putting a condition around a hook is another common failure:
+
+```tsx
+// Wrong: the hook sequence changes when enabled changes.
+if (enabled) {
+  useOnlineStatus();
+}
+
+// Right: call it every render; decide how to use its result.
+const online = useOnlineStatus();
+const canSubmit = enabled && online;
+```
+
+Returning a fresh callback that consumers place in an effect dependency can create a loop. The hook should either return a stable callback with correct dependencies, or the consumer should call the action from an event handler. `useCallback` is not a cure for an unclear API and must not hide missing dependencies.
+
+A custom hook that fetches data with a hand-written effect can accidentally show an old response after a newer query, leak updates after unmount, or duplicate caching logic. If the repository uses a query library, let that library own server state. If a local effect is justified, include cancellation or request identity handling and test out-of-order responses.
+
+Testing the hook by calling `useDebouncedValue("a", 300)` directly in a Node test does not test React behavior and violates the Rules of Hooks. Render it through `renderHook` or a small component. Conversely, do not use isolated hook tests to avoid testing a form's actual accessible behavior when the hook's contract is the form interaction.
+
+## 7. Compare With Related Concepts
+
+**Custom hook vs utility function:** A hook can call React hooks and receives a render lifecycle; a utility is plain JavaScript and can run anywhere. Use a utility for pure computation and a custom hook for React-owned state or synchronization.
+
+**Custom hook vs component:** A hook returns data and actions; a component returns React elements and owns a UI boundary. Use a hook when the consumer should control markup, and a component when the structure, accessibility behavior, or visual boundary is itself reusable.
+
+**Custom hook vs context:** A hook is a reusable access/behavior function; context is a mechanism for making one value available to descendants. Use a custom hook to package context access and validation, but use context (or a store) when state must actually be shared.
+
+**Custom hook vs render prop:** A hook keeps the tree flat and shares non-visual logic; a render prop shares logic while explicitly handing rendering control to a child function. Use a render prop when the provider must own a rendering or measurement boundary; use a hook when consumers need values and actions.
+
+**Local hook state vs external store:** `useState` inside a custom hook belongs to one component instance; an external store has its own lifetime and can be observed by many components. Use local state for isolated behavior and an external store for deliberately shared state, persistence, or cross-tree coordination.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+A custom hook is a shared recipe cooked in separate kitchens: the recipe and cleanup logic are reused, but every component gets its own serving. Remember the boundary—hooks share behavior by default; context or a store shares state by explicit ownership.
