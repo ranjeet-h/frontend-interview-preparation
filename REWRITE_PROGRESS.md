@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (343 pages complete)
+## Completed Sections Summary (373 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -20,7 +20,8 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
 | **SQLAlchemy Core Concepts** (`src/full-stack/backend/sqlalchemy/`) | 30 / 30 | Complete |
-| **Total Completed Concept Pages** | **343** | **100% Done** |
+| **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
+| **Total Completed Concept Pages** | **373** | **100% Done** |
 
 ---
 
@@ -43,8 +44,8 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Authentication | 30 | 0 | 0 | 30 |
 | Coding practice | 30 | 0 | 0 | 30 |
 | Deployment | 25 | 0 | 0 | 25 |
-| **Express** (in rewrite now) | **30** | **0** | **8** | **22** |
-| **FastAPI** (in rewrite now) | **50** | **0** | **0** | **50** |
+| **Express** (in rewrite now) | **30** | **24** | **6** | **0** |
+| **FastAPI** (in rewrite now) | **50** | **0** | **2** | **48** |
 | Full-stack integration | 20 | 0 | 0 | 20 |
 | Observability | 25 | 0 | 0 | 25 |
 | Performance | 25 | 0 | 0 | 25 |
@@ -55,30 +56,31 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Senior scenarios | 25 | 0 | 0 | 25 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **440** | **0** | **8** | **432** |
+| **Total Backend** | **440** | **24** | **8** | **408** |
 
-Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `EXP-n` / `FA-n`); 8 Express pages were written in wave 1 and are in review/fix loop at last update.
+Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `EXP-n` / `FA-n`). Express waves 1–3 (24 pages) are committed and reviewed; wave 4 (Express global error handling, pagination, search, transactions, testing, deployment + FastAPI what-is / why-fast pages) is in flight. Counts refresh after every completed wave.
 
 ### MERN Status
 
-| Section | Total Pages | Rewritten | In-Flight / Assigned | Remaining |
+| Section | Total Pages | Accepted | In-Flight / Assigned | Not Started |
 |---|---:|---:|---:|---:|
 | MERN Full-Stack Patterns | 30 | 25 | 5 | 0 |
 
 ### Database Sections (Pending Rewrite)
 
-| Section | Leaf Pages Remaining |
-|---|---:|
-| SQL | 40 |
-| MySQL | 30 |
-| PostgreSQL | 35 |
-| SQL query practice | 30 |
-| **Total Database Remaining** | **135** |
+| Section | Total Pages | Completed | In-Flight / Assigned | Not Started |
+|---|---:|---:|---:|---:|
+| **SQL** | **40** | **40** | **0** | **0** |
+| **PostgreSQL** | **35** | **35** | **0** | **0** |
+| **MySQL** | **30** | **30** | **0** | **0** |
+| SQL query practice | 30 | 0 | 0 | 30 |
+| **Total Database** | **135** | **105** | **0** | **30** |
 
 ---
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **343**
+- **Total Completed Concept/System Pages:** **373**
 - **Total Completed Output Question Puzzles:** **15**
-- **Total Outstanding Leaf Pages:** **575** (440 Backend + 135 Database)
+- **Database Remaining:** **30** (SQL query practice)
+- **Backend Remaining:** **416** (408 not started + 8 in flight)
