@@ -2,161 +2,89 @@
 
 ## 1. Why This Exists — The Problem First
 
-Imagine shipping a chat application where users navigate between conversation channels in a sidebar.
+Imagine shipping a chat application where a user switches from the `General` room to `Engineering`. The screen should stop listening to `General` immediately and start listening to `Engineering`. If the code only connects when the component first appears, the UI keeps showing old messages; if it never disconnects, hidden rooms continue consuming sockets and processing events.
 
-In the first release, a developer subscribes to incoming WebSocket messages when the component mounts. When a user clicks from "General" to "Engineering", nothing happens: the screen stays glued to the "General" channel because the developer forgot to inspect prop changes and re-subscribe in an update handler. Worse, when the user navigates away to the Settings page, the WebSocket listener keeps firing in the background. Every new message attempts to update state on a destroyed component, leaking memory, clogging the network, and spitting red warnings into the console.
+The same problem appears with timers, browser event listeners, DOM measurements, media players, and in-flight requests. Each resource has a beginning, a period where it must reflect current props or state, and an end. React can render a component more than once, pause work, discard a render, or remove a subtree. Code that creates external work at the wrong moment can therefore produce duplicate subscriptions, stale closures, flicker, race conditions, or leaks.
 
-Before structured lifecycle mechanisms existed, UI components had no reliable way to coordinate with the outside world. Modern web apps do not live in a vacuum—they start timers, measure DOM elements, listen to browser window events, and stream data over sockets. If you don't control the exact moments when these external connections are created, updated with fresh data, and cleanly severed, your application will suffer from stale data bugs, race conditions, and catastrophic memory leaks.
-
-Understanding lifecycle isn't about memorizing legacy API names; it is about mastering how React transitions your UI from creation to updates to destruction, and how to synchronize external systems with those transitions without leaking resources.
-
----
+The useful question is not “Which lifecycle method should I memorize?” It is “Which external system must match this render’s values, and what is the exact undo operation?” React’s lifecycle gives us the moments around mounting, updating, and unmounting; effects turn those moments into a synchronization contract.
 
 ## 2. The Analogy — Make It Obvious
 
-Think of a React component as a **guest staying in a smart hotel suite**:
+Think of a React component as a guest staying in a smart hotel suite. **Mounting is check-in:** the hotel creates the room assignment, connects the guest’s billing profile, and sets the thermostat. **Updating is a change during the stay:** the guest changes the temperature or requests more towels, so staff adjusts the existing room instead of demolishing and rebuilding it. **Unmounting is check-out:** staff disconnects the billing session, resets the room, and removes the guest’s temporary settings.
 
-```
-[ Check-In / Mount ]       --> Staff sets thermostat to 70°F & connects guest billing profile.
-                                 │
-                                 ▼
-[ Mid-Stay Update ]        --> Guest requests 65°F & extra towels.
-                                 Staff adjusts thermostat and delivers towels (no need to rebuild the room).
-                                 │
-                                 ▼
-[ Check-Out / Unmount ]    --> Guest leaves. Staff resets thermostat, clears billing, and strips beds
-                                 so the next guest gets a clean, fresh room.
-```
+The mapping is direct. A component’s props and state are the guest’s current preferences. The rendered DOM is the prepared room. A WebSocket, timer, or `window` listener is a service outside the room that must be connected while the guest needs it. Effect setup starts or updates that service; effect cleanup is the hotel’s exact reset procedure. When `roomId` changes, React cleans up the connection created for the old room before setting up the connection for the new room.
 
-1. **Mounting (Check-In & Initial Setup):** When the guest arrives, the hotel turns on the climate control to their preferred temperature, puts their name on the smart TV, and links their payment card. In React, this is when a component is first created and inserted into the browser DOM—it triggers initial data fetching, DOM measurements, and event listeners.
-2. **Updating (Preference Changes & Room Service):** During their stay, the guest changes the AC temperature from 70°F to 65°F or orders extra pillows. The hotel doesn't demolish and rebuild the entire room; housekeeping simply adjusts the thermostat and delivers the pillows. In React, when props or state change, React re-renders the component, calculates the visual differences, updates only the affected DOM nodes, and resynchronizes external systems to match the new values.
-3. **Unmounting (Check-Out & Full Reset):** When the guest checks out, housekeeping resets the thermostat, wipes the personal data from the TV, and disconnects the billing session. In React, when a component leaves the screen, it runs cleanup functions to kill active timers, close open WebSocket connections, and remove window listeners.
-
-### The Mental Shift: Class Lifecycles vs Hooks Synchronization
-
-In older class components, hotel staff had three separate, rigid binders organized by **calendar time**:
-- Binder 1: *Things to do at Check-in*
-- Binder 2: *Things to do on Every Day of the Stay*
-- Binder 3: *Things to do at Check-out*
-
-If you managed both the AC and the TV, AC instructions were chopped in half across all three binders.
-
-In modern functional React with Hooks, staff uses **feature-based rule cards**:
-- Rule Card A (Climate Control): *"Whenever target temperature is X, set AC to X. Whenever temperature changes or guest leaves, turn off the old setting."*
-- Rule Card B (Smart TV): *"Whenever guest name is Y, display Y on TV. When leaving, clear the screen."*
-
-Hooks organize your code by **what external resource is being synchronized**, rather than **what arbitrary time bucket it is**.
-
----
+This also explains the difference between old class lifecycles and Hooks. Class code put instructions in three calendar binders: “at check-in,” “during an update,” and “at check-out.” A single feature such as a socket was split across those binders. Hooks let the feature keep one rule card: “For this `roomId`, connect this socket; when the `roomId` changes or the guest leaves, disconnect that socket.” The organization follows the resource being synchronized rather than an arbitrary time bucket.
 
 ## 3. How It Actually Works — The Full Explanation
 
-React executes component lifecycles through a two-step engine architecture powered by React Fiber: the **Render Phase** and the **Commit Phase**, followed by the **Passive Effects Phase**.
+React’s work is easiest to understand as a sequence with a strict boundary around side effects. **The render phase** calls function components or class `render()` methods and calculates what the next UI should be. It is a computation, not a safe place to open sockets, mutate the DOM, send requests, write to global state, or call `setState`. In concurrent rendering, React may pause, restart, or abandon this calculation before it ever becomes visible.
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│ 1. RENDER PHASE (Pure computation — Pausable, abortable, no DOM side-effects) │
-│    - Calls Component function (or class render())                      │
-│    - Calculates Virtual DOM tree & reconciles diffs against previous Fiber│
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ 2. COMMIT PHASE (Synchronous DOM mutations)                           │
-│    - React updates actual host DOM nodes                               │
-│    - Synchronously invokes useLayoutEffect / componentDidMount/Update  │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ (Browser paints screen pixels)
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ 3. PASSIVE EFFECTS PHASE (Post-paint asynchronous execution)           │
-│    - React runs useEffect cleanup functions for changed dependencies   │
-│    - React executes new useEffect setup functions                      │
-└────────────────────────────────────────────────────────────────────────┘
-```
+Every render creates an immutable snapshot of the props, state, and context read by that render. A function’s event handler or effect closes over that snapshot; it does not magically read values from a future render. This is why an effect must list the reactive values it reads, and why a functional state updater is useful when a callback needs the latest state. A later render creates new closures, while callbacks from an obsolete snapshot may still run unless cleanup or an explicit current-request guard prevents them from affecting the UI.
 
-### The Three Fundamental Phases
+**The commit phase** applies the finished result to the host environment, such as the browser DOM. For an update, the relevant layout-effect cleanup runs first, React mutates the DOM and attaches refs, and then the new layout-effect setup runs—all before the browser paints the next frame. `getSnapshotBeforeUpdate` reads just before DOM mutation, while `componentDidUpdate` runs after it.
 
-Every component instance goes through three lifecycle stages:
+**Passive effects run after commit and generally after paint.** React flushes `useEffect` cleanup for effects whose dependencies changed, then runs the corresponding new setup. The interaction that caused the update can affect timing, including allowing React to flush passive work before paint, so “after paint” is a default rather than a universal guarantee. The old passive effect is still cleaned up before its replacement is set up.
 
-1. **Mounting:** The component is evaluated for the first time, its Fiber node is constructed, real DOM nodes are created and appended to the document, and setup effects run.
-2. **Updating:** Triggered by changes to `props`, `state`, or consumed `context`. React re-evaluates the component, reconciles differences with the previous tree, applies minimal patches to the real DOM, and re-synchronizes effects whose dependencies changed.
-3. **Unmounting:** The component is removed from the React hierarchy. React removes its real DOM nodes and executes all registered cleanup callbacks.
+There are three user-facing lifecycle stages. **Mounting** is the first committed appearance of a component instance. React renders it, commits its DOM, and then runs layout and passive effect setup. **Updating** happens when relevant props, state, or context change. React renders again, reconciles the result, commits the minimal DOM changes, and re-synchronizes only the effects whose dependency values changed. **Unmounting** removes the component from the rendered tree; layout cleanup runs during the commit before DOM removal, while passive cleanup runs after commit. External resources can then be released without assuming another render.
 
----
-
-### Class Components: Imperative Time-Based Lifecycles
-
-In React class components, lifecycle management was imperative. You wrote explicit hook methods that React invoked at specific points in time:
-
-- **`constructor(props)`:** Initializes local state and binds method handlers before the component mounts.
-- **`static getDerivedStateFromProps(props, state)`:** A rare, pure static method that calculates state updates derived directly from incoming props before rendering.
-- **`render()`:** The mandatory pure function returning the JSX structure. Must never perform side effects or mutate state.
-- **`componentDidMount()`:** Executes immediately after the initial commit. Safe for DOM manipulations, network requests, and external subscriptions.
-- **`shouldComponentUpdate(nextProps, nextState)`:** Performance optimization gate returning a boolean. If `false`, React skips rendering this subtree.
-- **`getSnapshotBeforeUpdate(prevProps, prevState)`:** Runs immediately before DOM mutations are committed. Reads layout information (e.g., scroll position) to pass to `componentDidUpdate`.
-- **`componentDidUpdate(prevProps, prevState, snapshot)`:** Runs immediately after an update is committed to the DOM. Requires manual conditional checks (`if (prevProps.id !== this.props.id)`) to avoid infinite loops when updating state.
-- **`componentWillUnmount()`:** Executes immediately before the component is destroyed. Used for tearing down subscriptions and timers.
-
----
-
-### Functional Components: Declarative State Synchronization
-
-Modern React replaces time-based lifecycle methods with **effects that synchronize the outside world with the current state snapshot**.
-
-Instead of thinking "I want this code to run on mount," you think:
-> *"I want this external system (WebSocket, DOM event, fetch call) to stay synchronized with this specific set of reactive values."*
+**Component identity controls state ownership.** React preserves local state when the same component type remains in the same position in the rendered tree. A different type, a different `key`, or a different position can create a different identity and reset that subtree’s state. State belongs to that identity—not to a particular function invocation. For example, changing rooms can intentionally reset chat history with a key remount:
 
 ```tsx
-useEffect(() => {
-  // 1. SETUP: Synchronize external system to current state/props snapshot
-  const connection = chatApi.connect(roomId);
-
-  // 2. CLEANUP: Undo previous synchronization before re-running or on unmount
-  return () => {
-    connection.disconnect();
-  };
-}, [roomId]); // 3. DEPENDENCY ARRAY: Re-sync whenever roomId changes
+<ChatRoomHook key={roomId} roomId={roomId} />
 ```
 
-#### How Effect Execution Timing Works:
-1. **On First Render (Mount):** Component renders $\rightarrow$ DOM is updated $\rightarrow$ Browser paints $\rightarrow$ Setup function executes.
-2. **On Re-render (Update):** Component renders $\rightarrow$ DOM is updated $\rightarrow$ Browser paints $\rightarrow$ **Previous cleanup function executes** with old values $\rightarrow$ **New setup function executes** with new values.
-3. **On Destruction (Unmount):** Component removed $\rightarrow$ DOM nodes detached $\rightarrow$ **Final cleanup function executes**.
+Without the key, the same `ChatRoomHook` identity can preserve `messages` while its effect synchronizes the socket to the new room. Use a key when a fresh local state boundary is desired; otherwise keep the stable identity and update state deliberately.
 
----
+**Class components use imperative, time-based callbacks.** `constructor(props)` initializes state and bindings before the first render. `static getDerivedStateFromProps` is a rare pure escape hatch for deriving state from props. `render()` must stay pure. `componentDidMount()` runs after the initial commit and is a place for subscriptions, requests, or DOM work. `shouldComponentUpdate(nextProps, nextState)` can skip an update as a performance optimization. `getSnapshotBeforeUpdate` reads information such as scroll position immediately before DOM mutations, and passes the snapshot to `componentDidUpdate`. `componentDidUpdate` runs after an update and often needs a comparison such as `prevProps.roomId !== this.props.roomId` before starting more work. `componentWillUnmount()` is the teardown point.
 
-### `useEffect` vs `useLayoutEffect`
+The weakness is not that those methods are incorrect. The weakness is that one external feature is commonly scattered across several methods, and the developer must manually keep the conditions symmetrical. A missed comparison reconnects too late; a missed unmount cleanup leaks; an unconditional `setState` in `componentDidUpdate` loops.
 
-The browser rendering pipeline determines the difference between these two hooks:
+There is no one-to-one class-method-to-Hook conversion. The useful mapping is by responsibility, with caveats:
 
+| Class API | Closest Hook-era approach | Caveat |
+|---|---|---|
+| `constructor` | `useState`/`useReducer` initializers; closures replace most bindings | Hooks have no constructor phase; keep initialization pure and do not use it to start external work. |
+| `componentDidMount` | `useEffect` or `useLayoutEffect` with dependencies | The Hook is a synchronization declaration, not a mount-only callback; Strict Mode can run setup and cleanup again in development. |
+| `componentDidUpdate` | An effect whose dependencies identify the synchronized values | Effects run after commit and combine setup with cleanup; use an explicit previous-value ref only when the distinction is genuinely needed. |
+| `componentWillUnmount` | The cleanup function returned by an effect | Cleanup belongs to the resource setup and can run before replacement setup, not only on final unmount. |
+| `getSnapshotBeforeUpdate` | `useLayoutEffect` plus a ref storing the previous measurement | There is no exact Hook equivalent with the same pre-mutation callback slot; a layout effect reads after DOM mutation, so design the measurement around that timing. |
+| `shouldComponentUpdate` | `memo`, stable props, and measured component boundaries | `memo` is a render optimization, not a general lifecycle replacement, and it does not prevent state or context updates. |
+| `getDerivedStateFromProps` | Usually derive during render; sometimes `useMemo`, controlled props, or a key boundary | There is no direct Hook equivalent; avoid duplicating props in state and use this pattern only for a real state-machine need. |
+
+These are responsibility-level correspondences, not promises that Hooks reproduce class timing or semantics exactly.
+
+**Function components use declarative synchronization.** An effect says, “When these reactive values describe this render, keep this external system configured for that snapshot.” The dependency array is not a timer or a command to “run once.” It describes which values can make the synchronization invalid. React compares dependency values with `Object.is`; if a dependency changed, it runs cleanup for the previous setup and then runs setup with the new render’s values.
+
+```tsx
+// Contextual but complete: the application supplies ./chatApi.
+import { useEffect } from 'react';
+import { chatApi } from './chatApi';
+
+export function ChatRoom({ roomId }: { roomId: string }) {
+  useEffect(() => {
+    const connection = chatApi.connect(roomId);
+
+    return () => {
+      connection.disconnect();
+    };
+  }, [roomId]);
+
+  return <h2>Room: {roomId}</h2>;
+}
 ```
-DOM Mutations Committed  -->  [useLayoutEffect runs synchronously]  -->  Browser Paints Pixels  -->  [useEffect runs asynchronously]
-```
 
-- **`useEffect` (Passive Effect):** Executes *asynchronously after* the browser has painted the screen. It avoids blocking user interaction or smooth animations. Use this for data fetching, subscriptions, logging, and state synchronization.
-- **`useLayoutEffect` (Layout Effect):** Executes *synchronously immediately after* React updates the DOM, but *before* the browser paints the new pixels. Use this only when you must measure DOM dimensions (e.g., tooltip width, scroll offsets) or mutate the DOM directly to prevent visual flickering before the user sees the frame.
+It runs when `./chatApi` exports `connect(roomId)` returning a connection with `disconnect()`.
 
----
+On the first committed mount, the component renders, the DOM is committed, and the effect connects the current room. On a later render where `roomId` is unchanged, React does not re-run this effect. When `roomId` changes, the cleanup closes the old connection, then setup connects the new room. On unmount, the final cleanup closes whichever connection belongs to the last committed render. Each setup must therefore be paired with an idempotent cleanup that can safely run during development checks as well as normal navigation.
 
-### React 18 StrictMode: Dev-Mode Double Invocation
+**`useEffect` and `useLayoutEffect` solve different timing problems.** Use `useEffect` by default for requests, subscriptions, timers, logging, and synchronization that does not need to block the first paint. Use `useLayoutEffect` only when the DOM must be measured or synchronously adjusted after React commits it but before the browser displays the frame. A tooltip that first renders at `(0, 0)` and jumps to its measured position is a layout-timing problem; a socket subscription is not.
 
-In React 18+ development mode (`<React.StrictMode>`), React automatically simulates an immediate unmount and remount cycle:
-
-$$\text{Mount (Setup)} \longrightarrow \text{Unmount (Cleanup)} \longrightarrow \text{Remount (Setup)}$$
-
-This intentional stress-test ensures that:
-1. Your effect setups have matching cleanup functions.
-2. Your setup and cleanup logic are **idempotent** (running setup twice produces the exact same outcome as running it once).
-3. The component can safely support future React features like concurrent offscreen rendering.
-
----
+**Strict Mode exposes lifecycle mistakes in development.** With React 18 and later, Strict Mode performs an extra effect setup and cleanup cycle on initial mount in development. The sequence is effectively setup, cleanup, setup, while state is preserved. This is not a production request to duplicate work. It is a stress test: a subscription without cleanup becomes visibly duplicated, and non-idempotent setup becomes easier to find. Code should remain correct if React temporarily removes and re-attaches a subtree in future rendering features.
 
 ## 4. Real Code — See It Working
 
-### 1. The Class Component Pattern (Imperative & Fragmented)
-
-Notice how the WebSocket subscription logic is split across three disconnected lifecycle methods:
+**A class-based implementation.** This is a complete component example, but the WebSocket URL is contextual: it requires a real server in the browser. Notice that the same resource is managed in mount, update, and unmount methods. The manual comparison and cleanup pairing are the important teaching points.
 
 ```tsx
 import React from 'react';
@@ -172,69 +100,57 @@ interface ChatState {
 export class ChatRoomClass extends React.Component<ChatProps, ChatState> {
   private socket: WebSocket | null = null;
 
-  state: ChatState = {
-    messages: [],
-  };
+  state: ChatState = { messages: [] };
 
-  // Phase 1: Mount - Establish connection
   componentDidMount() {
     this.connectToSocket(this.props.roomId);
   }
 
-  // Phase 2: Update - Check if roomId changed, reconnect
   componentDidUpdate(prevProps: ChatProps) {
     if (prevProps.roomId !== this.props.roomId) {
-      // Must manually clean up previous connection before starting new one
       this.disconnectSocket();
       this.setState({ messages: [] });
       this.connectToSocket(this.props.roomId);
     }
   }
 
-  // Phase 3: Unmount - Sever connection to prevent memory leak
   componentWillUnmount() {
     this.disconnectSocket();
   }
 
   private connectToSocket(roomId: string) {
     this.socket = new WebSocket(`wss://chat.example.com/rooms/${roomId}`);
-    this.socket.onmessage = (event) => {
-      this.setState((prev) => ({
-        messages: [...prev.messages, event.data],
+    this.socket.onmessage = (event: MessageEvent<string>) => {
+      this.setState((previous) => ({
+        messages: [...previous.messages, event.data],
       }));
     };
   }
 
   private disconnectSocket() {
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
-    }
+    this.socket?.close();
+    this.socket = null;
   }
 
   render() {
     return (
-      <div>
-        <h3>Room: {this.props.roomId}</h3>
+      <section>
+        <h2>Room: {this.props.roomId}</h2>
         <ul>
-          {this.state.messages.map((msg, idx) => (
-            <li key={idx}>{msg}</li>
+          {this.state.messages.map((message, index) => (
+            <li key={`${message}-${index}`}>{message}</li>
           ))}
         </ul>
-      </div>
+      </section>
     );
   }
 }
 ```
 
----
-
-### 2. The Modern Hook Pattern (Declarative & Cohesive)
-
-The same WebSocket feature condensed into a single self-contained synchronization block:
+**The Hook-based implementation.** This keeps the setup and its undo operation together. The socket is created inside the effect so cleanup closes the exact socket created by that effect, even if a later render has a different `roomId`. The functional state updater avoids reading a stale `messages` value from the effect’s closure. The URL is again contextual and needs a WebSocket server to run.
 
 ```tsx
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface ChatProps {
   roomId: string;
@@ -244,71 +160,122 @@ export function ChatRoomHook({ roomId }: ChatProps) {
   const [messages, setMessages] = useState<string[]>([]);
 
   useEffect(() => {
-    // Setup: Runs on mount AND whenever roomId changes
     const socket = new WebSocket(`wss://chat.example.com/rooms/${roomId}`);
 
-    socket.onmessage = (event: MessageEvent) => {
-      setMessages((prev) => [...prev, event.data]);
+    socket.onmessage = (event: MessageEvent<string>) => {
+      setMessages((previous) => [...previous, event.data]);
     };
 
-    // Cleanup: Runs before re-synchronizing (if roomId changes) AND on unmount
     return () => {
       socket.close();
-      setMessages([]); // Reset state for the incoming room
     };
-  }, [roomId]); // Explicit synchronization dependency
+  }, [roomId]);
 
   return (
-    <div>
-      <h3>Room: {roomId}</h3>
+    <section>
+      <h2>Room: {roomId}</h2>
       <ul>
-        {messages.map((msg, idx) => (
-          <li key={idx}>{msg}</li>
+        {messages.map((message, index) => (
+          <li key={`${message}-${index}`}>{message}</li>
         ))}
       </ul>
-    </div>
+    </section>
   );
 }
 ```
 
----
+If messages must be cleared when the room changes, do that as part of the new room’s synchronization or render model rather than calling `setMessages` from cleanup. Cleanup can run during unmount, when a state update is unnecessary, and the cleanup belongs to the old room. A simple alternative is to render the component with `key={roomId}` so changing rooms creates a new component instance and resets its local state.
 
-### 3. Preventing Visual Flickering with `useLayoutEffect`
-
-When calculating DOM dimensions to position a floating tooltip, `useEffect` causes a visible flash (tooltip jumps from default position to calculated coordinates). `useLayoutEffect` fixes this by measuring and updating the DOM before the browser paints:
+**An effect with a request cancellation boundary.** This is a contextual fragment because `/api/user/:id` is an application endpoint, but the browser code is runnable when that endpoint exists. Aborting the old request asks the transport to stop work; the `isCurrent` guard is the request-generation protection that prevents an obsolete completion from updating state even if abort races with resolution. The `AbortError` branch is intentionally ignored because cancellation is expected behavior during navigation.
 
 ```tsx
-import React, { useState, useRef, useLayoutEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-export function Tooltip({ targetRef, text }: { targetRef: React.RefObject<HTMLElement>; text: string }) {
+interface User {
+  id: string;
+  name: string;
+}
+
+export function UserDetails({ userId }: { userId: string }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let isCurrent = true;
+
+    async function loadUser() {
+      try {
+        const response = await fetch(`/api/user/${userId}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Request failed: ${response.status}`);
+        }
+        const nextUser = (await response.json()) as User;
+        if (!isCurrent) return;
+        setUser(nextUser);
+        setError(null);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return;
+        }
+        if (!isCurrent) return;
+        setError(error instanceof Error ? error.message : 'Unknown error');
+      }
+    }
+
+    void loadUser();
+    return () => {
+      isCurrent = false;
+      controller.abort();
+    };
+  }, [userId]);
+
+  if (error) return <p role="alert">{error}</p>;
+  return <p>{user ? user.name : 'Loading…'}</p>;
+}
+```
+
+**A layout measurement.** This example is also contextual because it expects a parent to pass a ref to a mounted target element. `useLayoutEffect` is appropriate because the tooltip’s position depends on the DOM geometry that React just committed. It should not be the default for ordinary data work because it can delay paint.
+
+```tsx
+import { RefObject, useLayoutEffect, useRef, useState } from 'react';
+
+export function Tooltip({
+  targetRef,
+  text,
+}: {
+  targetRef: RefObject<HTMLElement | null>;
+  text: string;
+}) {
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [position, setPosition] = useState({ top: 0, left: 0 });
 
   useLayoutEffect(() => {
-    // Runs synchronously after DOM mutations, BEFORE the browser paints pixels to the screen
-    if (targetRef.current && tooltipRef.current) {
-      const targetRect = targetRef.current.getBoundingClientRect();
-      const tooltipRect = tooltipRef.current.getBoundingClientRect();
+    const target = targetRef.current;
+    const tooltip = tooltipRef.current;
+    if (!target || !tooltip) return;
 
-      // Position tooltip centered directly above target button
-      setCoords({
-        top: targetRect.top - tooltipRect.height - 8,
-        left: targetRect.left + (targetRect.width - tooltipRect.width) / 2,
-      });
-    }
-  }, [targetRef]);
+    const targetRect = target.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    setPosition({
+      top: targetRect.top - tooltipRect.height - 8,
+      left: targetRect.left + (targetRect.width - tooltipRect.width) / 2,
+    });
+  }, [targetRef, text]);
 
   return (
     <div
       ref={tooltipRef}
       style={{
         position: 'fixed',
-        top: `${coords.top}px`,
-        left: `${coords.left}px`,
+        top: position.top,
+        left: position.left,
         background: '#1e293b',
-        color: '#fff',
+        color: 'white',
         padding: '4px 8px',
-        borderRadius: '4px',
+        borderRadius: 4,
         pointerEvents: 'none',
       }}
     >
@@ -318,243 +285,114 @@ export function Tooltip({ targetRef, text }: { targetRef: React.RefObject<HTMLEl
 }
 ```
 
----
-
 ## 5. The Interview Questions — All of Them, Done Properly
 
 **Q: What are the three fundamental phases of the React component lifecycle?**
 
-A component transitions through three phases:
-1. **Mount:** The initial creation where React renders the component for the first time, constructs the internal Fiber tree, inserts host DOM nodes into the document, and runs layout and passive effects.
-2. **Update:** Occurs when the component's `props`, internal `state`, or subscribed `context` change. React re-executes the component function, diffs the new Virtual DOM against the previous Fiber tree (reconciliation), patches changed DOM nodes, and runs cleanup/setup cycles for effects whose dependencies changed.
-3. **Unmount:** The component is removed from the DOM hierarchy. React unbinds DOM nodes, tears down refs, and executes all registered effect cleanup functions to free system resources.
+**Mount** is the first committed appearance. React renders the component, creates or updates its host DOM, and runs the effect setup associated with that committed instance. **Update** follows a relevant prop, state, or context change. React renders a new description, reconciles it with the previous one, commits the necessary DOM changes, and re-synchronizes effects whose dependencies changed. **Unmount** removes the component from the tree and runs cleanup so subscriptions, timers, sockets, and other external resources do not outlive the component.
 
----
+**Q: What is the difference between the render phase and the commit phase?**
 
-**Q: What is the difference between the Render Phase and the Commit Phase in React?**
+During render, React calculates the next result by calling components and reconciling their output. That work must be pure because React may restart or abandon it. During commit, React applies the chosen result to the DOM and runs commit-time lifecycle work. The commit is the point at which the calculated UI becomes observable; it is also why DOM mutation and external synchronization must not be hidden in the component body.
 
-React divides its internal work into two distinct phases:
-- **Render Phase:** React executes component functions (or class `render()` methods) to compute what the UI should look like and calculates the diff between the old and new Fiber trees. This phase is purely computational, has no observable DOM side-effects, and can be paused, split across frames, or aborted entirely by React's Concurrent Scheduler.
-- **Commit Phase:** React takes the computed diff and synchronously writes the changes to the real browser DOM. This phase cannot be interrupted. Once DOM nodes are updated, React synchronously runs `useLayoutEffect` (and class `componentDidMount`/`componentDidUpdate`), allows the browser to paint the screen, and then triggers `useEffect` callbacks asynchronously during the passive effects phase.
+**Q: Why is `useEffect` not a one-to-one replacement for three class methods?**
 
----
-
-**Q: Why is `useEffect` not a 1:1 replacement for `componentDidMount`, `componentDidUpdate`, and `componentWillUnmount`?**
-
-Class lifecycle methods were imperative, time-bound hooks (`componentDidMount` = "code to run on day 1"). Hooks represent **declarative state synchronization**. 
-- `useEffect` with an empty dependency array (`[]`) runs after the initial mount, but unlike `componentDidMount`, it runs *asynchronously after paint* rather than synchronously after commit. In development under React 18 StrictMode, it also runs twice.
-- An effect with dependencies does not just represent "update"; it represents maintaining synchronization between an external system and a specific snapshot of values over time.
-- The return function of `useEffect` runs not just on unmount, but *before every single re-execution of the effect* whenever dependencies change, ensuring the previous state's connection is dismantled before a new one is wired up.
-
----
+`componentDidMount`, `componentDidUpdate`, and `componentWillUnmount` are separate time-based callbacks. An effect is a synchronization unit. Its setup describes how to connect the current render to an external system, and its cleanup describes how to undo that exact connection before the next setup or on unmount. An empty dependency array can model “after mount” in many cases, but it does not make the effect conceptually identical: passive effects are scheduled differently, and Strict Mode may perform an extra development setup-cleanup cycle.
 
 **Q: When should you choose `useLayoutEffect` over `useEffect`?**
 
-You should default to `useEffect` for 99% of use cases (data fetching, subscriptions, timers, analytics) because it runs asynchronously after the browser paints, keeping your application responsive and unblocking frame rendering.
+Choose `useLayoutEffect` when you must read layout after React has committed DOM changes and synchronously adjust something before the user sees the frame, such as positioning a tooltip from `getBoundingClientRect()` or restoring a scroll offset. Choose `useEffect` for requests, subscriptions, timers, analytics, and other work that does not need to block paint. If an ordinary effect is moved to `useLayoutEffect` without a visual requirement, it can make rendering less responsive.
 
-Use `useLayoutEffect` only when your side effect directly inspects or mutates the layout of the DOM before the user sees the screen. Common scenarios include:
-- Measuring DOM element dimensions (`getBoundingClientRect()`, `offsetWidth`, `scrollHeight`) to calculate positions for tooltips, modals, or popovers.
-- Synchronizing scroll positions before paint.
-- Performing immediate DOM mutations that would otherwise cause an unpleasant visual flicker/layout jump if deferred until after the browser paint.
+**Q: Why does Strict Mode run effects more than once in development?**
 
----
+It intentionally checks whether setup and cleanup form a reversible pair. A missing `removeEventListener`, `clearInterval`, `close`, or abort becomes obvious when setup is followed immediately by cleanup and setup again. This is a development diagnostic, not a reason to add a “run only once” flag. The durable fix is idempotent setup and complete cleanup.
 
-**Q: Why does React 18 StrictMode run effects twice in development?**
+**Q: How do you prevent request races and leaks inside an effect?**
 
-React 18 StrictMode intentionally mounts your component, immediately runs its cleanup, and remounts it in development mode (`Mount -> Cleanup -> Mount`). 
+Create an `AbortController` inside the effect and pass its signal to `fetch`. Return cleanup that marks the request generation inactive and calls `abort()`. The signal asks the transport to stop, while the current-generation guard prevents an obsolete response or error from updating state if the transport resolves during the cleanup race. Still handle non-abort errors, check `response.ok`, and use a request library’s cancellation mechanism when the library owns the transport.
 
-React does this to expose two critical production failure modes:
-1. **Missing Cleanup Logic:** If an effect opens a subscription or attaches an event listener without cleaning it up, the developer will immediately notice duplicate API requests, duplicated event handlers, or memory leaks in development.
-2. **Non-Idempotent Effects:** Future React features (like Offscreen/Activity API) preserve component state while detaching DOM nodes when a tab or view is hidden, and re-attaching them when revisited. Double-invoking effects verifies that your component can cleanly leave and re-enter the DOM without corrupting state.
+**Q: Why must the render phase be pure?**
 
----
+React is allowed to call rendering code without committing it. A request sent, global variable mutated, or subscription opened during a discarded render cannot be rolled back by React. State updates in render can also cause an infinite loop. Put external work in an effect or event handler, where its lifetime and cleanup are explicit.
 
-**Q: How do you prevent race conditions and memory leaks when fetching data inside `useEffect`?**
+**Q: What belongs in an effect dependency array?**
 
-When fetching data inside `useEffect`, fast-changing props (like rapid user search keystrokes or ID changes) can cause network responses to return out of order—a slow request for Query A might resolve *after* a fast request for Query B, leaving the UI showing stale data.
-
-To prevent this, use native `AbortController` in the cleanup function:
-
-```tsx
-useEffect(() => {
-  const controller = new AbortController();
-
-  async function fetchData() {
-    try {
-      const response = await fetch(`/api/user/${userId}`, { signal: controller.signal });
-      const data = await response.json();
-      setUser(data);
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setError(err.message);
-      }
-    }
-  }
-
-  fetchData();
-
-  // Cleanup aborts in-flight request if userId changes or component unmounts
-  return () => {
-    controller.abort();
-  };
-}, [userId]);
-```
-
----
-
-**Q: Why must the Render Phase be pure and free of side effects?**
-
-In React's Fiber architecture, rendering can be paused, restarted, or discarded before changes ever reach the DOM (for example, if higher-priority user input interrupts low-priority background rendering, or during React 18 StrictMode double-rendering).
-
-If you trigger side effects in the render body (such as sending HTTP requests, writing to external stores, mutating global variables, or updating state):
-- Those side effects will fire multiple times unpredictably.
-- State updates in render trigger infinite render loops (`Too many re-renders`).
-- Discarded renders will still leave mutated global state behind, causing memory leaks and UI desynchronization.
-
----
+Include every reactive value read by the effect that can change between renders: props, state, and values declared in the component body. If a value does not need to be reactive, move it outside the component; if an object or function is recreated unnecessarily, stabilize or restructure it rather than suppressing the dependency rule. The goal is not to minimize effect executions. The goal is to ensure the external system always matches the values the effect actually uses.
 
 ## 6. The Traps — What Goes Wrong
 
-### Trap 1: Stale Closures and Lying in the Dependency Array
-
-**The Mistake:** Suppressing the `react-hooks/exhaustive-deps` linter rule with comments to prevent an effect from re-running.
+**Stale closures caused by an incomplete dependency list.** This code captures the `count` from the first render, so it repeatedly calculates `0 + 1`:
 
 ```tsx
-// ❌ BROKEN: Lying to React about dependencies
+// Wrong: count is read but omitted from the dependency list.
 useEffect(() => {
-  const interval = setInterval(() => {
-    // count is captured from the initial render scope (always 0)
-    console.log('Current count:', count);
-    setCount(count + 1); // 0 + 1 = 1 forever!
+  const id = window.setInterval(() => {
+    setCount(count + 1);
   }, 1000);
-
-  return () => clearInterval(interval);
-}, []); // Lying: 'count' is used inside but omitted here!
-```
-
-**Why it fails:** JavaScript closures capture variable values from the exact render pass in which they were created. If you omit `count` from dependencies, the interval closure permanently references `count` as `0`. Every second it sets state to `0 + 1 = 1`.
-
-**The Fix:** Use functional state updaters when the new state depends on the previous state, or include all referenced reactive values in the dependency array:
-
-```tsx
-// ✅ FIXED: Functional updater removes dependency on count variable
-useEffect(() => {
-  const interval = setInterval(() => {
-    setCount((prev) => prev + 1); // Reads latest state at runtime
-  }, 1000);
-
-  return () => clearInterval(interval);
+  return () => window.clearInterval(id);
 }, []);
 ```
 
----
-
-### Trap 2: Using `useEffect` to Compute Derived State
-
-**The Mistake:** Syncing props to local state using an effect.
+The better fix is a functional updater when the next value depends only on the previous value. It lets the interval ask React for the latest state without recreating the interval every tick:
 
 ```tsx
-// ❌ ANTI-PATTERN: Double-render and redundant state
-function OrderSummary({ items }: { items: Item[] }) {
-  const [totalPrice, setTotalPrice] = useState(0);
-
-  useEffect(() => {
-    const total = items.reduce((sum, item) => sum + item.price, 0);
-    setTotalPrice(total);
-  }, [items]);
-
-  return <div>Total: ${totalPrice}</div>;
-}
+useEffect(() => {
+  const id = window.setInterval(() => {
+    setCount((previous) => previous + 1);
+  }, 1000);
+  return () => window.clearInterval(id);
+}, []);
 ```
 
-**Why it fails:** This causes an unnecessary extra render cycle. React renders with stale `totalPrice`, commits the DOM, fires the effect, calls `setTotalPrice`, and is forced to perform a second full re-render.
-
-**The Fix:** Calculate derived state directly during the render phase. If the computation is expensive, wrap it in `useMemo`:
+**Using an effect to calculate derived data.** If `totalPrice` is completely determined by `items`, storing it separately creates a stale intermediate frame and an extra render:
 
 ```tsx
-// ✅ FIXED: Calculated synchronously during render (1 render cycle, zero lag)
-function OrderSummary({ items }: { items: Item[] }) {
-  const totalPrice = useMemo(() => {
-    return items.reduce((sum, item) => sum + item.price, 0);
-  }, [items]);
-
-  return <div>Total: ${totalPrice}</div>;
-}
+// Wrong: the first render uses the old total, then the effect schedules another render.
+const [totalPrice, setTotalPrice] = useState(0);
+useEffect(() => {
+  setTotalPrice(items.reduce((sum, item) => sum + item.price, 0));
+}, [items]);
 ```
 
----
-
-### Trap 3: Missing Cleanup on Event Listeners and Subscriptions
-
-**The Mistake:** Attaching window or document listeners inside an effect without returning a removal callback.
+Calculate it during render. Use `useMemo` only when the calculation is expensive and the dependency identity is meaningful:
 
 ```tsx
-// ❌ LEAK: Attaches listener on every render without cleaning up
+const totalPrice = items.reduce((sum, item) => sum + item.price, 0);
+```
+
+**Missing cleanup.** Adding a listener in an effect without removing it creates a new listener whenever the effect runs and leaves listeners behind after unmount:
+
+```tsx
 useEffect(() => {
   function handleResize() {
-    console.log('Window width:', window.innerWidth);
+    console.log(window.innerWidth);
   }
   window.addEventListener('resize', handleResize);
-  // Missing return () => window.removeEventListener('resize', handleResize);
-});
+  return () => window.removeEventListener('resize', handleResize);
+}, []);
 ```
 
-**Why it fails:** Every time the component re-renders, a new listener is added to `window`. After 50 re-renders, 50 duplicate functions run on every resize event, severely degrading browser performance. When the component unmounts, the listeners remain attached indefinitely.
+The cleanup must use the same function reference passed to `addEventListener`. Apply the same pairing rule to `clearInterval`, socket `close`, observer `disconnect`, and request `abort`.
 
-**The Fix:** Always return an explicit cleanup function that tears down every resource created during setup.
+**Assuming asynchronous responses arrive in request order.** If `User 1` takes 800ms and `User 2` takes 200ms, the older request can resolve last and overwrite the newer screen. A cleanup flag can ignore obsolete responses, but `AbortController` is usually better because it also asks the transport to stop work. Neither technique should hide real errors.
 
----
+**Setting state from cleanup.** Cleanup is for releasing the old external resource, not for forcing a local state transition during unmount. `setMessages([])` in a socket cleanup can schedule work while the component is leaving, and it mixes the old room’s teardown with the new room’s state policy. Reset state through the new synchronization setup, an event handler, or a deliberate `key` boundary.
 
-### Trap 4: Fetching Data Without Abort Handling (Race Condition)
+**Putting side effects in the component body.** A request or `window.addEventListener` call in the function body runs on every render and may run for work React never commits. The code can duplicate resources or create an infinite update loop. Keep the render body as a description of UI and place external work behind a lifecycle-aware effect.
 
-**The Mistake:** Assuming responses from asynchronous requests will arrive in the order they were triggered.
-
-```tsx
-// ❌ RACE CONDITION: Fast clicks trigger out-of-order resolution
-useEffect(() => {
-  fetchUserDetails(userId).then((data) => {
-    setUser(data);
-  });
-}, [userId]);
-```
-
-**Why it fails:** If a user rapidly clicks from User 1 to User 2, request 1 might take 800ms while request 2 takes 200ms. Request 2 completes and displays User 2. 600ms later, Request 1 finally resolves and overwrites the screen with User 1's data.
-
-**The Fix:** Use a cleanup flag or `AbortController` to ignore obsolete responses:
-
-```tsx
-// ✅ FIXED: Ignore stale responses
-useEffect(() => {
-  let isCurrent = true;
-
-  fetchUserDetails(userId).then((data) => {
-    if (isCurrent) {
-      setUser(data);
-    }
-  });
-
-  return () => {
-    isCurrent = false; // Invalidates this request if userId changes before resolution
-  };
-}, [userId]);
-```
-
----
+**Treating an empty dependency array as a universal “componentDidMount.”** `[]` says that the effect does not use changing reactive values, not that the effect is exempt from lifecycle rules. It still needs cleanup, it still runs after commit as a passive effect, and it is still checked by Strict Mode. If the effect reads `roomId`, omitting `roomId` is a correctness bug even if the effect “should only run once.”
 
 ## 7. Compare With Related Concepts
 
-| Concept Pair | Core Distinction | When to Use Which |
+| Concept pair | Key difference | Rule of thumb |
 |---|---|---|
-| **Class Lifecycles vs Hook Synchronization** | Class methods (`componentDidMount`, `componentDidUpdate`) organize logic by *time of execution*; Hooks (`useEffect`) organize logic by *the resource being synchronized*. | Use functional components and Hooks for all modern React development. Use class lifecycles only when maintaining legacy codebases or implementing Error Boundaries (`componentDidCatch`). |
-| **`useEffect` vs `useLayoutEffect`** | `useEffect` runs asynchronously *after* the browser paints pixels. `useLayoutEffect` runs synchronously *before* the browser paints pixels. | Default to `useEffect` for 99% of effects (data fetching, events, subscriptions). Use `useLayoutEffect` only when reading DOM geometry (width, height, scroll position) to adjust layout without visual flicker. |
-| **`useEffect` vs `useInsertionEffect`** | `useInsertionEffect` runs before DOM mutations are even attached to the Fiber tree (before `useLayoutEffect`). | `useInsertionEffect` is exclusively reserved for CSS-in-JS library authors (like styled-components or Emotion) to inject `<style>` tags before computing layout. Do not use in application code. |
-| **Unmounting vs Hiding with CSS (`display: none`)** | Unmounting destroys the Fiber node, removes DOM elements, resets local state, and fires cleanup effects. CSS hiding (`display: none` or hidden attribute) keeps the component mounted in memory with state intact. | Unmount when a feature is completely inactive to free memory. Hide via CSS when the component holds expensive-to-recreate state (e.g., a complex rich-text editor or video player) that must retain state while temporarily offscreen. |
-| **`useEffect` vs `useSyncExternalStore`** | `useEffect` manages generic asynchronous synchronization. `useSyncExternalStore` is a specialized, synchronous subscription hook for external data stores that prevents tearing in Concurrent React. | Use `useSyncExternalStore` when subscribing to non-React global stores, Redux/Zustand internals, or browser APIs like `navigator.onLine` and `window.matchMedia`. |
+| Class lifecycles vs Hook synchronization | Class methods organize code by when React calls them; an effect keeps one external resource synchronized with the values it reads. | Use Hooks in new function components; understand class methods for legacy components and error boundaries. |
+| `useEffect` vs `useLayoutEffect` | `useEffect` is passive and normally runs after paint; `useLayoutEffect` runs after DOM mutation before paint and can block the frame. | Default to `useEffect`; use layout effects only for pre-paint measurement or visual correction. |
+| `useEffect` vs `useInsertionEffect` | `useInsertionEffect` runs at an earlier commit point for style insertion and is intended for CSS-in-JS library authors. | Application code almost never needs `useInsertionEffect`. |
+| Unmounting vs CSS hiding | Unmounting removes the component and runs cleanup; `display: none` keeps the component, its state, and its effects mounted. | Unmount when the resource should stop; hide when state and resource continuity are intentional. |
+| `useEffect` vs `useSyncExternalStore` | An effect can subscribe to many external systems; `useSyncExternalStore` gives React a synchronous snapshot-and-subscribe contract that prevents tearing for external stores. | Use `useSyncExternalStore` for a store or browser source that must provide consistent snapshots during concurrent rendering. |
+| Derived data vs synchronized state | Derived data can be calculated from current props/state; synchronized state represents a separate external system. | Calculate values in render; use an effect only when something outside React must be connected or updated. |
 
----
+## 8. 🧠 The Memory Hook — What Sticks
 
-## 8. 🧠 The Memory Hook
-
-> **Class components organized code by WHEN things happened (Mount, Update, Unmount); Hooks organize code by WHAT external system needs to be kept in sync.**
-> 
-> Every `useEffect` is a two-way synchronization contract: **Setup** wires the external world to the current state snapshot, and **Cleanup** provides the exact undo button to tear it down before the next change or departure.
+Picture a hotel room: **render plans the room, commit makes the room real, setup connects the guest’s services, and cleanup checks them out.** Class lifecycles scatter that rule by calendar time; Hooks keep the resource’s setup and undo operation together. Whenever a dependency changes, React closes the old room service before opening the new one.
