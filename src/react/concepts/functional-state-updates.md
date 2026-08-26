@@ -1,115 +1,309 @@
 # Functional State Updates
 
-## Detailed explanation
-Functional state updates pass a function to the state setter. React calls that function with the latest pending state and uses its return value as next state. This avoids stale closure bugs when the new value depends on the previous value.
+## 1. Why This Exists — The Problem First
 
-Use functional updates for counters, toggles, array updates, queued updates, timers, and event handlers where multiple updates can happen before the next render.
+You click “add” three times in one handler and expect a counter to move from 0 to 3. Instead it moves to 1. Or a timer keeps appending to an old array and silently loses items. The code looks reasonable because each setter says “use the current value,” but `current` is the value captured by the render that created the handler, not a live variable that changes after every setter call.
 
-## 1. One-line mental model
-Functional updates calculate next state from the latest previous state.
+This is the gap functional state updates close: when the next state depends on the previous state, let React supply the previous state at the point where React processes the update. That matters for repeated updates, batched work, delayed callbacks, and any state transition where using a render snapshot could overwrite someone else’s update.
 
-## 2. Problem it solves
-Closures can capture old state, and multiple updates may be batched before rendering.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Setter accepts a function.
-- Function receives current pending state.
-- Return next state.
-- Avoids stale previous-state reads.
-- Useful for batched/repeated updates.
+Imagine a bank with a queue of deposits. Each deposit instruction can either say “set the balance to ₹110” or “add ₹10 to whatever balance is on the ledger when you process me.” The first instruction contains a fixed answer. If three people independently write “set it to ₹110” while the opening balance is ₹100, the bank still ends at ₹110. The second kind of instruction is relative: the first adds to ₹100, the next adds to that new balance, and the third adds to the result again.
 
-## 4. Visual / analogy
-It is like saying "add one to whatever the latest balance is" instead of using yesterday's balance.
+React’s state setter is the bank’s intake desk. A direct value such as `setBalance(110)` is a replacement instruction. A function such as `setBalance((balance) => balance + 10)` is an updater instruction. React puts those instructions in the state update queue and processes them in order during the next render. Each updater receives the result produced by the previous update, so it does not need to trust an old render’s snapshot.
+
+## 3. How It Actually Works — The Full Explanation
+
+React renders a component with a particular state snapshot. Every event handler, timer callback, and callback prop created during that render closes over that snapshot. Calling a setter does not mutate the `count` variable inside the already-running handler. It asks React to schedule a state update.
+
+The setter accepts either a next value or an updater function:
 
 ```tsx
-setCount((current) => current + 1);
+setCount(10);                    // replacement: next state is 10
+setCount((previous) => previous + 1); // updater: derive next state from previous
 ```
 
-## 5. Minimal example
+For a boolean state value, the same pattern is an explicit toggle. This is a
+fragment from a component that has already declared `const [open, setOpen] =
+useState(false)`:
 
 ```tsx
-setOpen((open) => !open);
+setOpen((previous) => !previous);
 ```
 
-## 6. Real-world example
+For a `useState` hook, React stores the action in that hook’s pending update queue. When React renders the component again, it starts with the hook’s current state and reduces the queued actions in order. A function action is called with the state produced so far; a non-function action replaces that state.
+
+```text
+starting state: 0
+setCount(count + 1)      -> replacement action: 1
+setCount(count + 1)      -> replacement action: 1
+result: 1
+
+starting state: 0
+setCount(previous => previous + 1) -> 1
+setCount(previous => previous + 1) -> 2
+result: 2
+
+starting state: 0
+setCount(5)                         -> replacement action: 5
+setCount(previous => previous + 1) -> 6
+result: 6
+
+starting state: 0
+setCount(previous => previous + 1) -> 1
+setCount(5)                         -> replacement action: 5
+result: 5
+```
+
+The first example uses `count` from the render snapshot. Both expressions evaluate to `1` before React processes the queue, so the later replacement does not mean “increment again”; it means “replace the result with 1 again.” In the second example, the functions are not evaluated when the handler creates them. React evaluates them while reducing the queue, passing 0 to the first and 1 to the second.
+
+Mixed queues follow the same order. A direct `setCount(5)` establishes 5, so the later updater receives 5 and produces 6. If the order is reversed, the later direct replacement receives no updater result; it overwrites the earlier result with 5.
+
+Batching changes when React renders, not what an updater means. In a React 18+ root, React generally batches updates from event handlers, promise callbacks, timers, and native event callbacks into one render when they occur in the same batch. Functional updates remain necessary because batching makes several actions wait together; it does not turn a render snapshot into a live value. `flushSync` can force an earlier render, but it does not make direct snapshot reads retroactively update inside the current JavaScript function.
+
+The updater must return the complete next state for that `useState` slot. `useState` replaces the state value; it does not shallow-merge objects the way legacy class `setState` did. For arrays and objects, derive a new value without mutating the previous one. React uses identity to determine whether the state changed, and mutation also makes other queued updates and debugging much harder to reason about.
+
+Functional updates solve one specific stale-read problem. They do not make every variable inside a callback fresh. If a timer uses both `count` and `userId`, an updater can make `count` current while `userId` is still the value captured by the timer’s closure. Effect dependencies, refs, cancellation, or a different design may be needed for the other value.
+
+Updaters also need to be pure. They describe a state transition; they should not send analytics, mutate a module, issue a request, or update another state variable. In development Strict Mode, React may call an updater more than once to expose impure logic. The returned state should be the same for the same input, and any side effect belongs in an event handler or an effect that synchronizes with an external system.
+
+## 4. Real Code — See It Working
+
+**Repeated updates in one event**
+
+This component is complete apart from the normal React application entry point. It shows why three direct replacements produce one increment while three updaters produce three increments.
 
 ```tsx
-setTodos((todos) => todos.filter((todo) => todo.id !== id));
+import { useState } from "react";
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+
+  function incrementOnceFromSnapshot() {
+    // All three expressions read the same render snapshot.
+    setCount(count + 1);
+    setCount(count + 1);
+    setCount(count + 1);
+  }
+
+  function incrementThreeTimes() {
+    // React evaluates these in queue order, so each builds on the last result.
+    setCount((previous) => previous + 1);
+    setCount((previous) => previous + 1);
+    setCount((previous) => previous + 1);
+  }
+
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={incrementOnceFromSnapshot}>Direct +3 (actually +1)</button>
+      <button onClick={incrementThreeTimes}>Functional +3</button>
+    </div>
+  );
+}
 ```
 
-## 7. Common interview questions
-#### What is a functional state update?
-- **The Engine Mechanism (Why it behaves this way):** When you pass a function to a state setter (`setCount(prev => prev + 1)`), React stores this updater function in the Fiber node's pending update queue instead of immediately replacing the state. During the next render, React processes the queue by calling each updater function with the current pending state value, chaining the results together. This ensures each updater receives the most recent state, not the stale value captured in the closure.
-- **The Unforgettable Mental Model:** The **Assembly Line**. Instead of each worker using their own outdated blueprint (captured closure), each worker receives the latest version of the product from the previous worker on the line. The product evolves correctly through each station.
-- **The Trap:** Using functional updates everywhere when direct values are clearer. Functional updates are specifically for when the new value depends on the previous value — not for simple replacements like `setName('Alice')`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A functional state update is passing a function to the setter instead of a direct value. React calls that function with the latest pending state, ensuring the update is based on the most current value rather than a potentially stale closure. This is essential when multiple updates happen before the next render, like rapid clicks or batched state changes."
+**Updating an array without losing a concurrent change**
 
-#### When should you use it?
-- **The Engine Mechanism (Why it behaves this way):** Functional updates are needed whenever the new state value depends on the previous state and multiple updates may occur before React processes them. React batches state updates within the same event handler and microtask. Without functional updates, three consecutive `setCount(count + 1)` calls all capture the same `count` value from the closure, resulting in only a +1 increment instead of +3.
-- **The Unforgettable Mental Model:** The **Bank Account**. If three people each deposit $10 using yesterday's balance, they all add $10 to the same old balance. If each person uses the current balance at the moment of their deposit, the total correctly reflects all three deposits.
-- **The Trap:** Using functional updates for independent state values. If you're setting a value that doesn't depend on the previous state, a direct value is clearer and more idiomatic: `setOpen(true)` not `setOpen(() => true)`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use functional updates whenever the new state depends on the previous state and multiple updates might batch together — counters, toggles, array mutations, and queue-based updates. For independent state replacements like setting a form field or a boolean flag, I use direct values since they're clearer and don't need the previous-state guarantee."
+The updater receives the latest array and returns a new array. The callback below is safe even when another queued update adds a different todo before React renders.
 
-#### How does it fix stale state?
-- **The Engine Mechanism (Why it behaves this way):** A stale closure occurs when a function captures a variable from its enclosing scope at definition time. In React, event handlers and effects capture the state value from the render in which they were created. If the component re-renders with new state but the old closure still references the old value, you get stale reads. Functional updates bypass the closure entirely — React passes the current pending state as an argument, so the updater always operates on the freshest value.
-- **The Unforgettable Mental Model:** The **Live Feed vs. the Screenshot**. A closure is a screenshot of state at one moment — it's frozen. A functional update is a live feed — React hands you the current value at the moment of update, not the value from when the function was defined.
-- **The Trap:** Thinking functional updates fix all stale closure problems. They only fix stale state reads within the updater function. Stale closures in effects, event handlers, and callbacks still need proper dependency management.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Functional updates fix stale state by bypassing the closure entirely. Instead of reading a captured variable from the render scope, React passes the latest pending state as an argument to the updater function. This guarantees the update is always based on the most recent value, even if multiple updates batch together or the closure was created in an earlier render."
+```tsx
+import { useState } from "react";
 
-#### How does batching affect it?
-- **The Engine Mechanism (Why it behaves this way):** React 18 batches all state updates automatically — inside event handlers, promises, setTimeout, and native event handlers. When multiple `setState` calls happen in the same batch, React queues them and processes them together in a single render. With direct values, each call uses the same captured state. With functional updates, React chains them: the first updater receives the current state, the second receives the result of the first, and so on, all within the same render cycle.
-- **The Unforgettable Mental Model:** The **Conveyor Belt**. Batched updates are packages on a conveyor belt. Direct values stamp every package with the same date. Functional updates read the date from the previous package before stamping the next one, so each gets a progressively updated value.
-- **The Trap:** Assuming React 18's automatic batching eliminates the need for functional updates. Batching is actually why functional updates are MORE important — without them, all batched updates use the same stale value.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: React 18 batches all state updates automatically, which means multiple setters in the same event handler or async callback are processed together. With direct values, each update uses the same captured state from the closure. Functional updates chain within the batch — each updater receives the result of the previous one — so three `setCount(prev => prev + 1)` calls correctly increment by 3 instead of 1."
+type Todo = { id: number; title: string; done: boolean };
 
-#### Can it update arrays and objects?
-- **The Engine Mechanism (Why it behaves this way):** Functional updates work with any state type. For arrays and objects, the updater function receives the current array/object and must return a new one (immutable update). React's reconciliation compares the returned reference with the previous `memoizedState`. If the reference is different, React schedules a re-render. The functional update pattern ensures you're operating on the latest array/object, not a stale captured reference.
-- **The Unforgettable Mental Model:** The **Shared Document**. Multiple editors working on a shared document need to see each other's changes. Functional updates ensure each editor works on the latest version of the document, not a copy they opened hours ago.
-- **The Trap:** Mutating the previous state inside the updater: `setTodos(prev => { prev.push(newTodo); return prev })`. This returns the same reference, so React won't detect the change and won't re-render.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Yes, functional updates work perfectly with arrays and objects. The updater receives the current value and must return a new immutable copy — using spread, `filter`, `map`, or similar methods. The key is returning a new reference so React's reconciliation detects the change. I never mutate the previous value in place, as React compares references and won't re-render if the reference hasn't changed."
+export function TodoActions({ id }: { id: number }) {
+  const [todos, setTodos] = useState<Todo[]>([]);
 
-#### Functional update vs dependency array?
-- **The Engine Mechanism (Why it behaves this way):** These solve different problems. Functional updates ensure a state setter uses the latest pending state within a render cycle. Dependency arrays control when an effect re-runs based on changed values. However, they intersect: if you use a functional update inside an effect, you can sometimes remove a state variable from the dependency array because the functional updater doesn't need to capture it from the closure.
-- **The Unforgettable Mental Model:** The **Two Tools**. Functional updates are a wrench that tightens the bolt with the right torque (latest state). Dependency arrays are a timer that decides when to start working (effect re-run timing). Different tools, occasional overlap.
-- **The Trap:** Removing dependencies from an effect array just because you used a functional update. Only remove a dependency if the functional update truly eliminates the need to capture that variable. Other logic in the effect may still need it.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Functional updates and dependency arrays address different concerns. Functional updates ensure state setters use the latest value; dependency arrays control effect re-run timing. They can interact — using a functional update inside an effect may let you safely omit a state variable from the dependency array. But I only remove dependencies when the functional update genuinely eliminates the closure capture, and I verify the rest of the effect doesn't need that variable."
+  function addTodo(title: string) {
+    setTodos((previousTodos) => [
+      ...previousTodos,
+      { id: Date.now(), title, done: false },
+    ]);
+  }
 
-#### Why is it useful in timers?
-- **The Engine Mechanism (Why it behaves this way):** `setInterval` and `setTimeout` callbacks capture the state value from the render in which they were created. Since the timer callback runs in a separate event loop tick (after React has potentially re-rendered), the captured state is often stale. A functional update inside the timer callback receives the current pending state from React's Fiber node, bypassing the stale closure and ensuring the counter increments correctly.
-- **The Unforgettable Mental Model:** The **Time Capsule vs. the Live Clock**. The timer's closure is a time capsule — it contains the state from when the timer was set. A functional update opens a live clock — it reads the current time at the moment the timer fires.
-- **The Trap:** Forgetting that the timer callback itself is a closure. Even with functional updates, if the timer setup depends on other variables, those may still be stale. The functional update only fixes the state variable it receives as an argument.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Timer callbacks are closures that capture state from the render when the timer was created. Since timers fire in later event loop ticks, the captured state is often stale. Using a functional update like `setCount(prev => prev + 1)` inside the timer ensures React passes the latest pending state, so the counter increments correctly regardless of how many renders happened between timer fires."
+  function toggleTodo() {
+    setTodos((previousTodos) =>
+      previousTodos.map((todo) =>
+        todo.id === id ? { ...todo, done: !todo.done } : todo,
+      ),
+    );
+  }
 
-## 8. Active recall test
-1. **What argument does the updater receive?**
-   - **Explanation:** The latest pending state value from React's Fiber node. This is the most recent state after all queued updates have been applied, not the stale value captured in the closure from when the function was defined.
-2. **What should the updater return?**
-   - **Explanation:** The next state value. For primitive state, return the new primitive. For objects/arrays, return a new immutable copy. React uses this return value to update `memoizedState` and determine if a re-render is needed via reference comparison.
-3. **Why is it safer for counters?**
-   - **Explanation:** Multiple counter updates can batch together before React renders. Direct updates like `setCount(count + 1)` all use the same captured `count`. Functional updates chain: each receives the result of the previous, so three increments correctly add 3 instead of 1.
-4. **How does it help batched updates?**
-   - **Explanation:** React 18 batches all state updates. Within a batch, functional updates are chained sequentially — the first updater receives the current state, the second receives the first's result, etc. This ensures each update builds on the previous one within the same render cycle.
-5. **Write a toggle update.**
-   - **Explanation:** `setOpen(prev => !prev)`. This functional update flips the boolean based on the latest pending value, ensuring correct behavior even if multiple toggle calls batch together before React processes them.
+  function removeTodo() {
+    setTodos((previousTodos) =>
+      previousTodos.filter((todo) => todo.id !== id),
+    );
+  }
 
-## 9. Mistakes / traps
-- Using captured state for repeated updates.
-- Mutating previous state inside updater.
-- Forgetting to return next state.
-- Using functional update when direct value is clearer and safe.
-- Doing side effects inside updater.
+  return <button onClick={toggleTodo}>Toggle ({todos.length} items)</button>;
+}
+```
 
-## 10. Compare with related concepts
-- **Functional update vs direct set:** previous-state dependent vs direct replacement.
-- **Functional update vs reducer:** small local transition vs structured action handling.
-- **Functional update vs ref:** updates UI state; ref avoids render.
+In a real application, `Date.now()` is not a durable unique ID under high-frequency creation or across clients; the example uses it only to keep the component self-contained. A server ID or collision-resistant client ID would be the production choice.
 
-## 11. Summary from memory
-Explain why three `setCount(count + 1)` calls may not increment by three, but functional updates can.
+**A timer that increments current state**
 
-## 12. Spaced revision prompts
-- After 1 day: Define functional update.
-- After 3 days: Fix stale counter update.
-- After 7 days: Update array using functional setter.
-- After 14 days: Compare with reducer.
+The component below assumes React 18+ and demonstrates the state part of an interval. The empty dependency list keeps one interval alive; the functional updater keeps `count` current without putting `count` in the dependency list.
 
+```tsx
+import { useEffect, useState } from "react";
+
+export function ElapsedSeconds() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => {
+      // React supplies the latest pending value when this callback runs.
+      setSeconds((previousSeconds) => previousSeconds + 1);
+    }, 1000);
+
+    return () => window.clearInterval(timerId);
+  }, []);
+
+  return <p>Elapsed: {seconds}s</p>;
+}
+```
+
+The updater does not solve every timer problem. If the callback also needs a changing `rate`, the effect must either resubscribe when `rate` changes, read the latest rate through a carefully managed ref, or use another synchronization strategy.
+
+**A reducer when transitions have become a protocol**
+
+Functional updates are excellent for a small local transition. If many events update related fields and each event has a name and payload, a reducer makes the transition rules explicit while still receiving the latest state.
+
+```tsx
+type State = { quantity: number; submitted: boolean };
+type Action =
+  | { type: "increase"; amount: number }
+  | { type: "submit" };
+
+export function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "increase":
+      return { ...state, quantity: state.quantity + action.amount };
+    case "submit":
+      return { ...state, submitted: true };
+  }
+}
+```
+
+The important connection is that both forms are state transitions. A setter updater is an inline transition for one state slot; a reducer is a named transition function for a state machine.
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What is a functional state update?**
+
+It is a function passed to a state setter instead of a direct next value: `setCount((previous) => previous + 1)`. React stores that function as an update and calls it with the latest pending state when it processes the queue. This makes the update relative to the state at processing time rather than dependent on the value captured by the render that created the callback.
+
+**Q: Why do three `setCount(count + 1)` calls usually produce only one increment?**
+
+The handler reads one render snapshot. If `count` is 0, all three expressions become the replacement action `1`. React may batch them, but batching does not reinterpret `1` as “increment.” Each later replacement overwrites the previous result with the same value. Three updater functions instead produce a chain: 0 → 1 → 2 → 3.
+
+**Q: Does a functional update immediately change the state variable in the current handler?**
+
+No. Setters schedule work, and the current handler continues to see the snapshot from the render that created it. The updater function is evaluated later while React calculates the next render’s state. If code needs to know the next value immediately, calculate it in a local variable for that event or move the follow-up work to the appropriate render/effect boundary; do not expect the setter to mutate the current closure.
+
+**Q: When should you use a functional update, and when is a direct value clearer?**
+
+Use an updater whenever the next value depends on the previous value: incrementing, toggling, appending, removing, merging based on current content, or applying repeated queued changes. Use a direct value for an independent replacement such as `setName("Asha")` or `setOpen(false)`. Passing `setOpen(() => false)` is valid but hides the fact that the new value does not depend on the old one.
+
+**Q: How does a functional update fix a stale closure?**
+
+It avoids reading the stale state variable from the closure for that particular state slot. React calls the updater with the pending state it is currently reducing. It does not refresh the whole closure. Other captured props, state variables, and ordinary local values can still be stale, so the callback may still need correct effect dependencies, a ref, cancellation, or a different data flow.
+
+**Q: How do functional updates behave with automatic batching?**
+
+React queues the updates and can commit one render for the batch. Direct-value actions are evaluated from the caller’s snapshot before queue processing, while updater actions are evaluated in queue order during processing. Automatic batching therefore reduces renders; functional updates preserve the correctness of several dependent changes inside those queued actions. The exact batching boundary depends on the React root and APIs involved, so “React always batches everything” is too broad.
+
+**Q: Can functional updates update arrays and objects?**
+
+Yes. The state type can be a primitive, array, or object. The updater must return the complete next value and should create a new array or object: `setItems((previous) => [...previous, item])`. Do not push into `previous` and return it. `useState` replaces rather than merges object state, and returning the same mutated reference can prevent React from observing a meaningful identity change.
+
+**Q: Can you use a functional update inside an effect with an empty dependency array?**
+
+Sometimes. If the effect only needs to increment `count`, `setCount((previous) => previous + 1)` removes the need for the effect to read `count`, so `count` need not be a dependency for that part. It does not justify an empty dependency list when other effect logic reads changing values. The dependency decision must account for every reactive value the effect captures.
+
+**Q: Why must an updater be pure?**
+
+React treats the updater as a calculation from previous state to next state. It may defer, replay, or invoke that calculation more than once in development to detect unsafe assumptions. A network request or mutation inside it could happen twice or at an unexpected time. Keep the updater limited to deriving and returning state; perform side effects in the event that caused the action or in an effect that explicitly synchronizes with an external system.
+
+**Q: Are functional updates the same as `useReducer`?**
+
+They share the idea of reducing a transition from previous state, but they serve different scales. A setter updater is concise for one local state value. `useReducer` centralizes named actions and transition rules, which is easier to test and extend when several fields change together. A reducer does not make side effects safe inside the reducer either; reducers should also be pure.
+
+**Q: Are functional updates the same as refs?**
+
+No. A functional updater gives React a safe way to calculate state that should drive a render. A ref gives a mutable container whose `.current` can change without causing a render. Use state for visible UI state and refs for values such as an interval ID, DOM node, or latest non-visual value when avoiding a render is intentional.
+
+## 6. The Traps — What Goes Wrong
+
+**Reading the state variable again after calling the setter.**
+
+The assumption is that `setCount(count + 1)` mutates `count`. It does not; the variable belongs to the current render snapshot, so a log immediately after the setter prints the old value. The next render receives the new state. If you need a value for the same event, derive it explicitly rather than treating a setter as a synchronous assignment.
+
+**Using a direct value for a repeated or delayed transition.**
+
+`setItems([...items, item])` can lose an item when several callbacks use the same captured `items`. Each callback constructs a replacement from its own snapshot. `setItems((previous) => [...previous, item])` applies each append to the queue’s latest result.
+
+**Mutating the previous value.**
+
+This is wrong:
+
+```tsx
+setTodos((previous) => {
+  previous.push(todo);
+  return previous;
+});
+```
+
+It changes an object React still considers the previous state and returns the same array reference. The safe version is `setTodos((previous) => [...previous, todo])`. Immutable updates also prevent one queued calculation from unexpectedly seeing mutations made by another calculation.
+
+**Forgetting that object state is replaced.**
+
+`setProfile((previous) => ({ name: "Asha" }))` drops every other field because the returned object is the complete new state. Preserve fields deliberately: `setProfile((previous) => ({ ...previous, name: "Asha" }))`. This is different from class component `setState`, which historically merged object updates shallowly.
+
+**Forgetting to return from an updater.**
+
+These setter fragments assume a numeric `count` state. The bad updater uses a
+block body but forgets `return`, so its result is `undefined` and it violates
+the state contract by replacing the count with a non-number:
+
+```tsx
+// Bad: the updater returns undefined.
+setCount((previous) => {
+  previous + 1;
+});
+
+// Fixed: return the complete next state.
+setCount((previous) => {
+  return previous + 1;
+});
+```
+
+**Putting side effects in the updater.**
+
+An updater such as `setCount((previous) => { analytics.track("increment"); return previous + 1; })` couples an external action to a calculation React may replay. The analytics event can be duplicated or happen even when work is abandoned. Keep the state calculation pure and track the user event outside the updater.
+
+**Assuming functional updates repair every stale callback.**
+
+`setCount((previous) => previous + step)` makes `count` current but may still use a stale `step` captured by an old interval. Fix the other dependency instead of declaring the whole callback fresh. This distinction is especially important in effects, subscriptions, and asynchronous request callbacks.
+
+**Adding every setter call to an effect dependency list.**
+
+The setter returned by `useState` has stable identity and does not need to be listed. The state value may need to be listed if the effect reads it. A functional updater can remove a dependency only when it replaces that read; it is not a blanket escape hatch from exhaustive-dependency reasoning.
+
+## 7. Compare With Related Concepts
+
+**Functional update vs direct state replacement:** An updater says “calculate from whatever state React gives you”; a direct value says “replace this state with this value.” Use the updater for previous-state-dependent changes and direct replacement for independent values.
+
+**Functional update vs `useReducer`:** Both express transitions from previous state, but an updater is a small inline transition while a reducer is a named action-driven state machine. Use the updater for a focused state slot; use a reducer when multiple fields and event types form a protocol.
+
+**Functional update vs `useRef`:** An updater schedules visible React state and a render; a ref changes `.current` without rendering. Use state for UI output and a ref for mutable, non-visual coordination such as a timer handle.
+
+**Functional update vs an effect dependency array:** The updater controls how a queued state transition derives its next value. Dependencies control when an effect is synchronized again with values it reads. Use both when both concerns exist; solving one does not solve the other.
+
+**Functional update vs a stale-closure fix using a ref:** The updater is the right tool when the callback’s job is to produce new React state. A ref is useful when the callback must read the latest value without scheduling state, but it adds manual synchronization responsibility. Choose based on whether the value is an input to a render or merely a callback’s current coordination data.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Direct state values are sealed envelopes from one render: several envelopes can all say “replace the balance with 1.” A functional update is a bank instruction that says “add one to whatever is on the ledger when you open this instruction,” so React can safely process a queue of changes without losing the changes before it.
