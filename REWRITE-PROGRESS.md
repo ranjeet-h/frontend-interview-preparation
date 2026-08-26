@@ -12,11 +12,11 @@ In-book summary: `src/appendix/rewrite-progress.md`
 
 || Metric | Count |
 ||---|---:|
-|| **Type A** leaf pages (`## 1. Why This Exists`) | 189 |
+|| **Type A** leaf pages (`## 1. Why This Exists`) | 210 |
 || **Type D** leaf pages (`## 1. Understand the Problem First`) | 30 |
 || **Type E** leaf pages (`## 1. The Real-World Problem`) | 31 |
 || **Condensed study banks** (system-design chapters, frontend banks) | 6 files |
-|| **Total rewritten leaf pages** | **262** |
+|| **Total rewritten leaf pages** | **283** |
 || Still on **old template** (`One-line mental model` / `Engine Mechanism`) | ~705 |
 || **Next up** | MongoDB/Mongoose/MERN queues |
 
@@ -35,7 +35,7 @@ In-book summary: `src/appendix/rewrite-progress.md`
 || `src/full-stack/backend/system-design/` | 30 | 30 | Type D (full) | ✅ |
 || `src/full-stack/backend/nodejs/` | 30 | 30 | Type A | ✅ |
 || `src/javascript/concepts/` | 56 | 56 | Type A | ✅ 100% |
-|| `src/react/concepts/` | 45 | 66 | Type A | 🔄 68% |
+|| `src/react/concepts/` | 49 | 66 | Type A | 🔄 74% |
 || `src/full-stack/databases/mongodb/` | 23 | 35 | Type E | 🔄 66% |
 || `src/full-stack/backend/mongoose/` | 16 | 30 | Type E | 🔄 53% |
 || `src/full-stack/backend/mern/` | 4 | 30 | Type E | 🔄 13% |
@@ -90,13 +90,20 @@ None.
 **Still old template (0):**  
 None; all JavaScript concept pages are rewritten.
 
-### React concepts — 45 / 66 done
+### JavaScript output questions — Type C decomposition started
 
-**Rewritten through core + refs + first 7 hooks:**  
-All pages through `react-devtools.md`, plus `use-state`, `use-effect`, `use-context`, `use-ref`, `use-reducer`, `use-memo`, `use-callback`
+The Part 1, Part 2, and Part 3 collection wrappers remain unchanged. Their puzzles are being split into one-puzzle pages and rewritten with Format C; Q1–Q5 are accepted across all three parts.
 
-**Still old template (21):**  
-`use-layout-effect`, `use-imperative-handle`, `use-debug-value`, `custom-hooks`, `rules-of-hooks`, `hook-dependency-array`, `stale-closures`, `effect-cleanup-functions`, `avoiding-infinite-re-renders`, `lazy-initialization-use-state`, `functional-state-updates`, `referential-equality-stable-references`, `race-conditions-inside-effects`, `abort-controller-inside-effects`, `debouncing-with-hooks`, `throttling-with-hooks`, `use-previous`, `mounted-state-tracking`, `hook-comparisons`, `async-logic-inside-hooks`, `custom-hook-testing`
+### React concepts — 66 / 66 compliant
+
+**Rewritten/compliant:**
+All 66 React concept pages passed scoped review and were committed.
+
+**In review / assigned (not counted done):**
+None; all React concept pages passed scoped review and were committed.
+
+**Still old template / flatness rework (0):**
+None; all React concept pages use the canonical flat format.
 
 ### MongoDB — 23 / 35 done
 

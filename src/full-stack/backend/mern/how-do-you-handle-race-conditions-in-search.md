@@ -1,111 +1,285 @@
 # How do you handle race conditions in search
 
-## Detailed explanation
+## 1. The Real-World Problem — When You Actually Hit This
 
-How do you handle race conditions in search is a full-stack integration topic that checks whether frontend and backend contracts work together safely. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Your e-commerce site has a search bar that works fine in development. A user types "javascript" quickly, and the results look correct. Then you deploy to production, and a customer files a bug report: "I searched for 'red shoes' but the results showed 'red' products instead. Then the screen flickered and showed 'red shoes' correctly. This is confusing."
 
-## 1. One-line mental model
+You investigate and find the issue: the user typed "red shoes" fast enough that two API calls fired — one for "red" and one for "red shoes". The backend took longer to process "red shoes" (more data to search), so its response arrived first. Then the "red" response arrived a split second later and overwrote the correct results. The user saw the wrong data briefly, then the right data, then the wrong data again. This is a race condition — multiple requests in flight, responses arriving out of order, and the UI displaying stale results.
 
-Make frontend and backend agree on auth, data contracts, errors, retries, and state.
+This happens in any search-heavy application: product search, user search, document search, autocomplete. It's not just annoying — it makes your app feel broken and unprofessional. Users trust what they see on screen, and when that changes unpredictably, they lose confidence in your application.
 
-## 2. Problem it solves
+## 2. The Analogy — Make the Mechanic Obvious
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+Imagine you're at a restaurant and you keep changing your order. First you order "soup", then immediately call the waiter back and change it to "salad", then change it again to "pasta". The waiter writes down each order and sends it to the kitchen. The kitchen receives three orders: soup, salad, pasta. The chef cooks them all, but because soup is simpler, it finishes first. The waiter brings you soup — but you actually wanted pasta. A minute later, salad arrives. Then pasta finally shows up. You're getting three meals when you only wanted one, and the first one delivered wasn't even your final choice.
 
-## 3. Core idea
+The fix is simple: when you change your order, the waiter should cancel the previous order before sending the new one. Or, the waiter should wait until you're done speaking before writing anything down. Or, when a meal arrives, the waiter should check if it matches your most recent order before putting it on your table.
 
-- Define frontend-backend contract.
-- Handle auth, cookies/tokens, CORS, and errors.
-- Prevent duplicate or stale requests.
-- Map backend validation to frontend UX.
-- Keep contracts versioned and testable.
+In search, the browser is the waiter, the backend is the kitchen, and the user is the customer changing their mind. Race conditions happen when multiple orders (search requests) are in flight and the kitchen delivers them out of order.
 
-## 4. Visual / analogy
+## 3. The Full Explanation — How It Actually Works
 
-```txt
-React UI -> API client -> backend endpoint -> response/error contract -> UI state
+Race conditions in search occur because HTTP requests are asynchronous and non-blocking. When a user types quickly, each keystroke can trigger an API call. These calls don't wait for each other — they all fire independently and race to complete. The network is unpredictable: a simpler query might finish faster than a complex one, or network latency might cause responses to arrive in a different order than they were sent.
+
+The problem has three layers:
+
+**Frontend request frequency:** Without any protection, typing "javascript" fires 10 API calls (one per letter). That's wasteful and increases the chance of race conditions.
+
+**Request in-flight state:** Even if you reduce the number of calls, multiple requests can still be in flight simultaneously. The user types "ja", then "jav", then "java", then "javas"... each triggers a search. If the "ja" query is slow (database under load, complex query), it might return after "javascript" already showed results.
+
+**Response ordering:** When responses arrive, the frontend doesn't inherently know which response corresponds to the current search term. It just updates the UI with whatever data arrives last.
+
+The solution uses three complementary strategies:
+
+**Debouncing** delays the API call until the user stops typing. Instead of firing on every keystroke, you wait 300ms after the last keystroke. If the user keeps typing, the timer resets. Only when they pause does the API call fire. This reduces 10 keystrokes to 1 API call for "javascript".
+
+**Request cancellation** actively kills in-flight requests when a new one starts. The browser's AbortController API lets you attach a signal to a fetch request. When you call abort(), the browser cancels the HTTP request before it reaches the server, or the server detects the cancellation and stops processing. This prevents wasted server resources and eliminates the race entirely.
+
+**Response validation** is a safety net for when cancellation fails or isn't used. You track the current search term and compare it against the response when it arrives. If the response's query doesn't match the current search term, you ignore it. This handles edge cases like network glitches where responses arrive out of order despite cancellation.
+
+On the backend, you can also help by detecting aborted requests and stopping database work early, using indexes to make queries faster (reducing the race window), and including the search term in the response so the frontend can double-check.
+
+## 4. See It In Practice — Real Code or Queries
+
+Here's a complete React example using TanStack Query (React Query), which handles most of this automatically:
+
+```javascript
+import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+
+function SearchBar() {
+  const [query, setQuery] = useState('');
+
+  // TanStack Query automatically:
+  // 1. Cancels previous requests when query changes
+  // 2. Ignores stale responses
+  // 3. Handles AbortError internally
+  const { data, isLoading } = useQuery({
+    queryKey: ['search', query],
+    queryFn: async ({ signal }) => {
+      // Pass the abort signal to fetch
+      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+        signal
+      });
+      if (!response.ok) throw new Error('Search failed');
+      return response.json();
+    },
+    // Only run the query if there's actual input
+    enabled: query.length > 0,
+    // Built-in debouncing (staleTime) or use external debounce
+    staleTime: 300, // Don't refetch for 300ms
+  });
+
+  return (
+    <div>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search products..."
+      />
+      {isLoading && <p>Searching...</p>}
+      {data && (
+        <ul>
+          {data.results.map(item => (
+            <li key={item.id}>{item.name}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 ```
 
-## 5. Minimal example
+For manual implementation without TanStack Query, here's the full pattern:
 
-```txt
-Input  -> validate
-Work   -> apply MERN backend rule
-Output -> success or structured error
+```javascript
+import { useState, useEffect, useRef } from 'react';
+
+function useSearch(query) {
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const queryIdRef = useRef(0); // Track which query is current
+  const abortControllerRef = useRef(null);
+
+  useEffect(() => {
+    // Don't search for empty queries
+    if (!query.trim()) {
+      setResults(null);
+      return;
+    }
+
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller for this request
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // Increment query ID to track this specific search
+    const currentQueryId = ++queryIdRef.current;
+    setLoading(true);
+
+    const fetchResults = async () => {
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+          signal: controller.signal
+        });
+
+        // If request was aborted, don't process
+        if (controller.signal.aborted) return;
+
+        const data = await response.json();
+
+        // Double-check: only update if this is still the current query
+        if (currentQueryId === queryIdRef.current) {
+          setResults(data.results);
+        }
+      } catch (error) {
+        // Ignore AbortError — it's intentional cancellation
+        if (error.name !== 'AbortError') {
+          console.error('Search failed:', error);
+        }
+      } finally {
+        // Only set loading to false if this is still the current query
+        if (currentQueryId === queryIdRef.current) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchResults();
+
+    // Cleanup: cancel request if component unmounts or query changes
+    return () => {
+      controller.abort();
+    };
+  }, [query]);
+
+  return { results, loading };
+}
 ```
 
-## 6. Real-world example
+On the Express/MongoDB backend, detect aborted requests:
 
-In a production full-stack app, how do you handle race conditions in search affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+```javascript
+app.get('/api/search', async (req, res) => {
+  const { q } = req.query;
 
-## 7. Common interview questions
+  // Listen for client disconnect
+  req.on('close', () => {
+    if (req.aborted) {
+      console.log('Search request aborted by client');
+      // Stop any ongoing work here if possible
+    }
+  });
 
-#### How do you handle race conditions in search?
-- **The Engine Mechanism (Why it behaves this way):** Race conditions occur when multiple search requests are in flight and responses arrive out of order. Solutions: (1) **Debouncing** — delay the API call until the user stops typing for 300ms. (2) **Request cancellation** — cancel the previous request when a new one is made. TanStack Query does this automatically with AbortController: `queryFn: ({ signal }) => api.get(`/search?q=${query}`, { signal })`. (3) **Response ordering** — track the latest query and ignore responses from older queries: `const latestQueryRef = useRef(query); useEffect(() => { latestQueryRef.current = query; }, [query]); const fetchSearch = async (q) => { const res = await api.get(`/search?q=${q}`); if (q !== latestQueryRef.current) return; // stale response, ignore };`.
-- **The Unforgettable Mental Model:** The **Latest Letter**. You send multiple letters (search requests) but only care about the latest one. When letters arrive out of order, you check the date (query term) and only read the latest one.
-- **The Trap:** Not canceling previous requests — if the user types "javascript" quickly, 10 API calls fire. The response for "j" might arrive after "javascript", showing wrong results.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I handle search race conditions with debouncing and request cancellation. Debouncing delays the API call by 300ms after the user stops typing. TanStack Query automatically cancels the previous in-flight request when a new query is made via AbortController. As a safety net, I also track the latest query term and ignore responses from older queries. This three-layer approach ensures the displayed results always match the current search term."
+  try {
+    // Use indexed field for fast queries
+    const results = await Product.find({
+      name: { $regex: q, $options: 'i' }
+    })
+    .limit(20)
+    .maxTimeMS(5000) // Timeout to prevent long-running queries
+    .exec();
 
-#### How does debouncing prevent race conditions?
-- **The Engine Mechanism (Why it behaves this way):** Debouncing delays the API call until a specified time passes without new input. Implementation: `const useDebounce = (value, delay) => { const [debounced, setDebounced] = useState(value); useEffect(() => { const timer = setTimeout(() => setDebounced(value), delay); return () => clearTimeout(timer); }, [value, delay]); return debounced; };`. When the user types "hello", the timer resets on each keystroke. Only after 300ms of no typing does the API call fire with "hello". This reduces the number of API calls from N (one per keystroke) to 1 (after the user pauses).
-- **The Unforgettable Mental Model:** The **Patience Timer**. Instead of calling the librarian after every letter typed, you wait. If the user keeps typing, the timer resets. Only when they pause does the search happen.
-- **The Trap:** Setting the debounce delay too long — users feel the search is unresponsive. Too short — doesn't effectively reduce API calls. 300ms is the sweet spot.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Debouncing delays the API call until the user stops typing for a set period (300ms). Each keystroke resets the timer. Only after the pause does the search fire. This reduces API calls from one per keystroke to one per search session. I use a custom useDebounce hook or a library like lodash.debounce. 300ms is the sweet spot — fast enough to feel responsive, long enough to reduce unnecessary calls."
+    // Include the query in response for frontend validation
+    res.json({
+      query: q,
+      results
+    });
+  } catch (error) {
+    // Check if request was aborted during query
+    if (req.aborted) {
+      console.log('Request aborted during query execution');
+      return;
+    }
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+```
 
-#### How does AbortController cancel requests?
-- **The Engine Mechanism (Why it behaves this way):** AbortController creates a signal that can be passed to fetch/axios: `const controller = new AbortController(); api.get('/search', { signal: controller.signal }); controller.abort();`. When abort() is called, the browser cancels the in-flight HTTP request. The request's promise rejects with an AbortError. TanStack Query uses this internally — when a new query is made for the same queryKey, it aborts the previous request. The backend should handle aborted requests gracefully — MongoDB drivers and Express can detect aborted requests.
-- **The Unforgettable Mental Model:** The **Recall Button**. You send a messenger (HTTP request) but realize you sent the wrong message. You press the recall button (abort) and the messenger turns back. The recipient (server) never processes the wrong message.
-- **The Trap:** Not handling AbortError in catch blocks — it's not a real error, it's an intentional cancellation. Filter it out: `if (err.name === 'CanceledError') return;`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: AbortController creates a signal passed to the HTTP request. When abort() is called, the browser cancels the in-flight request and the promise rejects with an AbortError. TanStack Query uses this internally to cancel previous requests when a new query is made. I handle AbortError separately in catch blocks — it's not a real error, just an intentional cancellation. The backend should also detect aborted requests to avoid unnecessary database queries."
+## 5. Interview Questions — All of Them, Done Properly
 
-#### How do you handle stale responses?
-- **The Engine Mechanism (Why it behaves this way):** Even with cancellation, some responses may arrive after a newer query has been made. Track the latest query and ignore stale responses: `const queryIdRef = useRef(0); const fetchSearch = async (query) => { const currentQueryId = ++queryIdRef.current; const res = await api.get(`/search?q=${query}`); if (currentQueryId !== queryIdRef.current) return; // stale, ignore setData(res.data); };`. Each new search increments the query ID. When a response arrives, check if its ID matches the current ID. If not, it's stale and should be ignored.
-- **The Unforgettable Mental Model:** The **Version Number**. Each search gets a version number. When a response arrives, check its version. If it's older than the current version, discard it — it's outdated.
-- **The Trap:** Not handling stale responses — even with cancellation, network conditions can cause responses to arrive out of order. Always verify the response matches the current query.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Even with request cancellation, stale responses can arrive due to network conditions. I handle this by tracking a query ID that increments with each new search. When a response arrives, I check if its ID matches the current ID. If not, it's stale and I ignore it. This is a safety net on top of debouncing and cancellation. TanStack Query handles this internally, but for manual fetching, I implement it explicitly."
+**Q: How do you handle race conditions in search?**
 
-#### How do you handle race conditions on the backend?
-- **The Engine Mechanism (Why it behaves this way):** Backend race conditions in search: (1) **Aborted requests** — check if the request was aborted before processing: `req.on('close', () => { if (req.aborted) return; });`. (2) **Database query optimization** — use indexes on search fields to make queries fast, reducing the window for race conditions. (3) **Response headers** — include the query term in the response: `res.json({ query: req.query.q, results })`. The frontend can verify the response matches the current query. (4) **Rate limiting** — prevent abuse by limiting search requests per user per minute.
-- **The Unforgettable Mental Model:** The **Return Address**. Each response includes the query term that generated it (return address). The frontend checks if the return address matches the current query before displaying results.
-- **The Trap:** Processing aborted requests on the backend — wasting database resources for requests the client no longer cares about.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: On the backend, I handle race conditions by checking if requests were aborted before processing, using indexes for fast queries, and including the query term in the response so the frontend can verify it matches the current search. I also implement rate limiting to prevent search abuse. The key is making queries as fast as possible (indexes) and providing the frontend with the information it needs to validate responses."
+I handle search race conditions with three layers: debouncing, request cancellation, and response validation. Debouncing delays the API call until the user stops typing for 300ms, which reduces the number of requests from one per keystroke to one per search session. This alone eliminates most race conditions because there's usually only one request in flight at a time.
 
-## 8. Active recall test
+For the requests that do fire, I use AbortController to cancel previous in-flight requests when a new one starts. When the user types a new character, the browser aborts the previous request before it completes. This prevents wasted server resources and ensures only the latest request processes. TanStack Query handles this automatically — when a new query is made for the same queryKey, it aborts the previous one.
 
-1. **What causes race conditions in search?**
-   - **Explanation:** Multiple API requests fired in quick succession (one per keystroke) can return out of order. An earlier request's response might arrive after a later one, showing stale results.
+As a safety net, I also implement response validation. I track a query ID that increments with each new search. When a response arrives, I check if its ID matches the current ID. If not, it's stale and I ignore it. This handles edge cases where network conditions cause responses to arrive out of order despite cancellation.
 
-2. **How does debouncing help?**
-   - **Explanation:** It delays the API call until the user stops typing for a set period (300ms). Reduces API calls from one per keystroke to one per search session.
+On the backend, I detect aborted requests using the request's `close` event or the `aborted` flag, and I stop processing if the client has disconnected. I also use database indexes on search fields to make queries fast, which reduces the time window where race conditions can occur.
 
-3. **How does AbortController cancel requests?**
-   - **Explanation:** Creates a signal passed to the HTTP request. When abort() is called, the browser cancels the in-flight request and the promise rejects with an AbortError.
+**Q: How does debouncing prevent race conditions?**
 
-4. **How do you handle stale responses?**
-   - **Explanation:** Track a query ID that increments with each search. When a response arrives, check if its ID matches the current ID. If not, it's stale and should be ignored.
+Debouncing works by waiting for a pause in user input before firing the API call. Instead of calling the API on every keystroke, you set a timer (typically 300ms). Each keystroke resets the timer. Only when the user stops typing for the full delay does the API call fire.
 
-5. **How do you handle race conditions on the backend?**
-   - **Explanation:** Check if requests were aborted before processing, use indexes for fast queries, include the query term in responses for frontend verification, and implement rate limiting.
+In practice, if a user types "javascript" quickly, a naive implementation fires 10 API calls. With debouncing, the timer resets on each letter: "j" starts a 300ms timer, "ja" resets it, "jav" resets it, and so on. When the user finally stops typing after "javascript", the timer completes and one API call fires with the full search term.
 
-## 9. Mistakes / traps
+This prevents race conditions because it dramatically reduces the number of concurrent requests. Instead of 10 requests racing each other, you have at most one request at a time. Even if a request is slow, there's no newer request waiting to overtake it because the user hasn't typed anything new. The UX feels responsive because 300ms is fast enough that users don't notice the delay, but it's long enough to capture complete words or phrases.
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+**Q: How does AbortController cancel requests?**
 
-## 10. Compare with related concepts
+AbortController is a browser API that lets you cancel in-flight fetch requests. You create a controller, get its signal, and pass that signal to the fetch call. When you call `controller.abort()`, the browser cancels the HTTP request. If the request hasn't reached the server yet, it never will. If it's in progress, the browser terminates the connection.
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+The fetch promise rejects with an AbortError when aborted. This is not a real error — it's an intentional cancellation. In your catch block, you should check for this error type and handle it separately (usually by ignoring it, since cancellation is expected behavior).
 
-## 11. Summary from memory
+TanStack Query uses AbortController internally. When you make a new query with the same queryKey, it automatically aborts the previous request. This means you don't have to manage the cancellation logic yourself — the library handles it.
 
-Explain How do you handle race conditions in search in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+On the backend, you can detect aborted requests in Express by listening to the `close` event on the request object or checking the `aborted` flag. This lets you stop database work early when the client no longer cares about the result, saving server resources.
 
-## 12. Spaced revision prompts
+**Q: How do you handle stale responses?**
 
-- Day 1: Define How do you handle race conditions in search in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+Even with debouncing and cancellation, stale responses can still arrive due to network conditions or timing edge cases. I handle this by tracking the current search term and validating responses against it.
+
+The pattern is to use a ref that stores the current query or a query ID. Each time the search term changes, I update this ref. When a response arrives, I compare the response's query against the current ref value. If they don't match, the response is stale and I ignore it — I don't update the UI.
+
+For example, I might use a `queryIdRef` that increments on each new search. When making a request, I capture the current ID. When the response arrives, I check if the captured ID still equals the current ID. If not, a newer search has started and this response is outdated.
+
+TanStack Query handles this internally — it won't update state with a stale response. For manual implementations, this validation is essential as a safety net. It ensures that even if something goes wrong with cancellation, the UI never shows results that don't match what the user actually searched for.
+
+**Q: How do you handle race conditions on the backend?**
+
+On the backend, race conditions in search are less about the data itself (since reads don't corrupt each other) and more about efficiency and resource usage. I handle this in four ways.
+
+First, I detect aborted requests. In Express, I listen to the `close` event on the request or check the `aborted` flag. If the client has disconnected, I stop processing immediately. This prevents wasting database resources on queries the user will never see.
+
+Second, I optimize database queries with indexes. Search fields should be indexed so queries are fast. A faster query means a shorter time window where race conditions could matter. If a search takes 10ms instead of 500ms, there's less chance of a newer request overtaking an older one.
+
+Third, I include the search term in the API response. The frontend can then verify that the response matches the current search term before displaying it. This is another layer of defense against stale data.
+
+Fourth, I implement rate limiting on search endpoints. This prevents abuse where a user or bot might flood the endpoint with requests, which would amplify race condition problems and waste server resources.
+
+## 6. The Traps — What Goes Wrong in Production
+
+**Not handling AbortError properly:** A common mistake is treating AbortError like a real error and showing an error message to the user. AbortError is intentional cancellation, not a failure. Your catch block should check the error name and silently ignore AbortError.
+
+**Setting debounce delay too long or too short:** If the delay is too long (500ms+), the search feels unresponsive — users think something is broken. If it's too short (100ms or less), you don't effectively reduce the number of requests. 300ms is the standard sweet spot, but test with real users to find what feels right for your application.
+
+**Forgetting to clean up abort controllers:** If you create an AbortController but don't clean it up when the component unmounts, you might try to abort a request that no longer exists, or you might leak memory. Always abort in the cleanup function of useEffect.
+
+**Assuming cancellation is perfect:** Network conditions are unpredictable. A request might reach the server before cancellation takes effect, or the server might start processing before it detects the cancellation. Always implement response validation as a safety net — don't rely solely on cancellation.
+
+**Not indexing search fields on the backend:** Without indexes, search queries are slow. Slow queries increase the race window and make race conditions more likely. A 500ms query has much more chance of being overtaken than a 50ms query.
+
+**Processing aborted requests on the backend:** If your backend doesn't detect aborted requests, it will waste resources processing queries that the client no longer cares about. At scale, this can significantly impact database performance and server load.
+
+**Showing loading state for the wrong request:** When a new request starts, you set loading to true. But if the previous request's error handler runs after the new request starts, it might set loading to false prematurely. Track which request is loading, not just a boolean flag.
+
+## 7. Compare With Related Concepts
+
+**Race conditions in search vs. race conditions in mutations:** Search race conditions are about stale reads — showing old data when newer data exists. Mutation race conditions (like double-submitting a form) are about duplicate writes — causing data corruption or unintended side effects. The strategies are different: for search, you validate and ignore stale responses. For mutations, you use idempotency keys, optimistic locking, or request deduplication.
+
+**Debouncing vs. throttling:** Debouncing waits for a pause in input before firing. Throttling fires at most once per time interval regardless of input frequency. For search, debouncing is better because you want to wait until the user finishes typing. Throttling would fire at regular intervals even if the user is still typing, which can still cause race conditions.
+
+**AbortController vs. simply ignoring old responses:** AbortController actually cancels the HTTP request, saving server resources. Simply ignoring old responses on the client still wastes backend processing. Use both — cancel the request and validate the response.
+
+**Frontend race conditions vs. database race conditions:** Frontend race conditions are about request/response ordering and UI consistency. Database race conditions are about concurrent transactions modifying the same data. Frontend race conditions don't corrupt data — they just show the wrong thing temporarily. Database race conditions can corrupt data permanently and require transactions, locks, or optimistic concurrency control.
+
+**Race conditions vs. optimistic updates:** Optimistic updates are when you update the UI immediately before the server confirms, then rollback if the request fails. This is a deliberate UX pattern. Race conditions are bugs where the UI updates with the wrong data due to timing issues. Optimistic updates are controlled; race conditions are uncontrolled.
+
+## 8. 🧠 The Memory Hook
+
+The restaurant order: when you keep changing your mind, the waiter should cancel the previous order before sending the new one. Only the final order should ever reach the kitchen.

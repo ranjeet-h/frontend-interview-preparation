@@ -239,6 +239,6 @@ No. A valid signed JWT remains valid until its `exp` time unless every request c
 
 **Refresh token rotation vs token renewal:** renewal extends the same credential; rotation invalidates the old credential and issues a new one. Use rotation when replay detection and session theft response matter.
 
-## FORMAT E — The Memory Hook — What Sticks
+## 8. 🧠 The Memory Hook — What Sticks
 
 Carry the short room key in memory, and keep the document that can print new keys in the browser's locked `HttpOnly` drawer. The server must remember which documents are valid, rotate them one use at a time, and treat an old document reappearing as a break-in signal.

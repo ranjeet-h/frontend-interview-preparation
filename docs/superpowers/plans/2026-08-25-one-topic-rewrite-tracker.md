@@ -76,6 +76,26 @@ Process in this order. Skip `src/javascript/concepts/index.md`.
 
 Do not rewrite `src/javascript/output-questions.md`, `output-questions-2.md`, or `output-questions-3.md` as a single page. Each output puzzle is its own later Type C task after it is split into its own file.
 
+## Phase 1C — JavaScript output questions (Type C, one puzzle per page)
+
+Begin with one verified seed puzzle from each requested collection. Add later puzzles only as they are individually assigned; do not bulk-generate this queue.
+
+1. [x] rewritten — `src/javascript/output-questions/part-1/001-var-hoisting.md` — Type C (Part 1 Question 1)
+2. [x] rewritten — `src/javascript/output-questions/part-2/001-default-this.md` — Type C (Part 2 Question 1)
+3. [x] rewritten — `src/javascript/output-questions/part-3/001-var-hoisting.md` — Type C (Part 3 Question 1)
+4. [x] rewritten — `src/javascript/output-questions/part-1/002-function-declaration-hoisting.md` — Type C (Part 1 Question 2)
+5. [x] rewritten — `src/javascript/output-questions/part-2/002-call-vs-method-this.md` — Type C (Part 2 Question 2)
+6. [x] rewritten — `src/javascript/output-questions/part-3/002-let-tdz.md` — Type C (Part 3 Question 2)
+7. [x] rewritten — `src/javascript/output-questions/part-1/003-var-function-expression.md` — Type C (Part 1 Question 3)
+8. [x] rewritten — `src/javascript/output-questions/part-2/003-arrow-function-this.md` — Type C (Part 2 Question 3)
+9. [x] rewritten — `src/javascript/output-questions/part-3/003-const-tdz.md` — Type C (Part 3 Question 3)
+10. [x] rewritten — `src/javascript/output-questions/part-1/004-let-tdz.md` — Type C (Part 1 Question 4)
+11. [x] rewritten — `src/javascript/output-questions/part-2/004-make-user-this.md` — Type C (Part 2 Question 4)
+12. [x] rewritten — `src/javascript/output-questions/part-3/004-function-declaration.md` — Type C (Part 3 Question 4)
+13. [x] rewritten — `src/javascript/output-questions/part-1/005-var-shadowing.md` — Type C (Part 1 Question 5)
+14. [x] rewritten — `src/javascript/output-questions/part-2/005-var-loop-closure.md` — Type C (Part 2 Question 7)
+15. [x] rewritten — `src/javascript/output-questions/part-3/005-function-expression-call.md` — Type C (Part 3 Question 5)
+
 ## Later phases
 
 Use the directory order in `2026-08-25-sequential-study-note-rewrite.md`. Add filenames to this tracker only when that phase starts, never as a bulk generated list used to rewrite many pages at once.
@@ -167,27 +187,27 @@ Process React leaf pages under `src/react/concepts/` as Type A in dependency ord
 43. [x] rewritten — `src/react/concepts/use-reducer.md` — Type A
 44. [x] rewritten — `src/react/concepts/use-memo.md` — Type A
 45. [x] rewritten — `src/react/concepts/use-callback.md` — Type A
-46. [ ] queued — `src/react/concepts/use-layout-effect.md` — Type A
-47. [ ] queued — `src/react/concepts/use-imperative-handle.md` — Type A
-48. [ ] queued — `src/react/concepts/use-debug-value.md` — Type A
-49. [ ] queued — `src/react/concepts/custom-hooks.md` — Type A
-50. [ ] queued — `src/react/concepts/rules-of-hooks.md` — Type A
-51. [ ] queued — `src/react/concepts/hook-dependency-array.md` — Type A
-52. [ ] queued — `src/react/concepts/stale-closures.md` — Type A
-53. [ ] queued — `src/react/concepts/effect-cleanup-functions.md` — Type A
-54. [ ] queued — `src/react/concepts/avoiding-infinite-re-renders.md` — Type A
-55. [ ] queued — `src/react/concepts/lazy-initialization-use-state.md` — Type A
-56. [ ] queued — `src/react/concepts/functional-state-updates.md` — Type A
-57. [ ] queued — `src/react/concepts/referential-equality-stable-references.md` — Type A
-58. [ ] queued — `src/react/concepts/race-conditions-inside-effects.md` — Type A
-59. [ ] queued — `src/react/concepts/abort-controller-inside-effects.md` — Type A
-60. [ ] queued — `src/react/concepts/debouncing-with-hooks.md` — Type A
-61. [ ] queued — `src/react/concepts/throttling-with-hooks.md` — Type A
-62. [ ] queued — `src/react/concepts/use-previous.md` — Type A
-63. [ ] queued — `src/react/concepts/mounted-state-tracking.md` — Type A
-64. [ ] queued — `src/react/concepts/hook-comparisons.md` — Type A
-65. [ ] queued — `src/react/concepts/async-logic-inside-hooks.md` — Type A
-66. [ ] queued — `src/react/concepts/custom-hook-testing.md` — Type A
+46. [x] rewritten — `src/react/concepts/use-layout-effect.md` — Type A
+47. [x] rewritten — `src/react/concepts/use-imperative-handle.md` — Type A
+48. [x] rewritten — `src/react/concepts/use-debug-value.md` — Type A
+49. [x] rewritten — `src/react/concepts/custom-hooks.md` — Type A
+50. [x] rewritten — `src/react/concepts/rules-of-hooks.md` — Type A
+51. [x] rewritten — `src/react/concepts/hook-dependency-array.md` — Type A
+52. [x] rewritten — `src/react/concepts/stale-closures.md` — Type A
+53. [x] rewritten — `src/react/concepts/effect-cleanup-functions.md` — Type A
+54. [x] rewritten — `src/react/concepts/avoiding-infinite-re-renders.md` — Type A
+55. [x] rewritten — `src/react/concepts/lazy-initialization-use-state.md` — Type A
+56. [x] rewritten — `src/react/concepts/functional-state-updates.md` — Type A
+57. [x] rewritten — `src/react/concepts/referential-equality-stable-references.md` — Type A
+58. [x] rewritten — `src/react/concepts/race-conditions-inside-effects.md` — Type A
+59. [x] rewritten — `src/react/concepts/abort-controller-inside-effects.md` — Type A
+60. [x] rewritten — `src/react/concepts/debouncing-with-hooks.md` — Type A
+61. [x] rewritten — `src/react/concepts/throttling-with-hooks.md` — Type A
+62. [x] rewritten — `src/react/concepts/use-previous.md` — Type A
+63. [x] rewritten — `src/react/concepts/mounted-state-tracking.md` — Type A
+64. [x] rewritten — `src/react/concepts/hook-comparisons.md` — Type A
+65. [x] rewritten — `src/react/concepts/async-logic-inside-hooks.md` — Type A
+66. [x] rewritten — `src/react/concepts/custom-hook-testing.md` — Type A
 
 ## Phase 7 — Backend System Design
 
@@ -286,7 +306,18 @@ Process MongoDB leaf pages under `src/full-stack/databases/mongodb/` as Type E.
 21. [x] rewritten — `src/full-stack/databases/mongodb/what-is-sort.md` — Type E
 22. [x] rewritten — `src/full-stack/databases/mongodb/embedding-vs-referencing.md` — Type E
 23. [x] rewritten — `src/full-stack/databases/mongodb/when-should-you-embed-documents.md` — Type E
-24. [ ] queued — remaining MongoDB pages
+24. [x] rewritten — `src/full-stack/databases/mongodb/when-should-you-reference-documents.md` — Type E
+25. [x] rewritten — `src/full-stack/databases/mongodb/how-do-you-model-many-to-many-relationships.md` — Type E
+26. [x] rewritten — `src/full-stack/databases/mongodb/how-is-mongodb-schema-designed.md` — Type E
+27. [x] rewritten — `src/full-stack/databases/mongodb/what-are-mongodb-transactions.md` — Type E
+28. [x] rewritten — `src/full-stack/databases/mongodb/when-should-you-avoid-mongodb-transactions.md` — Type E
+29. [x] rewritten — `src/full-stack/databases/mongodb/what-is-replica-set.md` — Type E
+30. [x] rewritten — `src/full-stack/databases/mongodb/what-is-sharding.md` — Type E
+31. [x] rewritten — `src/full-stack/databases/mongodb/what-is-read-concern.md` — Type E
+32. [x] rewritten — `src/full-stack/databases/mongodb/what-is-write-concern.md` — Type E
+33. [x] rewritten — `src/full-stack/databases/mongodb/how-do-you-optimize-mongodb-queries.md` — Type E
+34. [x] rewritten — `src/full-stack/databases/mongodb/how-do-you-avoid-slow-lookup-queries.md` — Type E
+35. [x] rewritten — `src/full-stack/databases/mongodb/how-do-you-handle-pagination-in-mongodb.md` — Type E
 
 ## Phase 4 — Mongoose
 
@@ -314,11 +345,15 @@ Process Mongoose leaf pages under `src/full-stack/backend/mongoose/` as Type E.
 20. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-handle-connection-errors.md` — Type E
 21. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-handle-transactions-in-mongoose.md` — Type E
 22. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-handle-references.md` — Type E
-23. [ ] assigned — `src/full-stack/backend/mongoose/how-do-you-handle-timestamps.md` — Type E
-24. [ ] assigned — `src/full-stack/backend/mongoose/how-do-you-handle-unique-fields.md` — Type E
-25. [ ] assigned — `src/full-stack/backend/mongoose/how-do-you-hash-password-before-saving-user.md` — Type E
-26. [ ] assigned — `src/full-stack/backend/mongoose/how-do-you-implement-soft-delete.md` — Type E
-27. [ ] queued — remaining Mongoose pages
+23. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-handle-timestamps.md` — Type E
+24. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-handle-unique-fields.md` — Type E
+25. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-hash-password-before-saving-user.md` — Type E
+26. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-implement-soft-delete.md` — Type E
+27. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-optimize-mongoose-queries.md` — Type E
+28. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-prevent-n-1-queries-with-populate.md` — Type E
+29. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-structure-mongoose-models.md` — Type E
+30. [x] rewritten — `src/full-stack/backend/mongoose/how-do-you-validate-nested-schemas.md` — Type E
+31. [x] complete — all 30 `src/full-stack/backend/mongoose/*.md` pages rewritten
 
 ## Phase 5 — MERN full-stack patterns
 
@@ -328,10 +363,35 @@ Process MERN leaf pages under `src/full-stack/backend/mern/` as Type E.
 2. [x] rewritten — `src/full-stack/backend/mern/how-does-react-communicate-with-express-backend.md` — Type A
 3. [x] rewritten — `src/full-stack/backend/mern/how-do-you-design-auth-in-mern.md` — Type E
 4. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-refresh-tokens-in-mern.md` — Type E
-5. [ ] assigned — `src/full-stack/backend/mern/how-do-you-protect-backend-routes.md` — Type E
-6. [ ] assigned — `src/full-stack/backend/mern/how-do-you-protect-frontend-routes.md` — Type E
-7. [ ] assigned — `src/full-stack/backend/mern/how-do-you-store-jwt-securely-in-mern.md` — Type E
-8. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-cors-in-mern.md` — Type E
+5. [x] rewritten — `src/full-stack/backend/mern/how-do-you-protect-backend-routes.md` — Type E
+6. [x] rewritten — `src/full-stack/backend/mern/how-do-you-protect-frontend-routes.md` — Type E
+7. [x] rewritten — `src/full-stack/backend/mern/how-do-you-store-jwt-securely-in-mern.md` — Type E
+8. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-cors-in-mern.md` — Type E
 9. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-file-uploads-in-mern.md` — Type E
 10. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-pagination-in-mern.md` — Type E
-11. [ ] queued — remaining MERN pages
+11. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-api-errors-in-mern.md` — Type E
+12. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-form-validation-from-react-to-backend.md` — Type E
+13. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-loading-error-states.md` — Type E
+14. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-optimistic-ui-with-backend.md` — Type E
+15. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-permissions.md` — Type E
+16. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-race-conditions-in-search.md` — Type E
+11. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-api-errors-in-mern.md` — Type E
+12. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-form-validation-from-react-to-backend.md` — Type E
+13. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-loading-error-states.md` — Type E
+14. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-optimistic-ui-with-backend.md` — Type E
+15. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-permissions.md` — Type E
+16. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-race-conditions-in-search.md` — Type E
+17. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-socket-authentication.md` — Type E
+18. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-image-upload-with-mongodb.md` — Type E
+19. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-notifications-in-mern.md` — Type E
+20. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-real-time-chat-in-mern.md` — Type E
+21. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-search-in-mern.md` — Type E
+22. [ ] assigned — `src/full-stack/backend/mern/how-do-you-manage-environment-variables.md` — Type E
+23. [ ] assigned — `src/full-stack/backend/mern/how-do-you-monitor-mern-backend.md` — Type E
+24. [ ] assigned — `src/full-stack/backend/mern/how-do-you-structure-a-mern-backend.md` — Type E
+25. [ ] assigned — `src/full-stack/backend/mern/how-do-you-connect-frontend-and-backend-in-production.md` — Type E
+26. [ ] assigned — `src/full-stack/backend/mern/how-do-you-deploy-mern-app.md` — Type E
+27. [ ] assigned — `src/full-stack/backend/mern/how-do-you-design-admin-apis.md` — Type E
+28. [ ] assigned — `src/full-stack/backend/mern/should-files-be-stored-in-mongodb-or-object-storage.md` — Type E
+29. [ ] assigned — `src/full-stack/backend/mern/why-is-frontend-route-protection-not-enough.md` — Type E
+30. [ ] assigned — `src/full-stack/backend/mern/how-do-you-avoid-duplicate-api-calls.md` — Type E

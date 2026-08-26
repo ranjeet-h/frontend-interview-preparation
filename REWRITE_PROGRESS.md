@@ -72,6 +72,6 @@ None; all 56 JavaScript concept pages have passed scoped review and been committ
 
 ## Cross-project synchronization
 
-- The detailed tracker currently has 231 page rows marked `rewritten` and 10 rows marked `assigned`.
+- The detailed tracker currently has 288 page rows marked `rewritten` and 28 rows marked `assigned`.
 - The broader rollup in `REWRITE-PROGRESS.md` includes the other completed frontend, React, system-design, Node.js, MongoDB, Mongoose, and MERN work.
 - Update the detailed tracker only after a page has passed its scoped review and target-only commit.
