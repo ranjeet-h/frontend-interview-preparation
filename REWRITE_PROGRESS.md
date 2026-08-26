@@ -96,7 +96,7 @@ These seven standalone notes are not part of the completed 66-page core-concepts
 |---|---:|
 | API design | 30 |
 | Authentication | 30 |
-| Backend concepts | 21 (18 / 39 completed) |
+| Backend concepts | 15 (24 / 39 completed) |
 | Coding practice | 30 |
 | Deployment | 25 |
 | Express | 30 |
