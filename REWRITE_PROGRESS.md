@@ -106,7 +106,7 @@ The seven pages each have exactly eight numbered H2 sections, no H3 sections, no
 |---|---:|
 | API design | 30 |
 | Authentication | 30 |
-| Backend concepts | 9 (30 / 39 completed) |
+| Backend concepts | 4 (35 / 39 completed) |
 | Coding practice | 30 |
 | Deployment | 25 |
 | Express | 30 |
