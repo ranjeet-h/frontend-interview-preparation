@@ -368,22 +368,22 @@ Process MERN leaf pages under `src/full-stack/backend/mern/` as Type E.
 7. [x] rewritten — `src/full-stack/backend/mern/how-do-you-store-jwt-securely-in-mern.md` — Type E
 8. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-cors-in-mern.md` — Type E
 9. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-file-uploads-in-mern.md` — Type E
-10. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-pagination-in-mern.md` — Type E
+10. [x] rewritten — `src/full-stack/backend/mern/how-do-you-implement-pagination-in-mern.md` — Type E
 11. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-api-errors-in-mern.md` — Type E
-12. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-form-validation-from-react-to-backend.md` — Type E
-13. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-loading-error-states.md` — Type E
-14. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-optimistic-ui-with-backend.md` — Type E
-15. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-permissions.md` — Type E
-16. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-race-conditions-in-search.md` — Type E
-17. [ ] assigned — `src/full-stack/backend/mern/how-do-you-handle-socket-authentication.md` — Type E
-18. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-image-upload-with-mongodb.md` — Type E
-19. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-notifications-in-mern.md` — Type E
-20. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-real-time-chat-in-mern.md` — Type E
-21. [ ] assigned — `src/full-stack/backend/mern/how-do-you-implement-search-in-mern.md` — Type E
-22. [ ] assigned — `src/full-stack/backend/mern/how-do-you-manage-environment-variables.md` — Type E
-23. [ ] assigned — `src/full-stack/backend/mern/how-do-you-monitor-mern-backend.md` — Type E
-24. [ ] assigned — `src/full-stack/backend/mern/how-do-you-structure-a-mern-backend.md` — Type E
-25. [ ] assigned — `src/full-stack/backend/mern/how-do-you-connect-frontend-and-backend-in-production.md` — Type E
+12. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-form-validation-from-react-to-backend.md` — Type E
+13. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-loading-error-states.md` — Type E
+14. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-optimistic-ui-with-backend.md` — Type E
+15. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-permissions.md` — Type E
+16. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-race-conditions-in-search.md` — Type E
+17. [x] rewritten — `src/full-stack/backend/mern/how-do-you-handle-socket-authentication.md` — Type E
+18. [x] rewritten — `src/full-stack/backend/mern/how-do-you-implement-image-upload-with-mongodb.md` — Type E
+19. [x] rewritten — `src/full-stack/backend/mern/how-do-you-implement-notifications-in-mern.md` — Type E
+20. [x] rewritten — `src/full-stack/backend/mern/how-do-you-implement-real-time-chat-in-mern.md` — Type E
+21. [x] rewritten — `src/full-stack/backend/mern/how-do-you-implement-search-in-mern.md` — Type E
+22. [x] rewritten — `src/full-stack/backend/mern/how-do-you-manage-environment-variables.md` — Type E
+23. [x] rewritten — `src/full-stack/backend/mern/how-do-you-monitor-mern-backend.md` — Type E
+24. [x] rewritten — `src/full-stack/backend/mern/how-do-you-structure-a-mern-backend.md` — Type E
+25. [x] rewritten — `src/full-stack/backend/mern/how-do-you-connect-frontend-and-backend-in-production.md` — Type E
 26. [ ] assigned — `src/full-stack/backend/mern/how-do-you-deploy-mern-app.md` — Type E
 27. [ ] assigned — `src/full-stack/backend/mern/how-do-you-design-admin-apis.md` — Type E
 28. [ ] assigned — `src/full-stack/backend/mern/should-files-be-stored-in-mongodb-or-object-storage.md` — Type E
@@ -394,43 +394,133 @@ Process MERN leaf pages under `src/full-stack/backend/mern/` as Type E.
 
 Process 39 leaf pages under `src/full-stack/backend/concepts/` as Type A in SUMMARY order. Skip `index.md`.
 
-1. [ ] assigned — `src/full-stack/backend/concepts/http-request-lifecycle.md` — Type A
-2. [ ] assigned — `src/full-stack/backend/concepts/http-vs-https.md` — Type A
-3. [ ] assigned — `src/full-stack/backend/concepts/rest.md` — Type A
-4. [ ] assigned — `src/full-stack/backend/concepts/http-methods.md` — Type A
-5. [ ] assigned — `src/full-stack/backend/concepts/put-vs-patch.md` — Type A
-6. [ ] assigned — `src/full-stack/backend/concepts/idempotency.md` — Type A
-7. [ ] queued — `src/full-stack/backend/concepts/http-status-codes.md` — Type A
-8. [ ] queued — `src/full-stack/backend/concepts/401-vs-403.md` — Type A
-9. [ ] queued — `src/full-stack/backend/concepts/400-vs-422.md` — Type A
-10. [ ] queued — `src/full-stack/backend/concepts/stateless-apis.md` — Type A
-11. [ ] queued — `src/full-stack/backend/concepts/api-versioning.md` — Type A
-12. [ ] queued — `src/full-stack/backend/concepts/offset-pagination.md` — Type A
-13. [ ] queued — `src/full-stack/backend/concepts/cursor-pagination.md` — Type A
-14. [ ] queued — `src/full-stack/backend/concepts/cursor-vs-offset-pagination.md` — Type A
-15. [ ] queued — `src/full-stack/backend/concepts/api-filtering-sorting.md` — Type A
-16. [ ] queued — `src/full-stack/backend/concepts/backend-file-uploads.md` — Type A
-17. [ ] queued — `src/full-stack/backend/concepts/rate-limiting.md` — Type A
-18. [ ] queued — `src/full-stack/backend/concepts/request-throttling.md` — Type A
-19. [ ] queued — `src/full-stack/backend/concepts/backend-debouncing.md` — Type A
-20. [ ] queued — `src/full-stack/backend/concepts/request-validation.md` — Type A
-21. [ ] queued — `src/full-stack/backend/concepts/response-serialization.md` — Type A
-22. [ ] queued — `src/full-stack/backend/concepts/middleware.md` — Type A
-23. [ ] queued — `src/full-stack/backend/concepts/backend-framework-request-lifecycle.md` — Type A
-24. [ ] queued — `src/full-stack/backend/concepts/cors.md` — Type A
-25. [ ] queued — `src/full-stack/backend/concepts/preflight-request.md` — Type A
-26. [ ] queued — `src/full-stack/backend/concepts/same-origin-policy.md` — Type A
-27. [ ] queued — `src/full-stack/backend/concepts/backend-caching.md` — Type A
-28. [ ] queued — `src/full-stack/backend/concepts/cache-headers.md` — Type A
-29. [ ] queued — `src/full-stack/backend/concepts/etag.md` — Type A
-30. [ ] queued — `src/full-stack/backend/concepts/cache-control.md` — Type A
-31. [ ] queued — `src/full-stack/backend/concepts/cdn-caching.md` — Type A
-32. [ ] queued — `src/full-stack/backend/concepts/server-side-caching.md` — Type A
-33. [ ] queued — `src/full-stack/backend/concepts/reverse-proxy.md` — Type A
-34. [ ] queued — `src/full-stack/backend/concepts/load-balancing.md` — Type A
-35. [ ] queued — `src/full-stack/backend/concepts/horizontal-scaling.md` — Type A
-36. [ ] queued — `src/full-stack/backend/concepts/vertical-scaling.md` — Type A
-37. [ ] queued — `src/full-stack/backend/concepts/graceful-shutdown.md` — Type A
-38. [ ] queued — `src/full-stack/backend/concepts/health-check-endpoint.md` — Type A
-39. [ ] queued — `src/full-stack/backend/concepts/observability.md` — Type A
+1. [x] rewritten — `src/full-stack/backend/concepts/http-request-lifecycle.md` — Type A
+2. [x] rewritten — `src/full-stack/backend/concepts/http-vs-https.md` — Type A
+3. [x] rewritten — `src/full-stack/backend/concepts/rest.md` — Type A
+4. [x] rewritten — `src/full-stack/backend/concepts/http-methods.md` — Type A
+5. [x] rewritten — `src/full-stack/backend/concepts/put-vs-patch.md` — Type A
+6. [x] rewritten — `src/full-stack/backend/concepts/idempotency.md` — Type A
+7. [x] rewritten — `src/full-stack/backend/concepts/http-status-codes.md` — Type A
+8. [x] rewritten — `src/full-stack/backend/concepts/401-vs-403.md` — Type A
+9. [x] rewritten — `src/full-stack/backend/concepts/400-vs-422.md` — Type A
+10. [x] rewritten — `src/full-stack/backend/concepts/stateless-apis.md` — Type A
+11. [x] rewritten — `src/full-stack/backend/concepts/api-versioning.md` — Type A
+12. [x] rewritten — `src/full-stack/backend/concepts/offset-pagination.md` — Type A
+13. [x] rewritten — `src/full-stack/backend/concepts/cursor-pagination.md` — Type A
+14. [x] rewritten — `src/full-stack/backend/concepts/cursor-vs-offset-pagination.md` — Type A
+15. [x] rewritten — `src/full-stack/backend/concepts/api-filtering-sorting.md` — Type A
+16. [x] rewritten — `src/full-stack/backend/concepts/backend-file-uploads.md` — Type A
+17. [x] rewritten — `src/full-stack/backend/concepts/rate-limiting.md` — Type A
+18. [x] rewritten — `src/full-stack/backend/concepts/request-throttling.md` — Type A
+19. [x] rewritten — `src/full-stack/backend/concepts/backend-debouncing.md` — Type A
+20. [x] rewritten — `src/full-stack/backend/concepts/request-validation.md` — Type A
+21. [x] rewritten — `src/full-stack/backend/concepts/response-serialization.md` — Type A
+22. [x] rewritten — `src/full-stack/backend/concepts/middleware.md` — Type A
+23. [x] rewritten — `src/full-stack/backend/concepts/backend-framework-request-lifecycle.md` — Type A
+24. [x] rewritten — `src/full-stack/backend/concepts/cors.md` — Type A
+25. [x] rewritten — `src/full-stack/backend/concepts/preflight-request.md` — Type A
+26. [x] rewritten — `src/full-stack/backend/concepts/same-origin-policy.md` — Type A
+27. [x] rewritten — `src/full-stack/backend/concepts/backend-caching.md` — Type A
+28. [x] rewritten — `src/full-stack/backend/concepts/cache-headers.md` — Type A
+29. [x] rewritten — `src/full-stack/backend/concepts/etag.md` — Type A
+30. [x] rewritten — `src/full-stack/backend/concepts/cache-control.md` — Type A
+31. [x] rewritten — `src/full-stack/backend/concepts/cdn-caching.md` — Type A
+32. [x] rewritten — `src/full-stack/backend/concepts/server-side-caching.md` — Type A
+33. [x] rewritten — `src/full-stack/backend/concepts/reverse-proxy.md` — Type A
+34. [x] rewritten — `src/full-stack/backend/concepts/load-balancing.md` — Type A
+35. [x] rewritten — `src/full-stack/backend/concepts/horizontal-scaling.md` — Type A
+36. [x] rewritten — `src/full-stack/backend/concepts/vertical-scaling.md` — Type A
+37. [x] rewritten — `src/full-stack/backend/concepts/graceful-shutdown.md` — Type A
+38. [x] rewritten — `src/full-stack/backend/concepts/health-check-endpoint.md` — Type A
+39. [x] rewritten — `src/full-stack/backend/concepts/observability.md` — Type A
+
+## Phase 5 — Express
+
+Process 30 leaf pages under `src/full-stack/backend/express/` as Type E in SUMMARY order. Skip `index.md`.
+
+1. [ ] assigned — `src/full-stack/backend/express/what-is-express-js.md` — Type E
+2. [ ] assigned — `src/full-stack/backend/express/how-does-express-middleware-work.md` — Type E
+3. [ ] assigned — `src/full-stack/backend/express/what-is-request-response-lifecycle-in-express.md` — Type E
+4. [ ] assigned — `src/full-stack/backend/express/how-do-you-define-routes.md` — Type E
+5. [ ] assigned — `src/full-stack/backend/express/how-do-you-split-routes.md` — Type E
+6. [ ] assigned — `src/full-stack/backend/express/how-do-you-create-middleware.md` — Type E
+7. [ ] assigned — `src/full-stack/backend/express/what-is-error-handling-middleware.md` — Type E
+8. [ ] assigned — `src/full-stack/backend/express/how-do-you-handle-async-errors-in-express.md` — Type E
+9. [ ] queued — `src/full-stack/backend/express/how-do-you-validate-request-body.md` — Type E
+10. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-file-uploads.md` — Type E
+11. [ ] queued — `src/full-stack/backend/express/how-do-you-serve-static-files.md` — Type E
+12. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-jwt-authentication.md` — Type E
+13. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-role-based-authorization.md` — Type E
+14. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-refresh-tokens.md` — Type E
+15. [ ] queued — `src/full-stack/backend/express/how-do-you-hash-passwords.md` — Type E
+16. [ ] queued — `src/full-stack/backend/express/how-do-you-use-cookies-in-express.md` — Type E
+17. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-cors.md` — Type E
+18. [ ] queued — `src/full-stack/backend/express/how-do-you-rate-limit-apis.md` — Type E
+19. [ ] queued — `src/full-stack/backend/express/how-do-you-secure-express-app.md` — Type E
+20. [ ] queued — `src/full-stack/backend/express/what-is-helmet.md` — Type E
+21. [ ] queued — `src/full-stack/backend/express/how-do-you-prevent-nosql-injection.md` — Type E
+22. [ ] queued — `src/full-stack/backend/express/how-do-you-prevent-xss.md` — Type E
+23. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-logs.md` — Type E
+24. [ ] queued — `src/full-stack/backend/express/how-do-you-structure-a-large-express-app.md` — Type E
+25. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-global-error-handling.md` — Type E
+26. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-pagination.md` — Type E
+27. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-search.md` — Type E
+28. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-transactions.md` — Type E
+29. [ ] queued — `src/full-stack/backend/express/how-do-you-test-express-apis.md` — Type E
+30. [ ] queued — `src/full-stack/backend/express/how-do-you-deploy-express-app.md` — Type E
+
+## Phase 5 — FastAPI
+
+Process 50 leaf pages under `src/full-stack/backend/fastapi/` as Type E in SUMMARY order. Skip `index.md`.
+
+1. [ ] queued — `src/full-stack/backend/fastapi/what-is-fastapi.md` — Type E
+2. [ ] queued — `src/full-stack/backend/fastapi/why-fastapi-is-fast.md` — Type E
+3. [ ] queued — `src/full-stack/backend/fastapi/asgi.md` — Type E
+4. [ ] queued — `src/full-stack/backend/fastapi/uvicorn.md` — Type E
+5. [ ] queued — `src/full-stack/backend/fastapi/starlette.md` — Type E
+6. [ ] queued — `src/full-stack/backend/fastapi/pydantic.md` — Type E
+7. [ ] queued — `src/full-stack/backend/fastapi/request-body-validation.md` — Type E
+8. [ ] queued — `src/full-stack/backend/fastapi/swagger-docs.md` — Type E
+9. [ ] queued — `src/full-stack/backend/fastapi/dependency-injection.md` — Type E
+10. [ ] queued — `src/full-stack/backend/fastapi/reusable-dependencies.md` — Type E
+11. [ ] queued — `src/full-stack/backend/fastapi/path-parameters.md` — Type E
+12. [ ] queued — `src/full-stack/backend/fastapi/query-parameters.md` — Type E
+13. [ ] queued — `src/full-stack/backend/fastapi/validate-request-body.md` — Type E
+14. [ ] queued — `src/full-stack/backend/fastapi/response-models.md` — Type E
+15. [ ] queued — `src/full-stack/backend/fastapi/response-model.md` — Type E
+16. [ ] queued — `src/full-stack/backend/fastapi/depends.md` — Type E
+17. [ ] queued — `src/full-stack/backend/fastapi/apirouter.md` — Type E
+18. [ ] queued — `src/full-stack/backend/fastapi/split-routes.md` — Type E
+19. [ ] queued — `src/full-stack/backend/fastapi/large-project-structure.md` — Type E
+20. [ ] queued — `src/full-stack/backend/fastapi/middleware.md` — Type E
+21. [ ] queued — `src/full-stack/backend/fastapi/custom-exception-handlers.md` — Type E
+22. [ ] queued — `src/full-stack/backend/fastapi/validation-errors.md` — Type E
+23. [ ] queued — `src/full-stack/backend/fastapi/global-errors.md` — Type E
+24. [ ] queued — `src/full-stack/backend/fastapi/custom-status-codes.md` — Type E
+25. [ ] queued — `src/full-stack/backend/fastapi/file-uploads.md` — Type E
+26. [ ] queued — `src/full-stack/backend/fastapi/stream-large-files.md` — Type E
+27. [ ] queued — `src/full-stack/backend/fastapi/static-files.md` — Type E
+28. [ ] queued — `src/full-stack/backend/fastapi/background-tasks.md` — Type E
+29. [ ] queued — `src/full-stack/backend/fastapi/lifespan-events.md` — Type E
+30. [ ] queued — `src/full-stack/backend/fastapi/startup-shutdown-logic.md` — Type E
+31. [ ] queued — `src/full-stack/backend/fastapi/environment-variables.md` — Type E
+32. [ ] queued — `src/full-stack/backend/fastapi/settings-management.md` — Type E
+33. [ ] queued — `src/full-stack/backend/fastapi/jwt-auth.md` — Type E
+34. [ ] queued — `src/full-stack/backend/fastapi/oauth2-password-flow.md` — Type E
+35. [ ] queued — `src/full-stack/backend/fastapi/protect-routes.md` — Type E
+36. [ ] queued — `src/full-stack/backend/fastapi/role-based-authorization.md` — Type E
+37. [ ] queued — `src/full-stack/backend/fastapi/refresh-tokens.md` — Type E
+38. [ ] queued — `src/full-stack/backend/fastapi/password-hashing.md` — Type E
+39. [ ] queued — `src/full-stack/backend/fastapi/testing-fastapi.md` — Type E
+40. [ ] queued — `src/full-stack/backend/fastapi/mock-dependencies.md` — Type E
+41. [ ] queued — `src/full-stack/backend/fastapi/async-endpoints.md` — Type E
+42. [ ] queued — `src/full-stack/backend/fastapi/sync-vs-async-routes.md` — Type E
+43. [ ] queued — `src/full-stack/backend/fastapi/when-not-async.md` — Type E
+44. [ ] queued — `src/full-stack/backend/fastapi/sqlalchemy-with-fastapi.md` — Type E
+45. [ ] queued — `src/full-stack/backend/fastapi/db-sessions.md` — Type E
+46. [ ] queued — `src/full-stack/backend/fastapi/prevent-db-session-leaks.md` — Type E
+47. [ ] queued — `src/full-stack/backend/fastapi/alembic-migrations.md` — Type E
+48. [ ] queued — `src/full-stack/backend/fastapi/transactions.md` — Type E
+49. [ ] queued — `src/full-stack/backend/fastapi/rollback-transactions.md` — Type E
+50. [ ] queued — `src/full-stack/backend/fastapi/pagination.md` — Type E
 

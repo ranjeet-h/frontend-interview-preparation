@@ -100,13 +100,57 @@ These seven standalone notes are now rewritten, independently reviewed, structur
 
 The seven pages each have exactly eight numbered H2 sections, no H3 sections, no forbidden template headings, and no direct `useEffect(` examples. The 66-page `src/react/concepts/` queue remains complete. The React question-bank wrappers are intentionally preserved for later one-question-per-file Type B work.
 
+### Backend Concepts — complete (39 pages)
+
+All 39 Backend Concept pages are rewritten in canonical Type A format, verified with `mdbook build`, and committed:
+
+1. `src/full-stack/backend/concepts/http-request-lifecycle.md` — `416021c`
+2. `src/full-stack/backend/concepts/http-vs-https.md` — `31383e2`
+3. `src/full-stack/backend/concepts/rest.md` — `4020b3d`
+4. `src/full-stack/backend/concepts/http-methods.md` — `0510cd5`
+5. `src/full-stack/backend/concepts/put-vs-patch.md` — `087d003`
+6. `src/full-stack/backend/concepts/idempotency.md` — `c458bb9`
+7. `src/full-stack/backend/concepts/http-status-codes.md` — `521b7c7`
+8. `src/full-stack/backend/concepts/401-vs-403.md` — `4ee2c1a`
+9. `src/full-stack/backend/concepts/400-vs-422.md` — `9a9f062`
+10. `src/full-stack/backend/concepts/stateless-apis.md` — `b9f38f2`
+11. `src/full-stack/backend/concepts/api-versioning.md` — `68a1513`
+12. `src/full-stack/backend/concepts/offset-pagination.md` — `695eb8e`
+13. `src/full-stack/backend/concepts/cursor-pagination.md` — `4394b59`
+14. `src/full-stack/backend/concepts/cursor-vs-offset-pagination.md` — `d18da3b`
+15. `src/full-stack/backend/concepts/api-filtering-sorting.md` — `1fd8a51`
+16. `src/full-stack/backend/concepts/backend-file-uploads.md` — `3f03224`
+17. `src/full-stack/backend/concepts/rate-limiting.md` — `aa3b37d`
+18. `src/full-stack/backend/concepts/request-throttling.md` — `5ec26ce`
+19. `src/full-stack/backend/concepts/backend-debouncing.md` — `d87a871`
+20. `src/full-stack/backend/concepts/request-validation.md` — `75c7931`
+21. `src/full-stack/backend/concepts/response-serialization.md` — `9ce32cd`
+22. `src/full-stack/backend/concepts/middleware.md` — `7c1e95a`
+23. `src/full-stack/backend/concepts/backend-framework-request-lifecycle.md` — `4824ffd`
+24. `src/full-stack/backend/concepts/cors.md` — `fae2bbb`
+25. `src/full-stack/backend/concepts/preflight-request.md` — `2cb4934`
+26. `src/full-stack/backend/concepts/same-origin-policy.md` — `bce05bc`
+27. `src/full-stack/backend/concepts/backend-caching.md` — `d7ebf60`
+28. `src/full-stack/backend/concepts/cache-headers.md` — `a8e7e88`
+29. `src/full-stack/backend/concepts/etag.md` — `6590454`
+30. `src/full-stack/backend/concepts/cache-control.md` — `02681ab`
+31. `src/full-stack/backend/concepts/cdn-caching.md` — `0d57dc6`
+32. `src/full-stack/backend/concepts/server-side-caching.md` — `7c783d8`
+33. `src/full-stack/backend/concepts/reverse-proxy.md` — `be07d35`
+34. `src/full-stack/backend/concepts/load-balancing.md` — `6038c9c`
+35. `src/full-stack/backend/concepts/horizontal-scaling.md` — `a98e590`
+36. `src/full-stack/backend/concepts/vertical-scaling.md` — `1efb197`
+37. `src/full-stack/backend/concepts/graceful-shutdown.md` — `0050da9`
+38. `src/full-stack/backend/concepts/health-check-endpoint.md` — `ab81308`
+39. `src/full-stack/backend/concepts/observability.md` — `c8cddb5`
+
 ### Backend sections still using the old template
 
 | Section | Leaf pages remaining |
 |---|---:|
 | API design | 30 |
 | Authentication | 30 |
-| Backend concepts | 4 (35 / 39 completed) |
+| Backend concepts | 0 (39 / 39 completed) |
 | Coding practice | 30 |
 | Deployment | 25 |
 | Express | 30 |
