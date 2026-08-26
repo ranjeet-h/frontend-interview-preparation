@@ -1,126 +1,247 @@
 # Rules of Hooks
 
-## Detailed explanation
-The Rules of Hooks are constraints that keep React's hook state mapping predictable. Hooks must be called at the top level of React function components or custom hooks, not inside conditions, loops, nested functions, or after early returns.
+## 1. Why This Exists — The Problem First
 
-React relies on call order to associate each hook call with its stored state. If hook order changes between renders, React can attach the wrong state to the wrong hook.
+Picture a component that renders a profile page. On the first render it calls `useState` for the name, `useEffect` for a subscription, and `useState` for an editable note. Then the subscription is disabled. If the component simply skips that effect on the next render, the note state moves into the effect's old position. React can no longer tell which stored value belongs to which call.
 
-## 1. One-line mental model
-Hooks must run in the same order on every render.
+That is the failure the Rules of Hooks prevent. They are not formatting preferences. They preserve the one stable fact React uses to reconnect a function component with its state between renders: the order in which its hooks are called.
 
-## 2. Problem it solves
-React needs a stable way to match hook calls to stored hook state across renders.
+## 2. The Analogy — Make It Obvious
 
-## 3. Core idea
-- Call hooks only at top level.
-- Call hooks only from React components or custom hooks.
-- Do not call hooks conditionally.
-- Move conditions inside the hook body when needed.
-- Use lint rules to catch violations.
-
-## 4. Visual / analogy
-Hook order is like numbered lockers: if you skip locker 2, everyone after it gets the wrong locker.
+Think of a component as a customer walking through a bank every time it renders. The bank gives the customer three numbered service windows:
 
 ```txt
-Render 1: useState -> useEffect -> useMemo
-Render 2: useState ->            useMemo  // broken order
+window 1: useState for name
+window 2: useEffect for subscription
+window 3: useState for note
 ```
 
-## 5. Minimal example
+The bank does not identify a window by reading its JavaScript variable name. It remembers that the first hook call owns the first hook record, the second call owns the second record, and so on. On the next visit, the customer must walk past the same windows in the same order so each record goes back to the same job.
+
+If the customer skips window 2 only when a feature flag is off, the old window 3 is now mistaken for window 2. The bank has not lost the records; it has lost the meaning of their positions. Calling a custom hook is like walking through several pre-arranged windows as one route: its internal hooks still occupy positions in the same route. Calling a hook from an event handler is different: that is the customer trying to open a new service window after leaving the bank, when there is no render visit to associate it with.
+
+## 3. How It Actually Works — The Full Explanation
+
+React function components are called again when their inputs or state produce an update. Each call is a new render snapshot: local variables are recreated, but React must reconnect hook calls in that new snapshot to the state, refs, effects, and memoized values from the component's Fiber.
+
+React keeps hook records associated with that Fiber. In the React 18 implementation, the records are traversed in call order while the component is rendering. A simplified render looks like this:
+
+```txt
+render Component
+  first hook call  -> first hook record
+  second hook call -> second hook record
+  third hook call  -> third hook record
+```
+
+The exact internal data structures and dispatcher functions are implementation details, but the observable contract is stable: React uses position, not the variable name on the left side, to match a hook call with its record. The Rules of Hooks make that positional lookup deterministic.
+
+This contract also matters outside a simple, uninterrupted browser render. During server-side rendering, React still evaluates the component with a render dispatcher, and the server output must be compatible with the client's first render so hydration can attach to the same structure. Do not branch around ordinary hooks based on server-only versus browser-only conditions; make the initial render consistent and move browser-only work into an effect or an explicit client boundary. In concurrent rendering, React may pause, interrupt, restart, or discard a render before committing it. Render code—including hook calls—must therefore be pure and repeatable: do not perform subscriptions, mutations, or other one-time work while the component function is executing. Effects belong to the commit phase, after React accepts a render.
+
+There are two rules.
+
+First, call hooks only at the top level of a React function component or a custom hook. “Top level” means that every render reaches the call site in the same order. Do not put a hook inside an `if`, a loop, a `try`/`catch`, a nested function, or after an early return that can change between renders. A component may contain conditional rendering; the hook calls themselves must remain unconditional.
+
+Second, call hooks only from React function components or custom hooks. A normal utility function does not run as part of React's render dispatcher. An event handler runs later, outside the render dispatcher. By contrast, an `Array.prototype.map` callback invoked while a component renders runs synchronously during that render; putting a hook in it is still an unsupported looped or nested call site because the number or order of iterations can change. That violates hook order, but it does not inherently mean React will report an invalid-hook-call error. Invalid-hook-call errors are about calls made outside a valid React render context, such as an event handler or ordinary utility invocation.
+
+Custom hooks do not create a separate state store. A custom hook is an ordinary JavaScript function whose name starts with `use` and which calls hooks. When a component calls it, the custom hook's built-in hook calls participate in that component's one ordered sequence. Two components can call the same custom hook and still receive independent state because their Fibers are different.
+
+The `use` prefix is a tooling convention, not a magic runtime registration step. `eslint-plugin-react-hooks` uses naming conventions to find custom hooks and check their call sites. React DevTools also presents hook-like functions more usefully when they follow the convention. A function that calls hooks but is named `readFeatureFlag` may appear to work, yet it makes static analysis less reliable and misleads the next person reading it.
+
+When conditional behavior is needed, keep the hook call fixed and move the condition inside it. For an effect, the dependency list must also include the reactive values that decide whether the effect should run. For a custom hook, call the custom hook every time and let it return a value that the component uses conditionally.
+
+React's development build also checks for changes in the number or order of hooks across renders and reports errors such as “Rendered fewer hooks than expected” or “Rendered more hooks than during the previous render.” Strict Mode can make render and cleanup problems easier to notice by deliberately re-running certain development behaviors, but Strict Mode is not what makes the Rules of Hooks necessary. The positional contract applies to ordinary React rendering too. The lint rule is valuable because it catches many violations before the component executes.
+
+One important version boundary: this repository's React material assumes React 18. React versions that support the special `use` API have separate rules for that API, but that exception does not make ordinary `useState`, `useEffect`, `useRef`, `useMemo`, or custom hooks safe to call conditionally. Do not generalize a special API's behavior to all hooks.
+
+## 4. Real Code — See It Working
+
+This complete TypeScript/React 18 fixture models a feature flag, a subscription, and two independent pieces of state. The effect is always registered in the same position; only its work is conditional.
 
 ```tsx
-function Component({ enabled }: { enabled: boolean }) {
-  React.useEffect(() => {
-    if (!enabled) return;
-    start();
-  }, [enabled]);
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+
+type FeatureFlags = Record<string, boolean>;
+const FeatureFlagContext = createContext<FeatureFlags>({});
+
+export function FeatureFlagProvider({
+  children,
+  flags,
+}: {
+  children: ReactNode;
+  flags: FeatureFlags;
+}) {
+  return (
+    <FeatureFlagContext.Provider value={flags}>
+      {children}
+    </FeatureFlagContext.Provider>
+  );
 }
-```
 
-## 6. Real-world example
-
-```tsx
 function useFeatureFlag(name: string) {
-  const flags = React.useContext(FeatureFlagContext);
+  const flags = useContext(FeatureFlagContext);
   return Boolean(flags[name]);
 }
+
+function useRoomSubscription(roomId: string, enabled: boolean) {
+  useEffect(() => {
+    if (!enabled) return;
+
+    const connection = {
+      connect() {
+        console.log(`connected to room ${roomId}`);
+      },
+      disconnect() {
+        console.log(`disconnected from room ${roomId}`);
+      },
+    };
+
+    connection.connect();
+    return () => connection.disconnect();
+  }, [enabled, roomId]);
+}
+
+export function RoomEditor({ roomId }: { roomId: string }) {
+  const liveUpdatesEnabled = useFeatureFlag("live-room-updates");
+  useRoomSubscription(roomId, liveUpdatesEnabled);
+  const [title, setTitle] = useState("Launch checklist");
+  const [notes, setNotes] = useState("");
+
+  return (
+    <main>
+      <label>
+        Title
+        <input value={title} onChange={(event) => setTitle(event.target.value)} />
+      </label>
+      <label>
+        Notes
+        <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
+      </label>
+      <p>Live updates: {liveUpdatesEnabled ? "on" : "off"}</p>
+    </main>
+  );
+}
+
+export function App() {
+  return (
+    <FeatureFlagProvider flags={{ "live-room-updates": true }}>
+      <RoomEditor roomId="room-42" />
+    </FeatureFlagProvider>
+  );
+}
 ```
 
-The custom hook follows the rules and can be reused safely.
+The common broken version is deceptively short:
 
-## 7. Common interview questions
-#### What are the Rules of Hooks?
-- **The Engine Mechanism (Why it behaves this way):** The Rules of Hooks are two constraints: (1) Only call hooks at the top level of React function components or custom hooks — not inside loops, conditions, or nested functions. (2) Only call hooks from React function components or custom hooks — not from regular JavaScript functions. React enforces these rules because it uses a linked list of hook objects on each Fiber node, and the position in this list determines which hook gets which state. If hooks are called conditionally, the list order changes between renders, and React attaches the wrong state to the wrong hook call.
-- **The Unforgettable Mental Model:** The **Numbered Lockers**. Each hook call is assigned a locker number based on its position: first call gets locker 1, second gets locker 2, etc. If you skip locker 2 on one visit (conditional call), locker 3's contents go to locker 2's owner. Chaos ensues.
-- **The Trap:** Thinking the rules are arbitrary style guidelines. They are hard requirements enforced by React's internal data structure. Violating them causes state to be attached to the wrong hooks.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The Rules of Hooks are two constraints that React requires for hooks to work correctly. First, hooks must be called at the top level of function components or custom hooks — never inside conditions, loops, or nested functions. Second, hooks can only be called from React components or custom hooks, not from regular functions. These rules exist because React uses call order to map each hook call to its stored state. If the order changes between renders, React attaches state to the wrong hook, causing bugs that are extremely difficult to debug."
+```tsx
+type Props = { roomId: string; liveUpdatesEnabled: boolean };
 
-#### Why can't hooks be called conditionally?
-- **The Engine Mechanism (Why it behaves this way):** React stores hooks as a singly linked list on the Fiber node: `workInProgressHook`. During render, React traverses this list, matching each hook call in the component with its corresponding stored state. The matching is purely positional — the first hook call in the component maps to the first hook in the list, the second call to the second hook, and so on. If a hook is called conditionally, the positions shift. For example, if `useEffect` is inside an `if` block that's false on render 2, the `useMemo` that was third is now second, and React reads `useEffect`'s state for `useMemo`, causing type mismatches and corrupted state.
-- **The Unforgettable Mental Model:** The **Train Car Coupling**. Each hook call is a train car coupled in order. If you remove car 2 (conditional skip), car 3 couples to car 1's connector. The cargo (state) that belonged to car 3 is now on car 2's track. The train derails.
-- **The Trap:** Putting a hook after an early return: `if (!data) return null; const [loading, setLoading] = useState(false)`. When `data` is null, the hook is skipped, breaking the order.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Hooks can't be called conditionally because React uses call order to map each hook to its stored state. Hooks are stored as a linked list on the Fiber node, and React matches hook calls to list entries by position. If a hook is skipped on one render but called on another, the positions shift, and React reads the wrong state for each hook. This causes state corruption — a `useState` might read an effect's data, or a `useMemo` might read a ref's value. The fix is to always call hooks unconditionally and put conditions inside the hook body instead."
+function BrokenRoomEditor({ roomId, liveUpdatesEnabled }: Props) {
+  if (liveUpdatesEnabled) {
+    useRoomSubscription(roomId, true); // ❌ hook call changes between renders
+  }
 
-#### Why must custom hooks start with `use`?
-- **The Engine Mechanism (Why it behaves this way):** The `use` prefix is not enforced by React at runtime — it's a convention for tooling. The `eslint-plugin-react-hooks` linter scans for functions starting with `use` and applies the Rules of Hooks to their call sites. It ensures these functions are only called at the top level of components or other hooks. React DevTools also uses the prefix to identify and display custom hooks in the component inspector. Without the prefix, the linter treats the function as a regular function and won't catch hook rule violations.
-- **The Unforgettable Mental Model:** The **Hazard Label**. The `use` prefix is like a hazard label on a chemical container — it tells the safety inspector (linter) "handle with special rules." Without the label, the inspector treats it as a regular item and doesn't apply the safety protocols.
-- **The Trap:** Naming a function that calls hooks without the `use` prefix. The code works at runtime, but the linter won't catch violations, and bugs can slip through to production.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The `use` prefix is a convention that enables tooling. The ESLint plugin uses it to identify custom hooks and enforce the Rules of Hooks at their call sites. React DevTools uses it to display hook state in the component inspector. While React doesn't enforce the prefix at runtime, omitting it means the linter won't catch violations, and DevTools won't display the hook properly. It's a critical convention for code safety and developer experience."
+  const [notes, setNotes] = useState("");
+  return <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />;
+}
+```
 
-#### What catches hook rule violations?
-- **The Engine Mechanism (Why it behaves this way):** Two mechanisms catch violations: (1) The `eslint-plugin-react-hooks` ESLint plugin performs static analysis at build time, scanning code for hook calls inside conditions, loops, or non-component functions. It flags violations before the code runs. (2) React's development build includes runtime checks that verify hook call consistency. In StrictMode, React double-invokes components and compares the hook list between the two invocations. If the number or order of hooks differs, React throws an error: "Rendered more hooks than during the previous render."
-- **The Unforgettable Mental Model:** The **Two-Layer Security**. The ESLint plugin is the metal detector at the entrance (catches issues before they enter). React's runtime check is the guard inside (catches anything that slipped through). Together, they provide defense in depth.
-- **The Trap:** Disabling the ESLint rule instead of fixing the violation. The rule exists to prevent state corruption bugs that are extremely difficult to debug at runtime.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Hook rule violations are caught by two mechanisms. First, the `eslint-plugin-react-hooks` ESLint plugin catches them at build time through static analysis — it flags conditional hook calls, hooks in loops, and hooks in regular functions. Second, React's development build includes runtime checks that verify hook consistency between renders, especially in StrictMode. If the hook count or order changes, React throws an error. I never disable these rules — they prevent state corruption bugs that are nearly impossible to debug."
+The fix is to call `useRoomSubscription(roomId, liveUpdatesEnabled)` on every render. The custom hook itself decides whether to subscribe. The same principle applies to early returns:
 
-#### Can hooks be called in normal functions?
-- **The Engine Mechanism (Why it behaves this way):** No. Hooks rely on the `currentlyRenderingFiber` global variable that React sets during component rendering. When a component function executes, React sets this variable to the component's Fiber node. Hook calls read this variable to know which Fiber to attach their state to. Normal JavaScript functions are called outside of React's rendering context, so `currentlyRenderingFiber` is `null` or points to a different component. Calling a hook in a normal function either throws an error ("Invalid hook call") or attaches state to the wrong component.
-- **The Unforgettable Mental Model:** The **Power Outlet**. Hooks need to plug into React's rendering context (the power outlet). Normal functions don't have access to this outlet — they're running in a different room. Without power, the hook can't function.
-- **The Trap:** Calling a hook inside an event handler, callback, or utility function: `function handleClick() { const [state, setState] = useState() }`. This throws "Invalid hook call."
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: No, hooks can only be called from React function components or custom hooks. Hooks rely on React's internal rendering context — specifically, the `currentlyRenderingFiber` variable that points to the component being rendered. Normal functions don't have this context, so calling a hook in them throws an 'Invalid hook call' error. If you need hook-like behavior in a normal function, you'd need to pass the state and setters as arguments instead."
+```tsx
+function Profile({ userId }: { userId: string | null }) {
+  const [isSaving, setIsSaving] = useState(false);
 
-#### How do you handle conditional effects?
-- **The Engine Mechanism (Why it behaves this way):** Instead of conditionally calling `useEffect`, you always call it unconditionally and put the condition inside the effect callback. React will always register the effect in the same position in the hook list, maintaining order. Inside the effect, you check the condition and return early if it's not met. The dependency array still controls when the effect re-runs, but the condition inside controls whether the effect's body actually executes. This preserves hook order while achieving conditional behavior.
-- **The Unforgettable Mental Model:** The **Always-Open Store with a Bouncer**. The store (useEffect) is always open (called unconditionally), but the bouncer (condition inside) decides who gets in. The store's location on the street (hook position) never changes.
-- **The Trap:** Writing `if (condition) useEffect(() => {...}, [dep])`. This conditionally calls the hook, breaking the order. Instead, write `useEffect(() => { if (!condition) return; ... }, [dep, condition])`.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I handle conditional effects by always calling `useEffect` unconditionally and putting the condition inside the effect body. Instead of `if (enabled) useEffect(...)`, I write `useEffect(() => { if (!enabled) return; ... }, [enabled, ...deps])`. This keeps the hook call order consistent while achieving the conditional behavior. The dependency array includes the condition variable so the effect re-runs when the condition changes, and the early return inside prevents unnecessary work when the condition isn't met."
+  // The hook runs before the conditional return on every render.
+  if (userId === null) return <p>Select a user.</p>;
 
-#### What happens if hook order changes?
-- **The Engine Mechanism (Why it behaves this way):** When hook order changes between renders, React's linked list traversal produces mismatches. Hook call A (position 1) reads state from list entry 1, but if a hook was skipped before it on this render, list entry 1 now contains state that belonged to a different hook call. This causes type mismatches — a `useState` might read a `useEffect`'s memoized state, a `useRef` might read a `useMemo`'s cached value. The result is unpredictable behavior: state values appearing in the wrong places, effects firing with wrong dependencies, and in the worst case, runtime crashes when React tries to process data of the wrong type.
-- **The Unforgettable Mental Model:** The **Wrong Prescription**. If the pharmacist (React) gives you the medication (state) meant for patient B because your position in line changed, you get the wrong treatment. The consequences range from ineffective (wrong value) to dangerous (crash).
-- **The Trap:** Thinking the bug will be obvious. Hook order bugs often manifest as subtle, intermittent issues — a value that's sometimes wrong, an effect that fires at the wrong time — making them extremely difficult to trace.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: If hook order changes, React attaches the wrong state to the wrong hook call. Hooks are stored in a linked list and matched by position, so shifting the order means a `useState` might read a `useEffect`'s data, or a `useRef` might read a `useMemo`'s value. The result is unpredictable — wrong values, effects firing incorrectly, or runtime crashes. In development, React's StrictMode catches this with an error about rendered hook count mismatch. In production, the bug manifests as subtle, intermittent issues that are very hard to debug. That's why the Rules of Hooks are non-negotiable."
+  return <button disabled={isSaving}>{isSaving ? "Saving…" : `Edit ${userId}`}</button>;
+}
+```
 
-## 8. Active recall test
-1. **Why does hook order matter?**
-   - **Explanation:** React stores hooks as a linked list on the Fiber node and matches each hook call to its state by position. If order changes, the wrong state is attached to the wrong hook, causing corruption.
-2. **Where can hooks be called?**
-   - **Explanation:** Only at the top level of React function components or custom hooks. Every call site must be unconditional and in the same order on every render.
-3. **Where can hooks not be called?**
-   - **Explanation:** Inside conditions, loops, nested functions, event handlers, or regular JavaScript functions. Also not after early returns in a component.
-4. **How do you conditionally run effect logic?**
-   - **Explanation:** Call `useEffect` unconditionally and put the condition inside: `useEffect(() => { if (!condition) return; ... }, [condition, ...deps])`.
-5. **Why does linting matter?**
-   - **Explanation:** The `eslint-plugin-react-hooks` plugin catches hook rule violations at build time through static analysis. It prevents state corruption bugs that are extremely difficult to debug at runtime.
+An event handler is a normal function invoked by an event, not a new place to create hook state:
 
-## 9. Mistakes / traps
-- Calling a hook after an early return.
-- Calling hooks inside event handlers.
-- Calling hooks in normal utility functions.
-- Conditionally calling a custom hook.
-- Disabling hook lint rules instead of fixing structure.
+```tsx
+function SaveButton() {
+  const [saved, setSaved] = useState(false);
 
-## 10. Compare with related concepts
-- **Rules of Hooks vs dependency rules:** call-order rules decide where hooks run; dependency rules decide when effects/memos update.
-- **Custom hook vs utility:** custom hooks can call hooks and must follow rules.
-- **Conditional hook vs conditional logic:** hook call stays unconditional; logic inside can be conditional.
+  function handleClick() {
+    setSaved(true);
+  }
 
-## 11. Summary from memory
-Explain why React requires hooks to be called in the same order every render.
+  return <button onClick={handleClick}>{saved ? "Saved" : "Save"}</button>;
+}
+```
 
-## 12. Spaced revision prompts
-- After 1 day: List the two Rules of Hooks.
-- After 3 days: Fix a conditional hook call.
-- After 7 days: Explain hook order.
-- After 14 days: Compare hook rules and dependency arrays.
+If reusable code needs no React state, make it a utility and pass its inputs. If it needs React state, context, or effects, make it a custom hook and call it from the component's top level.
 
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What are the two Rules of Hooks, and why do they exist?**
+
+Hooks must be called at the top level of React function components or custom hooks, and hooks must not be called from ordinary JavaScript functions. React relies on the stable order of hook calls to match the current render to hook records associated with the component's Fiber. The rules preserve that order and ensure a hook is called while React has the component render context it needs.
+
+**Q: Why can't a hook be called conditionally?**
+
+A condition can make a call exist on one render and disappear on another. Every later hook then shifts position, so React may read the record belonging to a different hook call. This is a hook-order violation; it is not automatically an invalid-hook-call error, which usually means a hook ran outside React's render context. The safe shape is `useEffect(() => { if (!enabled) return; ... }, [enabled])`, not `if (enabled) useEffect(...)`.
+
+**Q: Does “top level” forbid conditional rendering?**
+
+No. It forbids conditional hook calls. This is fine: `const value = useValue(); return enabled ? <Panel value={value} /> : <Empty />`. The component can choose different JSX after all its hooks have been called. It can also render a different child component, because each child has its own hook sequence and Fiber.
+
+**Q: Why can a custom hook call other hooks?**
+
+A custom hook is executed during its caller's render. Its internal hook calls become part of the caller's ordered hook sequence. This is composition, not a second state machine. Therefore the custom hook must also call its hooks unconditionally and in a stable order.
+
+**Q: Why should a custom hook name start with `use`?**
+
+The prefix tells humans and hook-aware tooling that the function follows hook rules. React does not need a `registerCustomHook` call, and the prefix alone does not make an invalid call legal. It is a convention that helps `eslint-plugin-react-hooks` analyze the function and helps DevTools present it as hook logic.
+
+**Q: What happens when hook order changes?**
+
+In development, React usually detects the changed hook count or order and throws a diagnostic. The underlying problem is still positional mismatch: the render has asked for a different sequence than the Fiber's stored records describe. Never rely on the error as the design; keep the sequence stable so production behavior is correct too.
+
+**Q: Can hooks be called in event handlers, callbacks, or utility functions?**
+
+No. Event handlers and ordinary utility callbacks run outside the component's render context. A callback passed to `rows.map(...)` during render is synchronous, but a hook there is still a looped/nested call whose order can change; that is a Rules of Hooks violation rather than an inherently invalid-hook-call error. A utility function can receive values and return a calculation, but it cannot create React state by calling a hook. If reusable code needs hooks, expose it as a custom hook and call that custom hook at the component's top level.
+
+**Q: Which tool catches violations?**
+
+Use `eslint-plugin-react-hooks` as the first line of defense. It performs static analysis and catches many conditional, nested, and incorrectly placed calls. React's development runtime also checks hook consistency while rendering. These checks complement each other; neither changes the rule that the call order must be stable.
+
+## 6. The Traps — What Goes Wrong
+
+**Putting a hook after an early return.** This fails when the return condition changes. On a loading render, React might stop before the hook; on a loaded render, it reaches the hook. Move every hook above the return, or split the loaded view into a child component whose hook sequence is independent.
+
+**Calling a custom hook conditionally.** The fact that the call looks like one function call hides all the hooks inside it. `if (enabled) useSearchParams()` can shift several internal hook records at once. Call it every render and let the custom hook handle `enabled`, or render a separate child component when the feature is enabled.
+
+**Calling a component function directly.** `Panel()` is just a normal function call. If `Panel` contains hooks, those hooks execute inside the parent's render sequence and can break the parent's order when the call is conditional or inside a loop. `<Panel />` gives React a separate component boundary and a separate Fiber.
+
+**Calling a hook inside a loop or `map`.** The callback passed to `rows.map(...)` runs synchronously during the render; “later” describes event handlers, not `map`. The number or order of iterations can change as data changes, so a hook there violates the stable sequence even though the call is happening during a valid render and does not inherently produce an invalid-hook-call error. Do not call `useRef` or a custom hook once per row inside `rows.map(...)`. Render a child component for each row, or use one hook holding a `Map` keyed by row ID.
+
+**Confusing hook rules with dependency rules.** The Rules of Hooks answer “where and in what order may this hook call happen?” A dependency array answers “when should this effect, memo, or callback be recalculated?” A component can obey call order and still have stale effect dependencies, or have a complete dependency list while illegally calling the effect conditionally.
+
+**Assuming Strict Mode is the cause of the error.** Strict Mode may expose impure rendering and missing cleanup by repeating development behavior, but it does not invent the hook contract. A component that only works when Strict Mode is removed is still broken. Fix the unstable call structure or the side-effect cleanup instead of disabling the diagnostic.
+
+**Disabling the lint rule.** The warning often points to a real structural problem that can become a render-dependent crash. If the code is hard to express without a conditional hook, the design usually needs a child component, an unconditional custom hook, or plain JavaScript passed explicit inputs.
+
+## 7. Compare With Related Concepts
+
+**Rules of Hooks vs dependency arrays:** call-order rules keep hook records aligned; dependency arrays control when an effect or cached calculation responds to changed values. Use the first to structure calls and the second to describe reactive inputs honestly.
+
+**Custom hook vs utility function:** a custom hook may call React hooks and must be called from a component or another custom hook; a utility function must not call hooks and should receive all data as parameters. Use a utility for a pure calculation and a custom hook for behavior tied to React state, context, or lifecycle.
+
+**Custom hook vs component:** a hook returns data and actions; a component returns UI. Use a hook when the caller should own the markup, and a component when you need a separate rendering boundary and lifecycle.
+
+**Conditional hook vs conditional hook logic:** `if (enabled) useThing()` changes the hook sequence and is invalid. `useThing({ enabled })`, with the condition handled inside the hook, keeps the sequence fixed. Use the second form when the same component owns both modes; use separate child components when the modes have different lifecycles.
+
+**Calling `Component()` vs rendering `<Component />`:** direct invocation executes the function in the caller's render context; JSX creates a React element that React renders as its own component. Use `<Component />` for components that contain hooks, especially inside conditions or lists.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+React gives hook state to numbered seats, not named variables: every render must walk past the same seats in the same order. Keep the hook calls fixed; put conditions inside the hook or behind a child component boundary.
