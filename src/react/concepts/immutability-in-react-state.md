@@ -2,381 +2,309 @@
 
 ## 1. Why This Exists — The Problem First
 
-Imagine an e-commerce dashboard where a developer writes this seemingly innocent handler to add an item to a user's shopping cart:
+Imagine a shopping cart stored in React state. A developer wants to add one item:
 
-```javascript
-const addItem = (newItem) => {
-  cart.items.push(newItem);
-  setCart(cart);
-};
+The following two short snippets are illustrative contrasts; the complete runnable version follows them.
+
+```text
+cart.items.push(newItem);
+setCart(cart);
 ```
 
-The user clicks the button. The browser registers the click, `cart.items` gains the new item in memory, and `setCart` runs. Yet the screen does not update. The cart count badge stays stuck at zero, and the checkout total remains unchanged.
+The array really does contain the item after this code runs. The problem is that `cart` is still the same object, and `cart.items` is still the same array. The state setter receives the same root reference it already held. React can compare the old and next state with `Object.is`, notice that they are identical, and bail out of the update. The badge may stay stale until an unrelated render happens.
 
-The developer inspects `cart` with `console.log` and sees the new item sitting right there in the array. Baffled, they spend hours debugging event handlers, suspecting broken event listeners or framework bugs. 
+The safer update creates a new reference at every changed level:
 
-What actually happened? React inspected the previous state reference and the new state reference using `Object.is(oldState, newState)`. Because `cart` was mutated directly in memory, both variables point to the exact same heap address. React concluded: *The reference did not change, so nothing changed. Skip re-rendering.*
-
-Worse still, direct state mutation creates ghost bugs. If an unrelated component later triggers a state update, React re-renders the subtree and suddenly displays the mutated cart. The application appears to update at random, creating unreproducible production bugs, broken memoization caches, and silent data corruption during concurrent rendering. Immutability exists to make change detection instantaneous, deterministic, and predictable.
-
-## 2. The Analogy — Make It Obvious
-
-Think of an accounting firm keeping a double-entry financial ledger versus people editing a shared whiteboard with dry-erase markers.
-
-On a shared whiteboard (mutable state), anyone can walk up, wipe out a revenue number with an eraser, and write a new one. When the chief auditor (React) walks into the room to verify if anything changed, they cannot just check the board's title. They have to re-read every single line, column, and digit across the entire board ($O(N)$ deep check) to see if a single number was altered. If two accountants modify different sections of the board at the same time (concurrent rendering), numbers overwrite each other and the company's financial history is permanently lost.
-
-In a formal accounting ledger (immutable state), accountants never erase or overwrite historical rows. When money moves, they write a brand-new transaction entry on a fresh page. 
-
-The auditor's job becomes effortless: they only look at the page reference of the newest entry. If the page pointer matches the one they checked five seconds ago, they know with 100% mathematical certainty in $O(1)$ constant time that zero transactions occurred. If a new page exists, they immediately process only what changed. Old pages remain frozen snapshots of history, completely safe from corruption and readily available for audit logs and rollbacks.
-
-## 3. How It Actually Works — The Full Explanation
-
-React's entire rendering and reconciliation pipeline depends on the contract that state is treated as read-only. Understanding why requires looking at how JavaScript handles memory and how React checks for updates.
-
-### Referential Equality and $O(1)$ Change Detection
-
-JavaScript divides data into primitives (strings, numbers, booleans, symbols, null, undefined) and reference types (objects, arrays, functions). Primitives are immutable by definition and compared by value. Objects and arrays are stored in heap memory and compared by their memory address (reference).
-
-```javascript
-const a = { role: "admin" };
-const b = a;
-b.role = "editor";
-console.log(Object.is(a, b)); // true — both point to the exact same heap address
-```
-
-When you dispatch a state setter (`setCart`, `setUser`), React schedules an update. During reconciliation, React compares the previous state snapshot against the newly dispatched state using the `Object.is` algorithm.
-
-If React had to detect changes by recursively inspecting every nested key and nested array of your application state, every single user action would require an $O(N)$ deep traversal. In an enterprise app with thousands of objects, deep equality checks on every keystroke or click would saturate the CPU, block the browser's single-threaded event loop, and cause severe frame drops.
-
-By enforcing immutability, React performs an $O(1)$ pointer comparison:
-
-```javascript
-if (Object.is(prevState, nextState)) {
-  // Bail out: references match, skip render phase for this component
-  return;
-}
-```
-
-A new reference guarantees something changed. An identical reference guarantees nothing changed.
-
-### Structural Sharing: Why Copying Is Not Wasteful
-
-A common misconception is that immutability requires cloning the entire state tree on every update, consuming excessive memory. In reality, immutable updates rely on **structural sharing**.
-
-When you update a single leaf node in a nested state tree, you only create new object references along the direct path from the root down to that leaf. Every other untouched branch, sibling object, and nested array retains its original reference in memory:
-
-```
-Before Update:                       After Updating "theme":
-Root (ref: 0x01)                     Root (ref: 0x99) [NEW]
- ├── profile (ref: 0x02)              ├── profile (ref: 0x02) [REUSED]
- │    ├── name: "Asha"                │    ├── name: "Asha"
- │    └── avatar: "img.png"           │    └── avatar: "img.png"
- └── settings (ref: 0x03)             └── settings (ref: 0x88) [NEW]
-      ├── notifications: true              ├── notifications: true
-      └── theme: "dark"                    └── theme: "light" [CHANGED]
-```
-
-Because `profile` retained its exact memory reference (`0x02`), any child component displaying the user profile wrapped in `React.memo` or consuming `profile` via `useMemo` will evaluate `prevProps.profile === nextProps.profile` to `true` and skip re-rendering entirely. Structural sharing delivers precise, granular performance optimizations for free.
-
-### Render Snapshots and Predictable Asynchronous Code
-
-In React, a component render is a pure snapshot of UI corresponding to the state at that exact moment in time. Props and state inside that render do not change over the lifetime of that render cycle.
-
-When state is immutable, an asynchronous operation (such as a `setTimeout` or an API fetch) that captures state in its closure is guaranteed to read the state snapshot as it existed when the handler was triggered. If state were mutated in place, an async callback resolving 3 seconds later could read half-mutated, corrupted data altered by intermediate actions.
-
-### Concurrent React and Fiber Engine Safety
-
-React 18 introduced Concurrent Features (`useTransition`, `useDeferredValue`, Suspense). Under concurrent rendering, React can yield execution back to the browser mid-render to process high-priority user input, then resume or completely abandon the background render.
-
-If state updates mutated shared memory objects directly, an abandoned background render would leave heap memory in a dirty, half-mutated state. When React restarted the render, the application would render corrupted data. Immutability guarantees that background renders operate strictly on fresh draft references. If a render is discarded, its uncommitted references are simply garbage collected with zero side effects on the live UI.
-
-## 4. Real Code — See It Working
-
-### 1. Updating Flat and Nested Objects with Spread
-
-```typescript
-interface UserProfile {
-  id: string;
-  name: string;
-  preferences: {
-    theme: 'light' | 'dark';
-    newsletter: boolean;
-  };
-}
-
-// Inside a React component:
-const [user, setUser] = useState<UserProfile>({
-  id: "u-101",
-  name: "Asha",
-  preferences: { theme: "light", newsletter: true }
-});
-
-// Updating a top-level field:
-const updateName = (newName: string) => {
-  setUser((prev) => ({
-    ...prev,
-    name: newName // Overwrites name; creates new root object reference
-  }));
-};
-
-// Updating a nested field:
-const toggleTheme = () => {
-  setUser((prev) => ({
-    ...prev, // Copies top-level fields (id, name)
-    preferences: {
-      ...prev.preferences, // Copies nested fields (newsletter)
-      theme: prev.preferences.theme === 'light' ? 'dark' : 'light' // New preference reference
-    }
-  }));
-};
-```
-
-### 2. Immutable Array Operations (Add, Remove, Update, Sort)
-
-Never use mutating array methods (`push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`) directly on state. Use their non-mutating counterparts:
-
-```typescript
-interface Todo {
-  id: number;
-  text: string;
-  completed: boolean;
-}
-
-const [todos, setTodos] = useState<Todo[]>([
-  { id: 1, text: "Write unit tests", completed: false },
-  { id: 2, text: "Review PR", completed: true }
-]);
-
-// 1. ADD — Using spread operator
-const addTodo = (text: string) => {
-  const newTodo: Todo = { id: Date.now(), text, completed: false };
-  setTodos((prev) => [...prev, newTodo]);
-};
-
-// 2. REMOVE — Using .filter()
-const removeTodo = (idToRemove: number) => {
-  setTodos((prev) => prev.filter((todo) => todo.id !== idToRemove));
-};
-
-// 3. UPDATE — Using .map() to replace target item while preserving untouched items
-const toggleTodo = (idToToggle: number) => {
-  setTodos((prev) =>
-    prev.map((todo) =>
-      todo.id === idToToggle
-        ? { ...todo, completed: !todo.completed } // New object reference for matching item
-        : todo // Reuse existing reference for untouched items (structural sharing)
-    )
-  );
-};
-
-// 4. SORT — Using ES2023 .toSorted() or copy-then-sort fallback
-const sortTodos = () => {
-  setTodos((prev) => {
-    // ES2023 non-mutating toSorted:
-    if ('toSorted' in Array.prototype) {
-      return prev.toSorted((a, b) => a.text.localeCompare(b.text));
-    }
-    // Fallback for older runtimes: shallow copy first, then mutate the copy
-    return [...prev].sort((a, b) => a.text.localeCompare(b.text));
-  });
-};
-```
-
-### 3. Handling Complex Nested State with Immer (`produce`)
-
-When state nesting goes beyond two levels, manual object spreading becomes error-prone and unreadable (often called "spread hell"). Immer uses JavaScript Proxies to record changes on a temporary draft and produces an immutable result automatically.
-
-```typescript
-import { produce } from 'immer';
-import { useState } from 'react';
-
-interface OrganizationState {
-  departments: {
-    engineering: {
-      teams: {
-        frontend: {
-          lead: string;
-          headcount: number;
-        };
-      };
-    };
-  };
-}
-
-const initialOrg: OrganizationState = {
-  departments: {
-    engineering: {
-      teams: {
-        frontend: { lead: "Asha", headcount: 8 }
-      }
-    }
-  }
-};
-
-export function OrgManager() {
-  const [org, setOrg] = useState<OrganizationState>(initialOrg);
-
-  const incrementHeadcount = () => {
-    // produce takes current state and a recipe function
-    setOrg((currentOrg) =>
-      produce(currentOrg, (draft) => {
-        // You write standard mutable code against the Proxy draft
-        draft.departments.engineering.teams.frontend.headcount += 1;
-        // Immer intercepts mutations and returns a new state with structural sharing
-      })
-    );
-  };
-
-  return (
-    <button onClick={incrementHeadcount}>
-      Frontend Count: {org.departments.engineering.teams.frontend.headcount}
-    </button>
-  );
-}
-```
-
-## 5. The Interview Questions — All of Them, Done Properly
-
-**Q: Why does React require state to be immutable?**
-
-React enforces immutability because its reconciliation engine relies on referential equality (`Object.is`) to detect state changes. When you pass a new object or array to a state setter, React performs an $O(1)$ constant-time pointer comparison between the old state reference and the new state reference. If state were mutable and edited in place, React would either fail to detect the change (causing stale UI) or have to perform an $O(N)$ recursive deep equality check across the entire state tree on every user interaction, destroying runtime performance. 
-
-Furthermore, immutability guarantees that every render retains an immutable snapshot of state. This snapshot stability prevents asynchronous race conditions in closures, enables time-travel debugging in React DevTools, and allows React 18 Concurrent Features to pause, restart, or abandon background render passes without corrupting shared application memory.
-
-**Q: What happens internally if you mutate state directly, and why does it sometimes look like it worked during testing?**
-
-When you mutate state directly (e.g., `state.items.push(item); setState(state)`), React executes `Object.is(oldState, newState)`. Because both arguments point to the exact same address in memory, `Object.is` returns `true`. React immediately bails out of the render phase, skipping component re-rendering and DOM reconciliation.
-
-In local testing, developers sometimes observe the UI updating despite a direct mutation. This occurs because an unrelated state update (such as a parent component re-rendering, a context change, or a separate `useState` call on the same page) triggered a render cycle. When that secondary render executed, React evaluated the JSX and read the mutated object from memory. This creates the dangerous illusion that direct mutation works, but it breaks as soon as the component is isolated or optimized with `React.memo`.
-
-**Q: What is structural sharing, and how does it optimize both memory and component re-renders?**
-
-Structural sharing is a technique where an immutable update creates new references only for the objects along the direct path of the change, while reusing the exact memory pointers for all untouched sibling and child nodes. 
-
-In JavaScript, creating a shallow copy via `{ ...state, user: { ...state.user, name: 'New' } }` generates new references for the root and `user` objects, but properties like `state.posts`, `state.settings`, and `state.metadata` maintain their existing memory addresses. This delivers two critical optimizations:
-1. **Memory efficiency:** Unchanged large datasets are never duplicated in heap memory.
-2. **Render optimization:** Child components that receive unchanged branches as props and are wrapped in `React.memo` evaluate `prevProps.posts === nextProps.posts` as `true` in $O(1)$ time, skipping unnecessary sub-tree re-renders.
-
-**Q: How do you update deeply nested state in vanilla JavaScript versus using Immer?**
-
-In vanilla JavaScript, you must manually spread every level of nesting leading to the target property:
-
-```javascript
-setCompany(prev => ({
-  ...prev,
-  departments: {
-    ...prev.departments,
-    sales: {
-      ...prev.departments.sales,
-      budget: 50000
-    }
-  }
+```text
+setCart((previousCart) => ({
+  ...previousCart,
+  items: [...previousCart.items, newItem],
 }));
 ```
 
-If you miss spreading a single intermediate level (for example, mutating `prev.departments.sales.budget = 50000` inside a shallow root spread), you mutate the original nested object reference in place.
+```tsx
+import { useState } from "react";
 
-With Immer, you pass a recipe function to `produce`. Immer wraps the state in an ES6 Proxy "draft". You write natural mutable code directly on the draft (`draft.departments.sales.budget = 50000`), and Immer intercepts the property assignments, automatically constructing the immutably copied tree with structural sharing upon completion.
+type CartItem = { id: number; name: string };
+type Cart = { items: CartItem[] };
 
-**Q: How does Immer work under the hood?**
+export function CartExample() {
+  const [cart, setCart] = useState<Cart>({ items: [] });
+  const newItem: CartItem = { id: 1, name: "Notebook" };
 
-Immer works using a **Copy-on-Write** mechanism powered by JavaScript ES6 `Proxy` objects:
-1. When `produce(baseState, recipe)` is called, Immer wraps `baseState` in a Proxy tree known as the `draft`.
-2. When your recipe function reads a property, the Proxy's `get` trap intercepts the access and lazily wraps nested objects in Proxies only when touched.
-3. When your recipe assigns a new value to a property, the Proxy's `set` trap marks that specific object node as "modified" and creates a shallow copy of that node.
-4. When the recipe completes, Immer finalizes the tree by walking the draft: modified nodes return their new shallow copies with updated properties, while unmodified nodes return their original references from `baseState`.
-5. Finally, in development mode, Immer calls `Object.freeze()` on the produced tree to ensure the developer cannot accidentally mutate the returned state.
-
-**Q: Why is immutability strictly required for React 18+ Concurrent Features and time-travel debugging?**
-
-In React 18 Concurrent Mode, rendering is interruptible. React can begin rendering an update wrapped in `startTransition`, pause rendering to handle a high-priority user keystroke, and either resume or discard the transition render.
-
-If state were mutable, the background transition would modify state objects in place. If React then paused or discarded that transition, the high-priority render would read corrupted, half-mutated data from heap memory—a failure mode known as **UI tearing**. Immutability guarantees that interrupted renders leave the committed state completely untouched.
-
-For time-travel debugging (e.g., Redux DevTools or React component action logs), DevTools stores an array of past state references. Because each state update produced a distinct immutable object reference, the debugger can step back to any previous timestamp simply by passing that historical state snapshot back to the renderer. If state were mutated in place, every historical entry in the array would point to the same final mutated object.
-
-## 6. The Traps — What Goes Wrong
-
-### Trap 1: Believing `const` Prevents Object Mutation
-
-Developers often assume that declaring an object with `const` makes it immutable.
-
-```javascript
-const user = { name: "Asha", age: 28 };
-user.age = 29; // Completely valid JavaScript!
-```
-
-`const` creates an immutable variable binding—it prevents reassigning the identifier `user` to a new memory address (`user = {}` throws a `TypeError`). However, the object sitting at that memory address remains 100% mutable. In React, assigning state to a `const` variable does nothing to prevent accidental in-place mutations.
-
-### Trap 2: The Shallow Copy Illusion with Nested Objects
-
-Using the object spread operator (`...`) or `Object.assign()` only copies the first level of key-value pairs.
-
-```javascript
-const oldState = {
-  id: 1,
-  details: { role: "admin", active: true }
-};
-
-const newState = { ...oldState };
-newState.details.active = false; // BUG: Mutates oldState.details.active!
-
-console.log(oldState.details.active); // false — original state corrupted
-console.log(oldState.details === newState.details); // true — same reference
-```
-
-Because `details` holds an object reference, `newState.details` receives the exact same pointer. Modifying `newState.details` mutates the previous state in heap memory. To update nested state properly, you must spread at every level of depth.
-
-### Trap 3: In-Place Mutating Array Methods
-
-JavaScript arrays have several standard methods that mutate the array in place rather than returning a new array:
-- Mutating methods: `push()`, `pop()`, `shift()`, `unshift()`, `splice()`, `sort()`, `reverse()`, `fill()`, `copyWithin()`.
-- Non-mutating methods: `concat()`, `slice()`, `map()`, `filter()`, `reduce()`, `flat()`, `flatMap()`, and ES2023 methods (`toSorted()`, `toSpliced()`, `toReversed()`, `with()`).
-
-```javascript
-// WRONG: Mutates existing array in place
-const handleSort = () => {
-  setItems(items.sort((a, b) => a - b)); // Object.is sees same reference -> No render!
-};
-
-// CORRECT: Make a shallow copy before sorting, or use toSorted()
-const handleSortFixed = () => {
-  setItems([...items].sort((a, b) => a - b));
-};
-```
-
-### Trap 4: Direct Mutation of Props
-
-Props passed down to child components are references to the parent component's state. If a child component modifies a prop object directly:
-
-```javascript
-function UserCard({ user }) {
-  const handlePromote = () => {
-    user.role = "SuperAdmin"; // BUG: Directly mutates parent state in heap memory!
+  const addItem = () => {
+    setCart((previousCart) => ({
+      ...previousCart,
+      items: [...previousCart.items, newItem],
+    }));
   };
-  return <button onClick={handlePromote}>Promote</button>;
+
+  return (
+    <section>
+      <button onClick={addItem}>Add {newItem.name}</button>
+      <p>Items: {cart.items.length}</p>
+    </section>
+  );
 }
 ```
 
-The child bypasses the parent's state setter. The parent has no notification that an update occurred, its child tree does not re-render, and the data contract between parent and child is broken. Child components must always invoke a callback prop passed down from the owner of the state.
+This is not a rule about copying everything. It is a rule about preserving the meaning of a render: each render should be able to read a stable snapshot, and a changed state path should be represented by new identities. React, `React.memo`, `useMemo`, dependency arrays, external stores, and many developer tools all use identity as a fast signal.
 
-### Trap 5: The "Accidental Success" in Local Development
+The same discipline matters in React + TypeScript. TypeScript can describe and sometimes protect an immutable boundary with `readonly`, but it does not freeze a runtime object. The update pattern and the ownership model still have to be correct.
 
-During local development, a developer mutates an array with `.push()` and notices that the UI updates anyway. They conclude that immutability rules are exaggerated.
+## 2. The Analogy — Make It Obvious
 
-What actually happened: another component on the page triggered a re-render (e.g., an input keystroke, a timer, or React StrictMode running double-invocations). The component re-rendered for an unrelated reason and read the mutated array from heap memory. Once deployed to production or wrapped in a `React.memo` boundary, the component stops receiving those secondary re-renders and the feature breaks silently.
+Think of a restaurant's order board. At 12:00, the kitchen receives a photographed order sheet. At 12:05, a customer changes one item. The reliable process is to issue a new sheet that shares the unchanged order details and records the new item. The old sheet remains a truthful record of what the kitchen was preparing at 12:00.
+
+Direct mutation is like erasing the old sheet while the kitchen is still reading it. A manager looking only at the sheet number cannot tell that its contents changed. A second kitchen, a delayed printer, or an audit log may see a contradictory version of the same order.
+
+Immutable React state uses the sheet identity as a quick change signal and treats each render as a dated copy of the order. A new root object says, “inspect this update”; reused child references say, “this branch is unchanged.” This is structural sharing: a new path for the changed data, shared references for untouched data.
+
+## 3. How It Actually Works — The Full Explanation
+
+**Referential equality is the fast signal.** JavaScript primitives compare by value. Objects, arrays, and functions compare by identity:
+
+```tsx
+const first = { role: "admin" };
+const second = first;
+second.role = "editor";
+
+console.log(Object.is(first, second)); // true: one object, two names
+console.log(first.role); // "editor": the original object was mutated
+
+const third = { ...first, role: "viewer" };
+console.log(Object.is(first, third)); // false: a new object identity
+```
+
+React does not recursively deep-compare every state property after every setter call. Identity comparisons are cheap, so immutable updates give React a useful signal. A new reference means the value may have changed; it does not mean every descendant must render. An unchanged reference can allow a bailout, but a parent render, context update, or other reason can still cause work elsewhere.
+
+**Structural sharing follows the changed path.** A shallow spread copies only one level. For `state.account.preferences.theme`, the root, `account`, and `preferences` references must be new; unrelated branches can remain shared:
+
+```text
+previous root ── account ── preferences ── "light"
+      │             │             │
+      └── reports ──┘             └── theme branch
+
+next root      ── new account ── new preferences ── "dark"
+      │
+      └── same reports reference
+```
+
+This makes `next.reports === previous.reports` true while the changed path has new identities. It is usually less work and less memory than deep-cloning the entire state tree.
+
+**A render is a snapshot.** During one render, props and state variables are values for that render. Event handlers and asynchronous callbacks close over that snapshot. An immutable update makes the previous snapshot remain readable and prevents a later event from changing what an earlier render appeared to contain. If an async callback needs the latest state to calculate the next value, use a functional updater rather than expecting a closed-over variable to change.
+
+**State ownership determines where the update belongs.** The component or store that owns a piece of state should perform the update. A child receiving `user` must not assign `user.role = ...`; it should call an `onRoleChange` callback supplied by the owner. Lifting state to the nearest common owner keeps one source of truth and makes the immutable transition explicit.
+
+**Keys are identity for list positions.** Immutable array updates preserve item objects that did not change, while stable data keys tell React which child instance represents which item. A key is not a deep comparison and is not a substitute for immutability. Use a stable identifier from the data, not an array index when items can be inserted, removed, or reordered.
+
+**Functional updates compose with batching.** When the next state depends on the previous state, use `setState((previous) => next)`. React can queue several updater functions and apply them in order. This avoids stale event-handler values and makes the update safe when React batches work or delays a transition.
+
+**Effects are the external-systems boundary.** Immutability is needed while calculating React state; `useEffect` is for synchronizing with something outside React, such as a subscription, timer, DOM API, or network connection. Do not mutate state in an effect to “make React notice.” Compute the new immutable state in an event handler or updater, and use an effect only when an external system must be connected to that state. Cleanup must undo the setup.
+
+**Strict Mode and concurrent rendering expose impurities.** In development, Strict Mode may call render-phase logic more than once and may perform an extra setup/cleanup cycle for effects. Concurrent rendering can start, pause, restart, or abandon render work before commit. Mutating an object read during render makes those operations observe shared, partially changed data. Immutable state keeps uncommitted versions separate from the committed snapshot. Strict Mode is a development diagnostic, not a reason to write code that depends on a single render call.
+
+**TypeScript helps at the boundary.** `readonly` can reject common assignments during type-checking, while `as const` narrows literals. Neither performs a deep runtime freeze, and a cast can silence the compiler. Prefer immutable APIs and narrow ownership:
+
+```tsx
+type Settings = Readonly<{
+  theme: "light" | "dark";
+  alerts: boolean;
+}>;
+
+const settings: Settings = { theme: "light", alerts: true };
+// settings.theme = "dark"; // TypeScript error: readonly property
+const nextSettings: Settings = { ...settings, theme: "dark" };
+```
+
+## 4. Real Code — See It Working
+
+**Example 1 — Runnable TSX: object and nested-object updates.** This component owns the profile and changes the root and nested identities intentionally:
+
+```tsx
+import { useState } from "react";
+
+type Profile = {
+  name: string;
+  preferences: { theme: "light" | "dark"; email: boolean };
+};
+
+export function ProfileEditor() {
+  const [profile, setProfile] = useState<Profile>({
+    name: "Asha",
+    preferences: { theme: "light", email: true },
+  });
+
+  const rename = (name: string) => {
+    setProfile((previous) => ({ ...previous, name }));
+  };
+
+  const toggleTheme = () => {
+    setProfile((previous) => ({
+      ...previous,
+      preferences: {
+        ...previous.preferences,
+        theme: previous.preferences.theme === "light" ? "dark" : "light",
+      },
+    }));
+  };
+
+  return (
+    <section>
+      <p>{profile.name}: {profile.preferences.theme}</p>
+      <button onClick={() => rename("Mira")}>Rename</button>
+      <button onClick={toggleTheme}>Toggle theme</button>
+    </section>
+  );
+}
+```
+
+**Example 2 — Runnable TSX: array operations, functional updates, and stable keys.** `map` replaces one item, `filter` removes one, and spread adds one. The `key` comes from the todo, not its current position:
+
+```tsx
+import { useState } from "react";
+
+type Todo = { id: number; text: string; done: boolean };
+
+export function TodoList() {
+  const [todos, setTodos] = useState<Todo[]>([
+    { id: 1, text: "Read", done: false },
+    { id: 2, text: "Practice", done: false },
+  ]);
+
+  const add = (text: string) => {
+    setTodos((previous) => [
+      ...previous,
+      { id: Date.now(), text, done: false },
+    ]);
+  };
+
+  const toggle = (id: number) => {
+    setTodos((previous) => previous.map((todo) =>
+      todo.id === id ? { ...todo, done: !todo.done } : todo,
+    ));
+  };
+
+  const remove = (id: number) => {
+    setTodos((previous) => previous.filter((todo) => todo.id !== id));
+  };
+
+  const sortByText = () => {
+    setTodos((previous) => [...previous].sort((a, b) =>
+      a.text.localeCompare(b.text),
+    ));
+  };
+
+  return (
+    <section>
+      <button onClick={() => add("Ship")}>Add</button>
+      <button onClick={sortByText}>Sort</button>
+      {todos.map((todo) => (
+        <div key={todo.id}>
+          <button onClick={() => toggle(todo.id)}>
+            {todo.done ? "Done" : "Open"}: {todo.text}
+          </button>
+          <button onClick={() => remove(todo.id)}>Remove</button>
+        </div>
+      ))}
+    </section>
+  );
+}
+```
+
+The mutating array methods include `push`, `pop`, `shift`, `unshift`, `splice`, `sort`, `reverse`, `fill`, and `copyWithin`. Copy first when an operation mutates: `setItems((previous) => [...previous].sort(compare))`. Modern runtimes also provide non-mutating `toSorted`, `toReversed`, `toSpliced`, and `with`.
+
+**Example 3 — Runnable TSX: state ownership and an effect boundary.** The owner changes state; the child requests a change; the effect synchronizes a document title and cleans up nothing because setting the title needs no subscription:
+
+```tsx
+import { useEffect, useState } from "react";
+
+type User = Readonly<{ name: string; role: "member" | "admin" }>;
+
+function UserCard({ user, onRoleChange }: {
+  user: User;
+  onRoleChange: (role: User["role"]) => void;
+}) {
+  return (
+    <button onClick={() => onRoleChange("admin")}>
+      {user.name}: {user.role}
+    </button>
+  );
+}
+
+export function Account() {
+  const [user, setUser] = useState<User>({ name: "Asha", role: "member" });
+
+  useEffect(() => {
+    document.title = `${user.name} (${user.role})`;
+  }, [user.name, user.role]);
+
+  return (
+    <UserCard
+      user={user}
+      onRoleChange={(role) => setUser((previous) => ({ ...previous, role }))}
+    />
+  );
+}
+```
+
+For very deep domain state, a reducer or a library such as Immer can make immutable transitions easier to read. Immer lets a recipe mutate a draft proxy and produces a structurally shared immutable result; the state contract is still immutable outside the recipe. Use that trade-off deliberately rather than assuming every nested object needs a deep clone.
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: Why does React care about immutable state?** React uses identity as an efficient change signal, and immutable updates preserve stable render snapshots. A changed path gets new references; unchanged paths can remain shared. This supports predictable updates, memoization, dependency comparisons, debugging history, and interruptible rendering.
+
+**Q: Does React always re-render when I pass a new object?** No. A new state reference can schedule work, but React may bail out at other boundaries, and a memoized child may skip rendering when its props are unchanged. A new reference is a signal, not a promise that every component renders.
+
+**Q: Why can direct mutation appear to work?** The mutation changes the object in memory, but `setState(sameObject)` may not produce a visible update because the identity is unchanged. Later, a parent, context, timer, or unrelated state update may render the component and expose the mutated value. That accidental success is not a valid state transition and becomes less likely behind `React.memo` or an isolated test.
+
+**Q: What is structural sharing?** It is reusing references for unchanged branches while creating new objects and arrays along the changed path. It avoids duplicating the whole state tree and lets identity-sensitive consumers quickly recognize unchanged data.
+
+**Q: How do you update deeply nested state without a bug?** In native JavaScript, spread every level from the root to the changed field. For complex transitions, use `useReducer` or Immer with a clear immutable boundary. A shallow root copy alone is not enough if a nested object is then mutated.
+
+**Q: Why use a functional updater?** Use `setCount((previous) => previous + 1)` or its object equivalent when the next value depends on the previous value. React queues updater functions and applies them against the latest queued state, so multiple updates compose correctly under batching and delayed rendering.
+
+**Q: How do keys relate to immutability?** Immutable arrays describe which item objects changed; stable keys describe which child identity belongs to each item. Both matter. A new array with index keys can still associate local child state with the wrong item after reordering.
+
+**Q: Where do effects fit?** Effects synchronize React with external systems after commit. They are not a replacement for immutable event updates, a place to mutate state objects, or a general mechanism for deriving values that can be calculated during render.
+
+**Q: What do Strict Mode and concurrent rendering change?** Strict Mode intentionally stresses render purity and effect cleanup in development. Concurrent rendering may abandon an in-progress render. Code that mutates shared state during render can leak work across attempts; immutable snapshots keep abandoned work from changing committed data.
+
+**Q: Can TypeScript enforce immutability?** `readonly` and `Readonly<T>` catch assignments through that type, and recursive utility types can describe deeper readonly shapes. They are compile-time checks, not runtime freezing. Runtime discipline, ownership, and immutable update functions remain necessary.
+
+## 6. The Traps — What Goes Wrong
+
+**Trap 1: “`const` makes the object immutable.”** `const user = {...}` prevents rebinding `user`; it does not prevent `user.role = "admin"`. Use immutable updates, `readonly` types, or a deliberate runtime freeze when appropriate.
+
+**Trap 2: “A shallow copy copied the whole tree.”** `{ ...state }` creates a new root but shares nested references. `next.details.active = false` still mutates `previous.details`. Copy each object or array on the path being changed.
+
+**Trap 3: Mutating an array before setting it.** `items.sort()`, `items.splice()`, or `items.push()` changes the existing state array. Use `setItems((previous) => [...previous, item])`, `filter`, `map`, or a copy before sorting.
+
+**Trap 4: Mutating props in a child.** Props are inputs owned by another component. A child must call an owner-provided callback instead of assigning into `user`, `config`, or an array received through props.
+
+**Trap 5: Using an index key after changing an array.** If a list is filtered or reordered, index keys can preserve the wrong child's local state. Stable keys and immutable item updates solve different identity problems.
+
+**Trap 6: Believing an effect fixes a state mutation.** An effect that runs after an unrelated render may hide the original bug. Update state immutably where the event occurs; keep effects for external synchronization and make their dependencies and cleanup honest.
+
+**Trap 7: Assuming Strict Mode means production renders twice.** Development-only extra calls are a purity test. Do not add flags to suppress them or depend on mutation surviving between render attempts.
+
+**Trap 8: Overusing deep clones.** `structuredClone` and JSON serialization duplicate every branch, can lose types or values, and destroy useful reference stability. Prefer structural sharing; normalize state or use a reducer when the shape is difficult to update.
 
 ## 7. Compare With Related Concepts
 
-| Concept A | Concept B | Key Difference | Rule of Thumb |
-| :--- | :--- | :--- | :--- |
-| **Immutability** | **`const` Declaration** | Immutability means the data values inside an object cannot change. `const` only prevents reassigning the variable identifier to a new reference. | `const` protects variable bindings; immutable update patterns protect object and array contents. |
-| **Structural Sharing** | **Deep Clone (`structuredClone`)** | Structural sharing copies only the modified path while reusing untouched branch references. Deep cloning recursively duplicates every single object in the tree. | Never use `structuredClone` or `JSON.parse(JSON.stringify)` for React state updates; it destroys reference stability for `React.memo` and wastes CPU cycles. |
-| **Manual Spread (`...`)** | **Immer (`produce`)** | Manual spread uses native JavaScript syntax with zero dependencies for 1–2 levels of nesting. Immer uses Proxies to allow mutable syntax for deeply nested trees. | Use native spread for flat or 2-level objects and arrays; use Immer when updating deeply nested structures (3+ levels) to avoid spread hell. |
-| **Referential Equality (`Object.is`)** | **Deep Equality (`lodash.isEqual`)** | Referential equality checks if two pointers share the same heap memory address in $O(1)$ time. Deep equality traverses every key and element recursively in $O(N)$ time. | React state diffing exclusively uses `Object.is`; deep equality is avoided because it causes severe performance bottlenecks during render loops. |
+| Concept A | Concept B | Key difference | Rule of thumb |
+| --- | --- | --- | --- |
+| Immutability | `const` | Immutability describes data updates; `const` protects only a variable binding. | Treat state data as read-only even when its variable is `const`. |
+| Structural sharing | Deep cloning | Structural sharing copies the changed path and reuses untouched branches; deep cloning copies everything. | Create only the identities that changed. |
+| Manual spread | Immer | Spread is dependency-free and clear for shallow updates; Immer uses draft proxies for complex recipes. | Use the simplest approach that keeps the immutable boundary obvious. |
+| Referential equality | Deep equality | `Object.is` compares identity in constant time; deep equality traverses values. | Make identity meaningful instead of asking React to inspect the whole tree. |
+| State setter | `useRef` | State updates schedule a render; changing `ref.current` does not. | Use state for displayed data and refs for mutable values that do not drive UI. |
+| Event update | Effect update | An event is caused by a user/system action; an effect synchronizes after commit with an external system. | Prefer the event handler for the state transition; reserve effects for external synchronization. |
+| State ownership | Context | Ownership says where a value is changed; context says how a distant consumer receives it. | Keep the updater with the owner, and stabilize context values when appropriate. |
+| Stable key | Object reference | A key identifies a component instance in a list; an object reference identifies a JavaScript value. | Use stable data IDs for keys and immutable references for data change detection. |
 
-## 8. 🧠 The Memory Hook
+## 8. 🧠 The Memory Hook — What Sticks
 
-**React checks the pointer, not the properties.** 
+**React checks the identity of the sheet, not every word on the sheet.** Keep each render's sheet frozen, make a new sheet along the changed path, reuse untouched branches, and let the owner perform the update. Functional updaters handle the latest sheet; stable keys identify the right row; effects speak only to the outside world.
 
-If you mutate an object in place, the pointer never changes, and React acts like nothing happened. If you want React to see a change, hand it a new reference along the modified path—fresh page in the ledger, zero wasted deep checks.
+**Interview sentence:** “I never mutate React state in place: I use a functional immutable update, create new references along the changed path, preserve structural sharing elsewhere, and keep ownership, keys, and effects aligned with their separate jobs.”
