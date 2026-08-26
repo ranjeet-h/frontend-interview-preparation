@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (448 pages complete)
+## Completed Sections Summary (478 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -23,7 +23,8 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **SQL Core Concepts** (`src/full-stack/databases/sql/`) | 40 / 40 | Complete |
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
-| **Total Completed Concept Pages** | **448** | **100% Done** |
+| **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
+| **Total Completed Concept & Practice Pages** | **478** | **100% Done** |
 
 ---
 
@@ -68,21 +69,21 @@ Note: Express + FastAPI waves are owned by one dedicated controller (task IDs `E
 |---|---:|---:|---:|---:|
 | MERN Full-Stack Patterns | 30 | 25 | 5 | 0 |
 
-### Database Sections (Pending Rewrite)
+### Database Sections Status (135/135 Complete)
 
-| Section | Total Pages | Completed | In-Flight / Assigned | Not Started |
-|---|---:|---:|---:|---:|
-| **SQL** | **40** | **40** | **0** | **0** |
-| **PostgreSQL** | **35** | **35** | **0** | **0** |
-| **MySQL** | **30** | **30** | **0** | **0** |
-| SQL query practice | 30 | 8 | 8 | 14 |
-| **Total Database** | **135** | **113** | **8** | **14** |
+| Section | Total Pages | Completed | Status |
+|---|---:|---:|---|
+| **SQL Core** | 40 | 40 | **Complete** |
+| **PostgreSQL** | 35 | 35 | **Complete** |
+| **MySQL** | 30 | 30 | **Complete** |
+| **SQL Query Practice** | 30 | 30 | **Complete** |
+| **Total Database** | **135** | **135** | **100% Done** |
 
 ---
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **448**
+- **Total Completed Concept/System Pages:** **478**
 - **Total Completed Output Question Puzzles:** **15**
-- **Database Remaining:** **22** (8 in flight + 14 not started)
+- **Database Remaining:** **0** (All 135 database pages complete!)
 - **Backend Remaining:** **416** (408 not started + 8 in flight)
