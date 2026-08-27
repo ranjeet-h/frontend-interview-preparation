@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (558 pages complete)
+## Completed Sections Summary (588 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -19,6 +19,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **Node.js Core Concepts** (`src/full-stack/backend/nodejs/`) | 30 / 30 | Complete |
 | **Express Core Concepts** (`src/full-stack/backend/express/`) | 30 / 30 | Complete |
 | **FastAPI Core Concepts** (`src/full-stack/backend/fastapi/`) | 50 / 50 | Complete |
+| **MERN Full-Stack Patterns** (`src/full-stack/backend/mern/`) | 30 / 30 | Complete |
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
 | **SQLAlchemy Core Concepts** (`src/full-stack/backend/sqlalchemy/`) | 30 / 30 | Complete |
@@ -26,7 +27,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **558** | **100% Done** |
+| **Total Completed Concept & Practice Pages** | **588** | **100% Done** |
 
 ---
 
@@ -61,12 +62,6 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | WebSockets | 20 | 0 | 0 | 20 |
 | **Total Backend** | **360** | **0** | **0** | **360** |
 
-### MERN Status
-
-| Section | Total Pages | Accepted | In-Flight / Assigned | Not Started |
-|---|---:|---:|---:|---:|
-| MERN Full-Stack Patterns | 30 | 25 | 5 | 0 |
-
 ### Database Sections Status (135/135 Complete)
 
 | Section | Total Pages | Completed | Status |
@@ -81,7 +76,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **558**
+- **Total Completed Concept/System Pages:** **588**
 - **Total Completed Output Question Puzzles:** **15**
 - **Database Remaining:** **0** (All 135 database pages complete!)
 - **Backend Remaining:** **360** (14 remaining backend sections)
