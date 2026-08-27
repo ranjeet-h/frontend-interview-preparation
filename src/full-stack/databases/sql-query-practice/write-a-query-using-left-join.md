@@ -114,8 +114,11 @@ Bob's intermediate row count is 1, so `COUNT(*)` would report Bob had 1 order. C
 
 ## 6. Variations and Follow-ups
 
-### Variation 1: The Anti-Join Pattern (Find Unmatched Records)
-"Write a query to find all customers who have never placed an order."
+**Variation 1 — Anti-join: LEFT JOIN IS NULL vs NOT EXISTS vs NOT IN**
+
+"Find all customers who have never placed an order."
+
+LEFT JOIN anti-join — keep every customer, keep only the ones where the right side never matched:
 
 ```sql
 SELECT
@@ -126,9 +129,25 @@ LEFT JOIN Orders o
     ON c.id = o.customer_id
 WHERE o.id IS NULL;
 ```
-How it works: The query performs a `LEFT JOIN`, padding non-matching customers with `NULL` for all `Orders` columns. The `WHERE o.id IS NULL` filter retains only the padded rows where no matching order existed. Unlike `WHERE id NOT IN (SELECT customer_id FROM Orders)` (which completely breaks and returns 0 rows if even a single `customer_id` in `Orders` is `NULL`), the anti-join pattern is immune to NULL-comparison bugs and is heavily optimized by modern query planners.
 
-### Variation 2: Finding Inactive Customers with Specific Criteria
+How it works: LEFT JOIN keeps every left row and pads unmatched right columns with NULL. `WHERE o.id IS NULL` keeps only those padded rows. It is explicit and easy to read in reports.
+
+NOT EXISTS does the same thing with a correlated subquery — often the interviewer asks you to rewrite one as the other:
+
+```sql
+SELECT c.id, c.name
+FROM Customers c
+WHERE NOT EXISTS (
+    SELECT 1 FROM Orders o WHERE o.customer_id = c.id
+);
+```
+
+How it differs: NOT EXISTS checks row-by-row whether a match exists and stops at the first match. Modern PostgreSQL and MySQL planners often turn both forms into the same anti-join plan, so performance is usually identical. NOT EXISTS can be slightly clearer when you only need existence, not right-side columns. Pick one style and stay consistent.
+
+Why NOT IN is dangerous: `WHERE c.id NOT IN (SELECT customer_id FROM Orders)` returns zero rows if even one `Orders.customer_id` is NULL, because `x NOT IN (1, NULL)` evaluates to UNKNOWN in three-valued logic. Both LEFT JOIN IS NULL and NOT EXISTS are NULL-safe. In an interview, name this trap unprompted.
+
+**Variation 2 — Anti-join with a right-side filter**
+
 "Find all customers who have never placed a COMPLETED order (they have zero orders or only CANCELLED/PENDING orders)."
 
 ```sql
@@ -141,10 +160,12 @@ LEFT JOIN Orders o
     AND o.status = 'COMPLETED'
 WHERE o.id IS NULL;
 ```
-How it works: The `ON` condition matches only completed orders. Customers with only cancelled orders receive `NULL` padding, and `WHERE o.id IS NULL` successfully includes both users with zero orders and users with no completed orders.
 
-### Variation 3: Pre-Aggregated CTE Pattern (Preventing Join Fan-Out)
-When joining multiple one-to-many tables (e.g., orders and reviews), aggregating inside the main query causes Cartesian multiplication. The production solution is to aggregate in a CTE first, then `LEFT JOIN`:
+How it works: the `ON` condition matches only completed orders. Customers with only cancelled orders get NULL padding, so `WHERE o.id IS NULL` correctly includes both never-ordered and never-completed customers. If you moved `o.status = 'COMPLETED'` to the WHERE, you would kill the NULL padding and break the anti-join — same ON-vs-WHERE trap as the main solution. The NOT EXISTS equivalent just moves the filter inside: `WHERE NOT EXISTS (SELECT 1 FROM Orders o WHERE o.customer_id = c.id AND o.status = 'COMPLETED')`.
+
+**Variation 3 — Pre-aggregated CTE to prevent fan-out**
+
+When you join two different one-to-many tables (orders and reviews) in one query and aggregate in the same SELECT, you get a Cartesian product that inflates counts and sums. Aggregate first, then LEFT JOIN:
 
 ```sql
 WITH CompletedOrderStats AS (
@@ -165,6 +186,8 @@ FROM Customers c
 LEFT JOIN CompletedOrderStats s
     ON c.id = s.customer_id;
 ```
+
+Why this matters: the CTE collapses many orders into one row per customer before the join, so joining additional tables cannot multiply rows. You keep the LEFT JOIN guarantee — customers with no completed orders still appear with 0s via COALESCE — without fan-out bugs.
 
 ## 7. 🧠 The Memory Hook
 
