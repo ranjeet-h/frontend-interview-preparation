@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (588 pages complete)
+## Completed Sections Summary (596 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -27,7 +27,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **588** | **100% Done** |
+| **Total Completed Concept & Practice Pages** | **596** | **100% Done** |
 
 ---
 
@@ -46,7 +46,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Section | Total Pages | Completed | In-Flight / Assigned | Not Started |
 |---|---:|---:|---:|---:|
-| API design | 30 | 0 | 0 | 30 |
+| **API design** (in rewrite now) | **30** | **8** | **0** | **22** |
 | Authentication | 30 | 0 | 0 | 30 |
 | Coding practice | 30 | 0 | 0 | 30 |
 | Deployment | 25 | 0 | 0 | 25 |
@@ -60,7 +60,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Senior scenarios | 25 | 0 | 0 | 25 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **360** | **0** | **0** | **360** |
+| **Total Backend** | **360** | **8** | **0** | **352** |
 
 ### Database Sections Status (135/135 Complete)
 
