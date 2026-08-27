@@ -1,111 +1,307 @@
 # How do you implement search in MERN
 
-## Detailed explanation
+## 1. The Real-World Problem — When You Actually Hit This
 
-How do you implement search in MERN is a full-stack integration topic that checks whether frontend and backend contracts work together safely. A strong answer should explain the mental model, the backend problem it solves, the implementation shape, operational trade-offs, and common failure modes.
+Your e-commerce app launched last month with 500 products. Search worked fine — users typed "laptop" and got 15 results. Now you have 50,000 products. A user searches for "wireless headphones" and the page hangs for 8 seconds. The database is doing a full collection scan because you're using `$regex` without an index. Another user types a special character like `.*(` in the search box, and your Express server crashes with a ReDoS (regular expression denial of service) attack because you passed raw user input into `$regex`. Meanwhile, your React app is firing an API call on every keystroke, flooding your backend with unnecessary requests. This is the moment you realize search is not just "find stuff in the database" — it's a full-stack problem that requires frontend debouncing, backend validation, proper indexing, and security.
 
-## 1. One-line mental model
+## 2. The Analogy — Make the Mechanic Obvious
 
-Make frontend and backend agree on auth, data contracts, errors, retries, and state.
+Think of search like a library with a catalog system. When you walk into a library and ask the librarian for books about "JavaScript," they don't run through every shelf scanning every spine. They check the catalog index first — a pre-organized list that points to where relevant books are located. The catalog is faster because it's optimized for lookups.
 
-## 2. Problem it solves
+Now imagine a library without a catalog. The librarian has to walk through every book, reading every title, to find matches. That's what `$regex` without an index does in MongoDB — it scans every document.
 
-It prevents shallow interview answers and production mistakes by forcing you to reason about correctness, security, performance, maintainability, and frontend/backend contract behavior.
+The librarian also checks your request before searching. If you hand them a note that says "find me books titled [blank blank blank everything explode]," they'd recognize that as suspicious and sanitize it. That's input validation — preventing malicious patterns from crashing the system.
 
-## 3. Core idea
+On the frontend, imagine you ask the librarian a question, then change your mind and ask a different one before they finish the first. A good librarian stops the first search and starts the new one. That's request cancellation — abandoning stale requests so the UI always shows results for the current search term.
 
-- Define frontend-backend contract.
-- Handle auth, cookies/tokens, CORS, and errors.
-- Prevent duplicate or stale requests.
-- Map backend validation to frontend UX.
-- Keep contracts versioned and testable.
+## 3. The Full Explanation — How It Actually Works
 
-## 4. Visual / analogy
+Search in MERN is a full-stack integration problem that spans four layers: the React frontend, the Express backend, the MongoDB database, and the network between them. Each layer has specific responsibilities, and they have to work together correctly.
 
-```txt
-React UI -> API client -> backend endpoint -> response/error contract -> UI state
+**Frontend layer:** The search input in React needs debouncing. Without debouncing, typing "hello" fires 5 API calls (h, he, hel, hell, hello). Debouncing waits 300ms after the user stops typing before making the request. If they keep typing, the timer resets. This reduces server load from hundreds of requests to just one per actual search intent. The frontend also needs request cancellation — if the user types "lap" then quickly changes it to "laptop," the "lap" request might still be in flight. Without cancellation, "lap" could return after "laptop," showing stale results. Libraries like TanStack Query handle this automatically by canceling previous requests when a new one starts.
+
+**Backend layer:** Express receives the search query and must validate it first. Validation means checking the query length (rejecting 10,000-character strings), escaping special regex characters (converting `.*(` to `\.\*\(`), and sanitizing input to prevent injection attacks. The backend then constructs the MongoDB query. For basic search, you might use `$regex` with case-insensitive matching. For production search, you use text indexes with the `$text` operator, which is faster and provides relevance scoring. The backend should always limit results (typically 20-50 per page) to prevent returning thousands of documents over the network.
+
+**Database layer:** MongoDB offers two main search approaches. The first is `$regex`, which scans documents matching a pattern. It's flexible but slow without indexes and dangerous with unescaped user input. The second is text search with `$text`, which requires creating a text index on searchable fields. Text indexes are pre-built structures that MongoDB uses for fast lookups. They support word stemming (matching "run" when searching "running"), stop word removal (ignoring common words like "the"), and relevance scoring (ranking results by how well they match). The tradeoff is that text indexes are large and slow down write operations — every document insert or update must update the index.
+
+**Security layer:** The biggest security risk in search is ReDoS — regular expression denial of service. Certain regex patterns (like nested quantifiers or backreferences) can take exponential time to evaluate. If a user crafts a malicious search string and you pass it directly to `$regex`, your server hangs. The fix is escaping special characters before using `$regex` or avoiding `$regex` entirely in favor of text search. Another risk is returning too much data — unlimited results can exhaust server memory and bandwidth.
+
+**Integration layer:** The frontend and backend must agree on the contract. The URL structure (`/search?q=laptop&page=1`), the response format (array of results with metadata like total count), error handling (structured error responses for empty queries), and loading states all need to be coordinated. When you add filters (category, price range) and sorting, these become additional query parameters that the backend validates and applies to the database query.
+
+## 4. See It In Practice — Real Code or Queries
+
+Here's a complete implementation showing the full stack:
+
+**Frontend — React with debounced search:**
+
+```javascript
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import api from './api';
+
+// Custom debounce hook
+const useDebounce = (value, delay) => {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
+};
+
+function SearchBar() {
+  const [query, setQuery] = useState('');
+  const debouncedQuery = useDebounce(query, 300);
+
+  // Only enable query when debounced value is non-empty
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['search', debouncedQuery],
+    queryFn: () => api.get(`/search?q=${debouncedQuery}`),
+    enabled: !!debouncedQuery,
+  });
+
+  return (
+    <div>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search products..."
+      />
+      {isLoading && <p>Searching...</p>}
+      {error && <p>Error searching</p>}
+      {data && (
+        <ul>
+          {data.results.map((product) => (
+            <li key={product._id}>{product.name}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 ```
 
-## 5. Minimal example
+**Backend — Express with MongoDB text search:**
 
-```txt
-Input  -> validate
-Work   -> apply MERN backend rule
-Output -> success or structured error
+```javascript
+const express = require('express');
+const Product = require('./models/Product');
+const escapeRegex = require('escape-string-regexp');
+
+const router = express.Router();
+
+// Create text index (run once during setup)
+// db.products.createIndex({ name: 'text', description: 'text', category: 'text' })
+
+router.get('/search', async (req, res) => {
+  try {
+    const { q, page = 1, limit = 20 } = req.query;
+
+    // Validate input
+    if (!q || q.length > 100) {
+      return res.status(400).json({ error: 'Invalid search query' });
+    }
+
+    const skip = (page - 1) * limit;
+
+    // Use text search for production (requires text index)
+    const results = await Product.find(
+      { $text: { $search: q } },
+      { score: { $meta: 'textScore' } }
+    )
+      .sort({ score: { $meta: 'textScore' } })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await Product.countDocuments({ $text: { $search: q } });
+
+    res.json({
+      results,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// Alternative: basic regex search (escape input to prevent ReDoS)
+router.get('/search-basic', async (req, res) => {
+  try {
+    const { q } = req.query;
+
+    if (!q || q.length > 100) {
+      return res.status(400).json({ error: 'Invalid search query' });
+    }
+
+    // Escape special regex characters to prevent ReDoS
+    const escapedQuery = escapeRegex(q);
+
+    const results = await Product.find({
+      name: { $regex: escapedQuery, $options: 'i' },
+    }).limit(20);
+
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+module.exports = router;
 ```
 
-## 6. Real-world example
+**Backend — Search with filters and sorting:**
 
-In a production full-stack app, how do you implement search in mern affects route design, database access, user-visible behavior, error handling, monitoring, and safe deployment.
+```javascript
+router.get('/search', async (req, res) => {
+  try {
+    const { q, category, minPrice, maxPrice, sort = 'relevance', page = 1, limit = 20 } = req.query;
 
-## 7. Common interview questions
+    // Build base query
+    const query = { $text: { $search: q } };
 
-#### How do you implement search in a MERN app?
-- **The Engine Mechanism (Why it behaves this way):** Full flow: (1) **Frontend** — React search input with debounced API call: `const { data } = useQuery({ queryKey: ['search', query], queryFn: () => api.get(`/search?q=${query}`), enabled: !!query })`. (2) **Backend** — Express receives query, validates/sanitizes it, searches MongoDB. Basic: `Model.find({ name: { $regex: escapedQuery, $options: 'i' } }).limit(20)`. Better: text index + `$text` operator: `Model.find({ $text: { $search: query } }, { score: { $meta: 'textScore' } }).sort({ score: { $meta: 'textScore' } }).limit(20)`. (3) **Response** — return results with metadata. (4) **Frontend** — display results, handle loading/error states. Escape query to prevent ReDoS attacks.
-- **The Unforgettable Mental Model:** The **Library Search**. User types in the search box (frontend). The librarian (backend) checks the catalog (text index) and returns matching books (results). The search gets faster with a proper index, and the librarian sanitizes the request to prevent mischief.
-- **The Trap:** Using $regex without escaping user input — ReDoS attacks can crash the server. Also, not limiting results — returning thousands of results wastes bandwidth.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I implement search with debounced API calls from React to Express. The backend validates and escapes the query, then searches MongoDB. For basic search, I use $regex with escaped input. For better performance, I create text indexes and use the $text operator with relevance scoring. I always escape user input to prevent ReDoS attacks, limit results to 20, and return structured responses. For production-grade search, I consider Elasticsearch or Algolia."
+    // Add filters
+    if (category) {
+      query.category = category;
+    }
+    if (minPrice || maxPrice) {
+      query.price = {};
+      if (minPrice) query.price.$gte = parseFloat(minPrice);
+      if (maxPrice) query.price.$lte = parseFloat(maxPrice);
+    }
 
-#### How do you implement debounced search in React?
-- **The Engine Mechanism (Why it behaves this way):** Use a custom hook or library: `const useDebounce = (value, delay) => { const [debounced, setDebounced] = useState(value); useEffect(() => { const timer = setTimeout(() => setDebounced(value), delay); return () => clearTimeout(timer); }, [value, delay]); return debounced; };`. Usage: `const debouncedQuery = useDebounce(query, 300); const { data } = useQuery({ queryKey: ['search', debouncedQuery], queryFn: () => api.get(`/search?q=${debouncedQuery}`), enabled: !!debouncedQuery })`. TanStack Query also handles request cancellation — when a new query is made before the previous one completes, the previous request is abandoned.
-- **The Unforgettable Mental Model:** The **Patience Timer**. Instead of calling the librarian (API) after every letter typed, you wait 300ms after the user stops typing. If they keep typing, the timer resets. Only when they pause does the search happen.
-- **The Trap:** Not canceling previous requests — if the user types "hello" quickly, 5 API calls fire. The last one might return before earlier ones, showing stale results. TanStack Query handles this automatically.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I debounce search input by 300ms using a custom hook. The debounced value triggers the API call via TanStack Query. TanStack Query automatically cancels previous in-flight requests when a new query is made, preventing stale results. I also enable the query only when the debounced value is non-empty. This combination prevents excessive API calls and ensures the displayed results always match the current search term."
+    // Build sort object (validate against allowlist)
+    const allowedSortFields = ['price', 'name', 'createdAt'];
+    const sortObj = {};
 
-#### How do you implement full-text search with MongoDB?
-- **The Engine Mechanism (Why it behaves this way):** Create a text index: `db.products.createIndex({ name: 'text', description: 'text', category: 'text' })`. Query with $text: `Model.find({ $text: { $search: query } }, { score: { $meta: 'textScore' } }).sort({ score: { $meta: 'textScore' } }).limit(20)`. Text search supports word stemming ("running" matches "run"), stop word removal (ignores "the", "and"), and phrase matching with quotes (`$search: '"exact phrase"'`). Limitations: only one $text query per query, no partial word matching, language-specific. For advanced features, use Elasticsearch.
-- **The Unforgettable Mental Model:** The **Smart Catalog**. The text index is like a smart catalog that understands word variations (stemming), ignores filler words (stop words), and ranks results by relevance. It's faster than scanning every book title ($regex) because it's pre-built.
-- **The Trap:** Creating text indexes on too many fields — each text index is large and slows down writes. Only index fields that users actually search.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I create text indexes on searchable fields and query with the $text operator. Text search provides stemming, stop word removal, and relevance scoring out of the box. I sort by textScore for relevance-ranked results. The limitations are one $text query per query and no partial word matching. For production apps with complex search needs — fuzzy matching, autocomplete, faceted search — I use Elasticsearch or Meilisearch instead."
+    if (sort === 'relevance') {
+      sortObj.score = { $meta: 'textScore' };
+    } else if (allowedSortFields.includes(sort)) {
+      sortObj[sort] = -1; // descending
+    }
 
-#### How do you implement search with filters and sorting?
-- **The Engine Mechanism (Why it behaves this way):** Combine search, filters, and sort in query params: `GET /api/search?q=laptop&category=electronics&minPrice=100&sort=-price&page=1`. Backend builds query dynamically: `const query = { $text: { $search: q } }; if (category) query.category = category; if (minPrice) query.price = { $gte: minPrice }; const sort = {}; if (sortField) sort[sortField] = sortOrder === 'desc' ? -1 : 1; const results = await Model.find(query, { score: { $meta: 'textScore' } }).sort({ ...sort, score: { $meta: 'textScore' } }).skip(skip).limit(limit);`. Validate sort fields against an allowlist.
-- **The Unforgettable Mental Model:** The **Funnel**. Search is the wide top (find all matching items). Filters narrow it down (category, price). Sort orders the results. Pagination shows a window. Everything happens in one database query.
-- **The Trap:** Applying filters after fetching results in JavaScript — this loads unnecessary data and is inefficient. Always combine search, filters, and sort in a single database query.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I combine search, filters, and sort in a single database query. The search term builds the base query, filters add conditions, and sort orders results. I validate sort fields against an allowlist to prevent abuse. Everything happens in one query — I never fetch all results and filter in JavaScript. I paginate with skip/limit and return metadata (total, page, totalPages) for the frontend to build pagination controls."
+    const skip = (page - 1) * limit;
 
-#### How do you implement autocomplete/search suggestions?
-- **The Engine Mechanism (Why it behaves this way):** Create a dedicated suggestions endpoint: `GET /api/suggestions?q=lap`. Backend uses $regex with anchored prefix: `Model.find({ name: { $regex: `^${escapedQuery}`, $options: 'i' } }).limit(10).select('name')`. For better performance, maintain a separate suggestions collection with common search terms. Frontend displays suggestions in a dropdown below the search input. On selection, set the search input value and trigger the search. Debounce the suggestions API call (200ms) to reduce requests.
-- **The Unforgettable Mental Model:** The **Autocomplete Dictionary**. As you type, the dictionary (backend) suggests words that start with what you've typed. You pick one and the search happens with the full word.
-- **The Trap:** Returning full documents for suggestions — only return the fields needed for display (name, image). Selecting full documents wastes bandwidth.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I implement autocomplete with a dedicated suggestions endpoint that returns matching prefixes. The backend uses anchored regex (^query) for prefix matching and limits results to 10. I only select the fields needed for display. Frontend shows suggestions in a dropdown with 200ms debouncing. On selection, the search input is populated and the full search is triggered. For large datasets, I maintain a separate suggestions collection with common search terms for faster lookups."
+    const results = await Product.find(query, { score: { $meta: 'textScore' } })
+      .sort(sortObj)
+      .skip(skip)
+      .limit(parseInt(limit));
 
-## 8. Active recall test
+    const total = await Product.countDocuments(query);
 
-1. **How do you prevent ReDoS attacks in search?**
-   - **Explanation:** Escape special regex characters in user input before using in $regex. Limit query length. Use text indexes instead of regex for production search.
+    res.json({
+      results,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+```
 
-2. **Why debounce search input?**
-   - **Explanation:** To prevent an API call on every keystroke. Wait 300ms after the user stops typing before searching. Reduces server load and improves UX.
+**Backend — Autocomplete suggestions:**
 
-3. **How does MongoDB text search work?**
-   - **Explanation:** Create a text index on searchable fields. Query with $text operator. Supports stemming, stop word removal, and relevance scoring. Sort by $meta: 'textScore'.
+```javascript
+router.get('/suggestions', async (req, res) => {
+  try {
+    const { q } = req.query;
 
-4. **How do you combine search with filters?**
-   - **Explanation:** Build a single query object combining the search condition with filter conditions. Apply sort and pagination in the same query. Never filter in JavaScript after fetching.
+    if (!q || q.length < 2) {
+      return res.json({ suggestions: [] });
+    }
 
-5. **How do you implement search autocomplete?**
-   - **Explanation:** Dedicated endpoint with anchored prefix regex (^query), limited results (10), only select display fields. Frontend shows dropdown with debounced API calls.
+    const escapedQuery = escapeRegex(q);
 
-## 9. Mistakes / traps
+    // Anchored regex (^) for prefix matching
+    const suggestions = await Product.find({
+      name: { $regex: `^${escapedQuery}`, $options: 'i' },
+    })
+      .limit(10)
+      .select('name'); // Only return the name field
 
-- Giving only a definition without implementation details.
-- Ignoring auth, validation, data consistency, or failure handling.
-- Forgetting frontend contract impact.
-- Designing only the happy path.
-- Missing observability and rollback concerns.
+    res.json({ suggestions });
+  } catch (error) {
+    res.status(500).json({ error: 'Suggestions failed' });
+  }
+});
+```
 
-## 10. Compare with related concepts
+## 5. Interview Questions — All of Them, Done Properly
 
-Compare this with nearby topics by asking whether the concern is API contract, database correctness, runtime behavior, security, scaling, deployment, or debugging.
+**Q: How do you implement search in a MERN app?**
 
-## 11. Summary from memory
+The full flow starts on the frontend with a debounced search input. When a user types, we wait 300ms after they stop typing before making the API call. This prevents firing a request on every keystroke. I use TanStack Query to manage the API call — it automatically cancels previous in-flight requests when a new one starts, so the UI never shows stale results from an earlier search term.
 
-Explain How do you implement search in MERN in your own words, then give one backend example, one frontend impact, and one production failure it prevents.
+On the backend, Express receives the query parameter and validates it first. I check the query length (rejecting anything over 100 characters) and escape special regex characters if using `$regex`. For production search, I create a text index on the searchable fields in MongoDB and use the `$text` operator. Text search is faster than regex because it uses a pre-built index, and it provides relevance scoring. I limit results to 20 per page and return metadata like total count and page numbers for pagination.
 
-## 12. Spaced revision prompts
+I always escape user input before using `$regex` to prevent ReDoS attacks — certain regex patterns can hang the server. For basic apps, `$regex` with escaped input works. For production apps with complex search needs, I'd consider Elasticsearch or Algolia.
 
-- Day 1: Define How do you implement search in MERN in one sentence.
-- Day 3: Write or sketch a minimal example.
-- Day 7: Explain edge cases and failure modes.
-- Day 14: Compare with a related full-stack topic.
+**Q: How do you implement debounced search in React?**
+
+I create a custom debounce hook that stores the debounced value in state. Inside a `useEffect`, I set a timeout that updates the debounced value after a delay (typically 300ms). The cleanup function clears the timeout if the value changes before the delay expires — this is what creates the debounce behavior. When the user types "hello" quickly, the timeout resets after each character, and only the final value triggers the API call.
+
+I use the debounced value in a TanStack Query hook, enabling the query only when the debounced value is non-empty. TanStack Query handles request cancellation automatically — when a new query starts, it aborts the previous one. This prevents the race condition where an earlier request returns after a later one, showing stale results.
+
+**Q: How do you implement full-text search with MongoDB?**
+
+First, I create a text index on the fields I want to search: `db.products.createIndex({ name: 'text', description: 'text', category: 'text' })`. This builds a special index structure optimized for text search. Then I query using the `$text` operator: `Model.find({ $text: { $search: query } })`.
+
+Text search has several advantages over regex: it supports word stemming (searching "run" matches "running"), stop word removal (ignores common words like "the"), and relevance scoring. I can sort results by relevance using `{ score: { $meta: 'textScore' } }`. The limitations are that you can only have one `$text` query per search, it doesn't support partial word matching (only full words), and it's language-specific. For apps that need fuzzy matching, autocomplete, or faceted search, I'd use a dedicated search engine like Elasticsearch.
+
+**Q: How do you implement search with filters and sorting?**
+
+I design the API to accept query parameters for search, filters, and sorting: `GET /api/search?q=laptop&category=electronics&minPrice=100&sort=-price&page=1`. On the backend, I build the MongoDB query dynamically. The base query uses `$text` for the search term. Then I conditionally add filter conditions — if `category` is provided, I add `query.category = category`. If price range is provided, I add a `$gte` and `$lte` condition on the price field.
+
+For sorting, I validate the sort field against an allowlist to prevent abuse (users shouldn't be able to sort by arbitrary fields). If the sort is "relevance," I sort by the text score. Otherwise, I sort by the specified field. I apply skip and limit for pagination in the same database query — never fetch all results and filter in JavaScript, which is inefficient. I return metadata (total count, current page, total pages) so the frontend can build pagination controls.
+
+**Q: How do you implement autocomplete/search suggestions?**
+
+I create a dedicated suggestions endpoint separate from the main search. The frontend calls this with a shorter debounce (200ms) as the user types. On the backend, I use an anchored regex pattern (`^query`) to match prefixes — this finds names that start with what the user typed. I limit results to 10 and only select the fields needed for display (typically just the name and maybe an image). Returning full documents wastes bandwidth.
+
+For large datasets, I might maintain a separate suggestions collection with common search terms — this is faster than querying the main collection. On the frontend, I display suggestions in a dropdown below the search input. When the user selects a suggestion, I populate the search input and trigger the full search. This pattern provides a responsive autocomplete experience without overloading the database.
+
+## 6. The Traps — What Goes Wrong in Production
+
+**Using `$regex` without escaping user input** is the most dangerous trap. If a user types a malicious regex pattern like `((a+)+)+$`, it can cause catastrophic backtracking and hang your server. This is a ReDoS attack. Always escape special characters before using `$regex`, or better yet, use text search which doesn't have this vulnerability.
+
+**Not limiting results** causes performance problems at scale. Returning 10,000 documents over the network wastes bandwidth and memory. Always apply a limit (typically 20-50) and use pagination for larger result sets.
+
+**Creating text indexes on too many fields** slows down write operations. Every insert or update must update the index, and text indexes are large. Only index fields that users actually search against.
+
+**Not debouncing the frontend** floods your backend with unnecessary requests. Typing "hello" fires 5 API calls without debouncing. At scale, this can overwhelm your server. Debounce to 300ms to wait until the user stops typing.
+
+**Not canceling previous requests** causes stale results. If a user types "lap" then quickly changes to "laptop," both requests are in flight. If "lap" returns after "laptop," the UI shows results for the wrong term. TanStack Query handles this automatically with request cancellation.
+
+**Filtering in JavaScript after fetching** is inefficient. Fetching 1,000 documents and then filtering by category in JavaScript loads unnecessary data from the database. Always apply filters in the database query itself.
+
+**Not validating sort fields** allows users to sort by any field, which can expose sensitive data or cause performance issues. Validate sort fields against an allowlist before applying them to the query.
+
+**Forgetting pagination metadata** makes it impossible to build pagination controls on the frontend. Always return total count, current page, and total pages along with the results.
+
+## 7. Compare With Related Concepts
+
+**Search vs. filtering:** Search finds items matching a text query across multiple fields. Filtering restricts results based on exact field values (category, price range). Search uses text indexes or regex; filtering uses standard equality or range queries. Use search when the user is looking for something by name or description. Use filters when the user wants to narrow down results by specific attributes.
+
+**Text search vs. regex search:** Text search uses pre-built indexes, supports stemming and relevance scoring, and is faster at scale. Regex search scans documents, supports partial matching and complex patterns, but is slower without indexes and vulnerable to ReDoS. Use text search for production search functionality. Use regex only for simple, low-volume search or when you need pattern matching that text search doesn't support.
+
+**Client-side search vs. server-side search:** Client-side search fetches all data once and filters in the browser. Server-side search queries the database with each request. Client-side works for small datasets (under a few thousand items) and provides instant results. Server-side is necessary for large datasets and when you need advanced features like relevance scoring. Use client-side search only when the dataset is small and changes infrequently.
+
+**Debouncing vs. throttling:** Debouncing waits until the user stops typing before triggering the action. Throttling triggers the action at most once per time interval (e.g., once per second). For search, debouncing is better because you only want to search when the user finishes their thought. Throttling is better for scroll events or resize handlers where you want continuous updates at a controlled rate.
+
+**Pagination vs. infinite scroll:** Pagination divides results into discrete pages with page numbers. Infinite scroll automatically loads more results as the user scrolls down. Pagination gives users control and lets them jump to specific pages. Infinite scroll provides a smoother experience but makes it hard to reach the end of results. Use pagination for e-commerce where users want to jump to later pages. Use infinite scroll for social feeds where the content is constantly updating.
+
+## 8. 🧠 The Memory Hook — What Sticks
+
+Search is a library catalog, not a shelf scan. Build the index first, validate the request, debounce the patron, and never let a single query walk the entire collection.

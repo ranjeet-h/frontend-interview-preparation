@@ -438,36 +438,36 @@ Process 39 leaf pages under `src/full-stack/backend/concepts/` as Type A in SUMM
 
 Process 30 leaf pages under `src/full-stack/backend/express/` as Type E in SUMMARY order. Skip `index.md`.
 
-1. [ ] assigned — `src/full-stack/backend/express/what-is-express-js.md` — Type E
-2. [ ] assigned — `src/full-stack/backend/express/how-does-express-middleware-work.md` — Type E
-3. [ ] assigned — `src/full-stack/backend/express/what-is-request-response-lifecycle-in-express.md` — Type E
-4. [ ] assigned — `src/full-stack/backend/express/how-do-you-define-routes.md` — Type E
-5. [ ] assigned — `src/full-stack/backend/express/how-do-you-split-routes.md` — Type E
-6. [ ] assigned — `src/full-stack/backend/express/how-do-you-create-middleware.md` — Type E
-7. [ ] assigned — `src/full-stack/backend/express/what-is-error-handling-middleware.md` — Type E
-8. [ ] assigned — `src/full-stack/backend/express/how-do-you-handle-async-errors-in-express.md` — Type E
-9. [ ] queued — `src/full-stack/backend/express/how-do-you-validate-request-body.md` — Type E
-10. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-file-uploads.md` — Type E
-11. [ ] queued — `src/full-stack/backend/express/how-do-you-serve-static-files.md` — Type E
-12. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-jwt-authentication.md` — Type E
-13. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-role-based-authorization.md` — Type E
-14. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-refresh-tokens.md` — Type E
-15. [ ] queued — `src/full-stack/backend/express/how-do-you-hash-passwords.md` — Type E
-16. [ ] queued — `src/full-stack/backend/express/how-do-you-use-cookies-in-express.md` — Type E
-17. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-cors.md` — Type E
-18. [ ] queued — `src/full-stack/backend/express/how-do-you-rate-limit-apis.md` — Type E
-19. [ ] queued — `src/full-stack/backend/express/how-do-you-secure-express-app.md` — Type E
-20. [ ] queued — `src/full-stack/backend/express/what-is-helmet.md` — Type E
-21. [ ] queued — `src/full-stack/backend/express/how-do-you-prevent-nosql-injection.md` — Type E
-22. [ ] queued — `src/full-stack/backend/express/how-do-you-prevent-xss.md` — Type E
-23. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-logs.md` — Type E
-24. [ ] queued — `src/full-stack/backend/express/how-do-you-structure-a-large-express-app.md` — Type E
-25. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-global-error-handling.md` — Type E
-26. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-pagination.md` — Type E
-27. [ ] queued — `src/full-stack/backend/express/how-do-you-implement-search.md` — Type E
-28. [ ] queued — `src/full-stack/backend/express/how-do-you-handle-transactions.md` — Type E
-29. [ ] queued — `src/full-stack/backend/express/how-do-you-test-express-apis.md` — Type E
-30. [ ] queued — `src/full-stack/backend/express/how-do-you-deploy-express-app.md` — Type E
+1. [x] rewritten — `src/full-stack/backend/express/what-is-express-js.md` — Type E
+2. [x] rewritten — `src/full-stack/backend/express/how-does-express-middleware-work.md` — Type E
+3. [x] rewritten — `src/full-stack/backend/express/what-is-request-response-lifecycle-in-express.md` — Type E
+4. [x] rewritten — `src/full-stack/backend/express/how-do-you-define-routes.md` — Type E
+5. [x] rewritten — `src/full-stack/backend/express/how-do-you-split-routes.md` — Type E
+6. [x] rewritten — `src/full-stack/backend/express/how-do-you-create-middleware.md` — Type E
+7. [x] rewritten — `src/full-stack/backend/express/what-is-error-handling-middleware.md` — Type E
+8. [x] rewritten — `src/full-stack/backend/express/how-do-you-handle-async-errors-in-express.md` — Type E
+9. [x] rewritten — `src/full-stack/backend/express/how-do-you-validate-request-body.md` — Type E
+10. [x] rewritten — `src/full-stack/backend/express/how-do-you-handle-file-uploads.md` — Type E
+11. [x] rewritten — `src/full-stack/backend/express/how-do-you-serve-static-files.md` — Type E
+12. [x] rewritten — `src/full-stack/backend/express/how-do-you-implement-jwt-authentication.md` — Type E
+13. [x] rewritten — `src/full-stack/backend/express/how-do-you-implement-role-based-authorization.md` — Type E
+14. [x] rewritten — `src/full-stack/backend/express/how-do-you-implement-refresh-tokens.md` — Type E
+15. [x] rewritten — `src/full-stack/backend/express/how-do-you-hash-passwords.md` — Type E
+16. [x] rewritten — `src/full-stack/backend/express/how-do-you-use-cookies-in-express.md` — Type E
+17. [x] rewritten — `src/full-stack/backend/express/how-do-you-handle-cors.md` — Type E
+18. [x] rewritten — `src/full-stack/backend/express/how-do-you-rate-limit-apis.md` — Type E
+19. [x] rewritten — `src/full-stack/backend/express/how-do-you-secure-express-app.md` — Type E
+20. [x] rewritten — `src/full-stack/backend/express/what-is-helmet.md` — Type E
+21. [x] rewritten — `src/full-stack/backend/express/how-do-you-prevent-nosql-injection.md` — Type E
+22. [x] rewritten — `src/full-stack/backend/express/how-do-you-prevent-xss.md` — Type E
+23. [x] rewritten — `src/full-stack/backend/express/how-do-you-handle-logs.md` — Type E
+24. [x] rewritten — `src/full-stack/backend/express/how-do-you-structure-a-large-express-app.md` — Type E
+25. [ ] assigned — `src/full-stack/backend/express/how-do-you-implement-global-error-handling.md` — Type E
+26. [ ] assigned — `src/full-stack/backend/express/how-do-you-implement-pagination.md` — Type E
+27. [ ] assigned — `src/full-stack/backend/express/how-do-you-implement-search.md` — Type E
+28. [ ] assigned — `src/full-stack/backend/express/how-do-you-handle-transactions.md` — Type E
+29. [ ] assigned — `src/full-stack/backend/express/how-do-you-test-express-apis.md` — Type E
+30. [ ] assigned — `src/full-stack/backend/express/how-do-you-deploy-express-app.md` — Type E
 
 ## Phase 5 — FastAPI
 
@@ -544,14 +544,126 @@ Process 40 leaf pages under `src/full-stack/databases/sql/` as Type E in alphabe
 14. [x] rewritten — `src/full-stack/databases/sql/what-is-a-unique-key.md` — Type E
 15. [x] rewritten — `src/full-stack/databases/sql/what-is-connection-pooling.md` — Type E
 16. [x] rewritten — `src/full-stack/databases/sql/what-is-covering-index.md` — Type E
-17. [ ] assigned — `src/full-stack/databases/sql/what-is-database-migration.md` — Type E
-18. [ ] assigned — `src/full-stack/databases/sql/what-is-database-replication.md` — Type E
-19. [ ] assigned — `src/full-stack/databases/sql/what-is-database-sharding.md` — Type E
-20. [ ] assigned — `src/full-stack/databases/sql/what-is-deadlock.md` — Type E
-21. [ ] assigned — `src/full-stack/databases/sql/what-is-denormalization.md` — Type E
-22. [ ] assigned — `src/full-stack/databases/sql/what-is-dirty-read.md` — Type E
-23. [ ] assigned — `src/full-stack/databases/sql/what-is-explain-analyze.md` — Type E
-24. [ ] assigned — `src/full-stack/databases/sql/what-is-explain.md` — Type E
+17. [x] rewritten — `src/full-stack/databases/sql/what-is-database-migration.md` — Type E
+18. [x] rewritten — `src/full-stack/databases/sql/what-is-database-replication.md` — Type E
+19. [x] rewritten — `src/full-stack/databases/sql/what-is-database-sharding.md` — Type E
+20. [x] rewritten — `src/full-stack/databases/sql/what-is-deadlock.md` — Type E
+21. [x] rewritten — `src/full-stack/databases/sql/what-is-denormalization.md` — Type E
+22. [x] rewritten — `src/full-stack/databases/sql/what-is-dirty-read.md` — Type E
+23. [x] rewritten — `src/full-stack/databases/sql/what-is-explain-analyze.md` — Type E
+24. [x] rewritten — `src/full-stack/databases/sql/what-is-explain.md` — Type E
+25. [x] rewritten — `src/full-stack/databases/sql/what-is-indexing.md` — Type E
+26. [x] rewritten — `src/full-stack/databases/sql/what-is-isolation-level.md` — Type E
+27. [x] rewritten — `src/full-stack/databases/sql/what-is-non-repeatable-read.md` — Type E
+28. [x] rewritten — `src/full-stack/databases/sql/what-is-normalization.md` — Type E
+29. [x] rewritten — `src/full-stack/databases/sql/what-is-optimistic-locking.md` — Type E
+30. [x] rewritten — `src/full-stack/databases/sql/what-is-partitioning.md` — Type E
+31. [x] rewritten — `src/full-stack/databases/sql/what-is-pessimistic-locking.md` — Type E
+32. [x] rewritten — `src/full-stack/databases/sql/what-is-phantom-read.md` — Type E
+33. [x] rewritten — `src/full-stack/databases/sql/what-is-query-execution-plan.md` — Type E
+34. [x] rewritten — `src/full-stack/databases/sql/what-is-rdbms.md` — Type E
+35. [x] rewritten — `src/full-stack/databases/sql/what-is-read-replica.md` — Type E
+36. [x] rewritten — `src/full-stack/databases/sql/what-is-row-level-locking.md` — Type E
+37. [x] rewritten — `src/full-stack/databases/sql/what-is-schema-migration.md` — Type E
+38. [x] rewritten — `src/full-stack/databases/sql/what-is-sql.md` — Type E
+39. [x] rewritten — `src/full-stack/databases/sql/what-is-table-level-locking.md` — Type E
+40. [x] rewritten — `src/full-stack/databases/sql/when-can-indexes-hurt-performance.md` — Type E
+41. [x] complete — all 40 `src/full-stack/databases/sql/*.md` leaf pages rewritten; track gate clean
+
+## Phase 4 — PostgreSQL
+
+Process 35 leaf pages under `src/full-stack/databases/postgresql/` as Type E in alphabetical order. Skip `index.md`.
+
+1. [x] rewritten — `src/full-stack/databases/postgresql/how-do-you-optimize-slow-postgresql-queries.md` — Type E
+2. [x] rewritten — `src/full-stack/databases/postgresql/how-do-you-query-jsonb-fields.md` — Type E
+3. [x] rewritten — `src/full-stack/databases/postgresql/how-do-you-store-arrays-in-postgresql.md` — Type E
+4. [x] rewritten — `src/full-stack/databases/postgresql/json-vs-jsonb.md` — Type E
+5. [x] rewritten — `src/full-stack/databases/postgresql/postgresql-vs-mysql.md` — Type E
+6. [x] rewritten — `src/full-stack/databases/postgresql/what-are-ctes.md` — Type E
+7. [x] rewritten — `src/full-stack/databases/postgresql/what-are-database-views.md` — Type E
+8. [x] rewritten — `src/full-stack/databases/postgresql/what-are-materialized-views.md` — Type E
+9. [x] rewritten — `src/full-stack/databases/postgresql/what-are-postgresql-data-types.md` — Type E
+10. [x] rewritten — `src/full-stack/databases/postgresql/what-are-window-functions.md` — Type E
+11. [x] rewritten — `src/full-stack/databases/postgresql/what-is-advisory-lock.md` — Type E
+12. [x] rewritten — `src/full-stack/databases/postgresql/what-is-autovacuum.md` — Type E
+13. [x] rewritten — `src/full-stack/databases/postgresql/what-is-b-tree-index.md` — Type E
+14. [x] rewritten — `src/full-stack/databases/postgresql/what-is-bigserial.md` — Type E
+15. [x] rewritten — `src/full-stack/databases/postgresql/what-is-connection-pooling-with-pgbouncer.md` — Type E
+16. [x] rewritten — `src/full-stack/databases/postgresql/what-is-explain-analyze.md` — Type E
+17. [x] rewritten — `src/full-stack/databases/postgresql/what-is-expression-index.md` — Type E
+18. [x] rewritten — `src/full-stack/databases/postgresql/what-is-full-text-search-in-postgresql.md` — Type E
+19. [x] rewritten — `src/full-stack/databases/postgresql/what-is-gin-index.md` — Type E
+20. [x] rewritten — `src/full-stack/databases/postgresql/what-is-gist-index.md` — Type E
+21. [x] rewritten — `src/full-stack/databases/postgresql/what-is-jsonb.md` — Type E
+22. [x] rewritten — `src/full-stack/databases/postgresql/what-is-logical-replication.md` — Type E
+23. [x] rewritten — `src/full-stack/databases/postgresql/what-is-mvcc.md` — Type E
+24. [x] rewritten — `src/full-stack/databases/postgresql/what-is-on-conflict.md` — Type E
+25. [x] rewritten — `src/full-stack/databases/postgresql/what-is-partial-index.md` — Type E
+26. [x] rewritten — `src/full-stack/databases/postgresql/what-is-partitioning-in-postgresql.md` — Type E
+27. [x] rewritten — `src/full-stack/databases/postgresql/what-is-postgis.md` — Type E
+28. [x] rewritten — `src/full-stack/databases/postgresql/what-is-postgresql.md` — Type E
+29. [x] rewritten — `src/full-stack/databases/postgresql/what-is-row-level-locking.md` — Type E
+30. [x] rewritten — `src/full-stack/databases/postgresql/what-is-serial.md` — Type E
+31. [x] rewritten — `src/full-stack/databases/postgresql/what-is-streaming-replication.md` — Type E
+32. [x] rewritten — `src/full-stack/databases/postgresql/what-is-transaction-isolation-in-postgresql.md` — Type E
+33. [x] rewritten — `src/full-stack/databases/postgresql/what-is-upsert.md` — Type E
+34. [x] rewritten — `src/full-stack/databases/postgresql/what-is-uuid-in-postgresql.md` — Type E
+35. [x] rewritten — `src/full-stack/databases/postgresql/what-is-vacuum.md` — Type E
+36. [x] complete — all 35 `src/full-stack/databases/postgresql/*.md` leaf pages rewritten; track gate clean
+
+## Phase 4 — MySQL
+
+Process 30 leaf pages under `src/full-stack/databases/mysql/` as Type E in alphabetical order. Skip `index.md`.
+
+1. [x] rewritten — `src/full-stack/databases/mysql/how-do-you-backup-and-restore-mysql-database.md` — Type E
+2. [x] rewritten — `src/full-stack/databases/mysql/how-do-you-debug-mysql-deadlocks.md` — Type E
+3. [x] rewritten — `src/full-stack/databases/mysql/how-do-you-handle-migrations-in-mysql.md` — Type E
+4. [x] rewritten — `src/full-stack/databases/mysql/how-do-you-optimize-slow-mysql-queries.md` — Type E
+5. [x] rewritten — `src/full-stack/databases/mysql/how-do-you-store-json-in-mysql.md` — Type E
+6. [x] rewritten — `src/full-stack/databases/mysql/innodb-vs-myisam.md` — Type E
+7. [x] rewritten — `src/full-stack/databases/mysql/what-are-mysql-isolation-levels.md` — Type E
+8. [x] rewritten — `src/full-stack/databases/mysql/what-are-mysql-json-functions.md` — Type E
+9. [ ] assigned — `src/full-stack/databases/mysql/what-is-auto-increment.md` — Type E
+10. [ ] assigned — `src/full-stack/databases/mysql/what-is-binlog.md` — Type E
+11. [ ] assigned — `src/full-stack/databases/mysql/what-is-charset.md` — Type E
+12. [ ] assigned — `src/full-stack/databases/mysql/what-is-collation.md` — Type E
+13. [ ] assigned — `src/full-stack/databases/mysql/what-is-composite-index-in-mysql.md` — Type E
+14. [ ] assigned — `src/full-stack/databases/mysql/what-is-connection-pool-in-mysql.md` — Type E
+15. [ ] assigned — `src/full-stack/databases/mysql/what-is-datetime-vs-timestamp.md` — Type E
+16. [ ] assigned — `src/full-stack/databases/mysql/what-is-deadlock-in-mysql.md` — Type E
+17. [ ] queued — `src/full-stack/databases/mysql/what-is-explain-in-mysql.md` — Type E
+18. [ ] queued — `src/full-stack/databases/mysql/what-is-full-text-index-in-mysql.md` — Type E
+19. [ ] queued — `src/full-stack/databases/mysql/what-is-gap-lock.md` — Type E
+20. [ ] queued — `src/full-stack/databases/mysql/what-is-innodb.md` — Type E
+21. [ ] queued — `src/full-stack/databases/mysql/what-is-master-slave-replication.md` — Type E
+22. [ ] queued — `src/full-stack/databases/mysql/what-is-myisam.md` — Type E
+23. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-indexing.md` — Type E
+24. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-query-cache.md` — Type E
+25. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-replication.md` — Type E
+26. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-storage-engine.md` — Type E
+27. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql.md` — Type E
+28. [ ] queued — `src/full-stack/databases/mysql/what-is-next-key-lock.md` — Type E
+29. [ ] queued — `src/full-stack/databases/mysql/what-is-read-replica.md` — Type E
+30. [ ] queued — `src/full-stack/databases/mysql/what-is-varchar-vs-text.md` — Type E
+17. [ ] queued — `src/full-stack/databases/postgresql/what-is-expression-index.md` — Type E
+18. [ ] queued — `src/full-stack/databases/postgresql/what-is-full-text-search-in-postgresql.md` — Type E
+19. [ ] queued — `src/full-stack/databases/postgresql/what-is-gin-index.md` — Type E
+20. [ ] queued — `src/full-stack/databases/postgresql/what-is-gist-index.md` — Type E
+21. [ ] queued — `src/full-stack/databases/postgresql/what-is-jsonb.md` — Type E
+22. [ ] queued — `src/full-stack/databases/postgresql/what-is-logical-replication.md` — Type E
+23. [ ] queued — `src/full-stack/databases/postgresql/what-is-mvcc.md` — Type E
+24. [ ] queued — `src/full-stack/databases/postgresql/what-is-on-conflict.md` — Type E
+25. [ ] queued — `src/full-stack/databases/postgresql/what-is-partial-index.md` — Type E
+26. [ ] queued — `src/full-stack/databases/postgresql/what-is-partitioning-in-postgresql.md` — Type E
+27. [ ] queued — `src/full-stack/databases/postgresql/what-is-postgis.md` — Type E
+28. [ ] queued — `src/full-stack/databases/postgresql/what-is-postgresql.md` — Type E
+29. [ ] queued — `src/full-stack/databases/postgresql/what-is-row-level-locking.md` — Type E
+30. [ ] queued — `src/full-stack/databases/postgresql/what-is-serial.md` — Type E
+31. [ ] queued — `src/full-stack/databases/postgresql/what-is-streaming-replication.md` — Type E
+32. [ ] queued — `src/full-stack/databases/postgresql/what-is-transaction-isolation-in-postgresql.md` — Type E
+33. [ ] queued — `src/full-stack/databases/postgresql/what-is-upsert.md` — Type E
+34. [ ] queued — `src/full-stack/databases/postgresql/what-is-uuid-in-postgresql.md` — Type E
+35. [ ] queued — `src/full-stack/databases/postgresql/what-is-vacuum.md` — Type E
 25. [ ] queued — `src/full-stack/databases/sql/what-is-indexing.md` — Type E
 26. [ ] queued — `src/full-stack/databases/sql/what-is-isolation-level.md` — Type E
 27. [ ] queued — `src/full-stack/databases/sql/what-is-non-repeatable-read.md` — Type E
