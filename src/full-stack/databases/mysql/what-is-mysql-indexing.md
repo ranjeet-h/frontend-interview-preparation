@@ -1,354 +1,296 @@
 # MySQL Indexing: B+Tree Internals, Clustered vs Secondary Indexes, and Query Optimization
 
-## 1. Why This Exists — The Problem First
+## 1. The Real-World Problem — When You Actually Hit This
 
-You push an e-commerce platform to production. During development with 500 mock records, every API endpoint responds in under 5 milliseconds. Six months later, your `orders` table grows to 50,000,000 rows. A customer loads their order history, triggering a standard query: `SELECT * FROM orders WHERE customer_id = 94812 AND status = 'COMPLETED' ORDER BY created_at DESC LIMIT 10;`.
-
-Without an index on `customer_id`, MySQL has no mathematical or structural way of knowing where those 10 matching rows live on disk. It must execute a Full Table Scan (`type: ALL`). The database engine reads every single 16KB InnoDB disk page from physical storage into the InnoDB Buffer Pool in memory. That is more than 20 gigabytes of raw data streamed through storage I/O to answer a single query. The database server's CPU spikes to 100%, hot cached pages in RAM are evicted, database worker threads saturate the connection pool, and the query takes 45 seconds to finish. When 50 concurrent customers refresh their account pages, API gateway 504 timeouts cascade across your services, and the database grinds to a halt.
-
-In a panic, an engineer adds an index to every single column in the table—creating 15 independent single-column indexes. Read latency improves slightly, but write throughput collapses. Every single `INSERT`, `UPDATE`, and `DELETE` must now synchronously modify 15 separate B+Tree index structures on disk inside transaction locks. Page splits cause severe storage fragmentation, write amplification spikes disk I/O, and write latency increases by 8x.
-
-MySQL indexing exists to solve both extremes: transforming an $O(N)$ linear disk scan into an $O(\log N)$ tree traversal that locates target rows in 3 to 4 disk page reads, while providing the exact structural rules needed to optimize query access paths without degrading database write throughput.
-
-## 2. The Analogy — Make It Obvious
-
-Imagine a 2,000-page printed medical encyclopedia.
-
-The Clustered Index is the physical book itself. The entire volume is printed, bound, and sorted in strict alphabetical order by Disease ID (the Primary Key). The complete description, symptoms, medications, and clinical notes live directly on those physical pages. Because physical paper can only be bound in one physical order at a time, a table can only ever have **one** Clustered Index.
-
-A Secondary Index is like the "Index of Symptoms" printed in the back 20 pages of the encyclopedia. In this symptom index, entries are sorted alphabetically by symptom (e.g., "Abdominal Pain", "Chronic Cough", "Dizziness"). However, the symptom index does not reprint the full medical record. Next to "Chronic Cough", it simply lists a pointer back to the primary key: `Disease ID #4820 (Asthma)`.
-
-The Secondary Lookup (Index Hop / Bookmark Lookup): When you search for "Chronic Cough", you flip to the symptom index in the back (step 1), find `Disease ID #4820`, and then flip open the main encyclopedia to page 740 where Disease #4820 is physically bound to read the full treatment (step 2). You had to perform two distinct lookups.
-
-A Covering Index: Suppose the symptom index in the back lists: `"Chronic Cough" -> Severity: High, Disease ID #4820`. If a doctor only asks, "What is the severity of Chronic Cough?", you read "High" directly off the index page in the back. You never have to open the main book. You answered the query in a single lookup.
-
-The B+Tree Structure: Imagine the encyclopedia library has a fast directory in the lobby. Sign 1 at the door says: "Letters A–H go to Floor 1, I–P go to Floor 2, Q–Z go to Floor 3" (Root Node). On Floor 2, a sign says "N–O go to Aisle 4" (Internal Node). In Aisle 4, all the books sit side-by-side on shelves, with a physical ribbon tying the end of Book 1 directly to the beginning of Book 2 (Leaf Node Linked List). If you need all diseases from "Nail Infection" to "Nosebleed", you walk to the shelf once and pull books sequentially along the ribbon without running back to the lobby.
-
-## 3. How It Actually Works — The Full Explanation
-
-MySQL's default storage engine, InnoDB, organizes all data using the B+Tree data structure. Understanding how B+Trees store and retrieve data explains why certain queries run in microseconds while others choke the database.
-
-**Why B+Trees: High Fanout and Shallow Depth**
-
-Databases are bottlenecked by disk I/O. Reading data from random disk locations (or even random RAM pages) is expensive. A database index must minimize the number of page reads required to locate a row.
-
-In a standard Binary Search Tree (BST) or Red-Black Tree, every node has at most two children. Searching through 50,000,000 rows requires $\log_2(50,000,000) \approx 26$ node hops. If each hop reads a different page from disk, a single lookup costs 26 disk I/O operations.
-
-InnoDB organizes all data in fixed-size blocks called Pages, which are 16KB (16,384 bytes) by default. A B+Tree is a self-balancing, multi-way search tree designed to maximize Fanout (the number of child pointers per page). 
-
-An internal node in an InnoDB B+Tree stores only search keys and child page pointers. If a `BIGINT` primary key takes 8 bytes and a child page pointer takes 6 bytes, each key-pointer entry takes 14 bytes. Accounting for page headers, a single 16KB page can hold roughly 1,170 child pointers:
-- Level 1 (Root Node): 1 page = 1,170 pointers to Level 2 pages.
-- Level 2 (Internal Level): 1,170 pages $\times$ 1,170 pointers = 1,368,900 pointers to Leaf pages.
-- Level 3 (Leaf Level): 1,368,900 leaf pages $\times$ 100 rows per page = 136,890,000 data rows.
-
-With a tree height of only 3, InnoDB can store over 130 million rows. With a tree height of 4, it holds over 160 billion rows. Because the root page and intermediate levels are cached in the InnoDB Buffer Pool (RAM), finding any arbitrary row among 100 million records requires at most 1 physical disk read (or 0 if leaf pages are in RAM).
-
-**B+Tree vs B-Tree and Hash Indexes**
-
-Standard B-Trees store actual data records inside internal nodes as well as leaf nodes. Storing large data rows inside internal nodes drastically reduces fanout (from 1,170 pointers down to 15–20), which increases tree depth and requires more disk reads per lookup.
-
-B+Trees store full data rows exclusively in leaf pages. Internal nodes store only keys and page pointers. Crucially, all leaf pages are connected in a doubly linked list (`PAGE_PREV` and `PAGE_NEXT` pointers in the page header). For range scans (`WHERE id BETWEEN 100 AND 500`), MySQL locates the first key in $O(\log N)$ time and then walks the linked list of leaf pages sequentially in memory without ever re-traversing the upper levels of the tree.
-
-Hash Indexes provide $O(1)$ point lookups for exact matches (`WHERE id = 5`), but they are useless for range queries (`WHERE age > 21`), prefix searches (`LIKE 'abc%'`), sorting (`ORDER BY created_at`), or partial multi-column matching. B+Trees support all of these access patterns natively.
-
-**Clustered Index vs Secondary Index in InnoDB**
-
-In InnoDB, every table is an Index-Organized Table. The table data does not sit in a separate heap file; the table IS the Clustered Index:
-1. Clustered Index (Primary Key): The leaf pages of the primary key B+Tree contain the complete, physical row data (all columns). Rows are physically ordered by the primary key.
-   - If an explicit `PRIMARY KEY` is defined, InnoDB uses it as the clustered index.
-   - If no primary key is defined, InnoDB selects the first `UNIQUE NOT NULL` column.
-   - If neither exists, InnoDB creates a hidden 6-byte auto-increment row ID (`GEN_CLUST_INDEX`). This hidden index is shared globally across all unindexed tables, creating severe mutex contention under concurrent writes.
-2. Secondary Index (Non-Clustered): Any index created on non-primary columns (e.g., `INDEX (email)`). The leaf pages of a secondary index do NOT contain data rows or disk offsets. They contain only the indexed column value and the corresponding Primary Key value.
-
-**The Secondary Lookup (Index Hop / Table Refetch)**
-
-When you run `SELECT name, phone FROM users WHERE email = 'alex@example.com';` with an index on `email`:
-1. MySQL searches the `idx_email` secondary B+Tree to find the leaf containing `'alex@example.com'`.
-2. It reads the associated Primary Key value stored in that leaf: `id = 7421`.
-3. It performs a second B+Tree traversal on the Clustered Index using `id = 7421` to retrieve the complete row containing `name` and `phone`.
-
-This secondary lookup step is called an Index Hop or Bookmark Lookup.
-
-**Covering Index (`Using index`)**
-
-If a query requests only columns that exist inside the secondary index itself (including the implicitly appended Primary Key), MySQL skips the clustered index traversal completely:
-
-`SELECT id, email FROM users WHERE email = 'alex@example.com';`
-
-Because both `email` (the indexed column) and `id` (the primary key) are stored directly inside the `idx_email` leaf page, MySQL resolves the query entirely within the secondary index. In `EXPLAIN` output, the `Extra` column displays `Using index`. Covering indexes eliminate secondary table refetches and provide dramatic speedups.
-
-**Composite Indexes and the Leftmost Prefix Rule**
-
-A composite index spans multiple columns, such as `INDEX (tenant_id, status, created_at)`.
-
-InnoDB sorts the B+Tree first by `tenant_id`. Within identical `tenant_id` values, it sorts by `status`. Within identical `status` values, it sorts by `created_at`.
-
-The Leftmost Prefix Rule states that MySQL can use a composite index only if the query filters start from the leftmost column and proceed continuously without gaps:
-- `WHERE tenant_id = 5` -> Uses index (prefix: `tenant_id`).
-- `WHERE tenant_id = 5 AND status = 'ACTIVE'` -> Uses index (prefix: `tenant_id, status`).
-- `WHERE tenant_id = 5 AND status = 'ACTIVE' AND created_at > '2024-01-01'` -> Uses full index.
-- `WHERE status = 'ACTIVE'` -> Cannot use index (leftmost column `tenant_id` is missing).
-- `WHERE tenant_id = 5 AND created_at > '2024-01-01'` -> Uses index only for `tenant_id`; cannot use index for `created_at` search positioning because `status` is missing.
-
-**Range Match Cutoff and Index Condition Pushdown (ICP)**
-
-When a composite index encounters a range condition (`>`, `<`, `BETWEEN`, `LIKE 'abc%'`), index tree traversal stops using subsequent columns for tree search positioning. For example, in `INDEX (a, b, c)` with query `WHERE a = 1 AND b > 10 AND c = 'X'`:
-- Column `a` is used for exact tree lookup.
-- Column `b` is used for range tree lookup.
-- Column `c` cannot be used for B+Tree positioning because within the range of `b > 10`, rows are not sorted by `c`.
-
-However, MySQL uses Index Condition Pushdown (ICP). Instead of immediately hopping to the clustered index for every row matching `a = 1 AND b > 10`, the storage engine evaluates `c = 'X'` directly inside the secondary index leaf pages before fetching full rows from the clustered index. In `EXPLAIN`, this appears as `Using index condition`.
-
-**Index Cardinality and Optimizer Statistics**
-
-Cardinality represents the estimated number of unique values in an index column. High cardinality (e.g., UUID, email, user ID) means an index is highly selective. Low cardinality (e.g., boolean `is_active`, status `PENDING/COMPLETED` where 90% are `COMPLETED`) means the index has poor selectivity.
-
-The MySQL Cost-Based Optimizer (CBO) decides whether to use an index by estimating I/O cost. If a query matches 30% of the rows in a table, using a secondary index requires thousands of random I/O index hops to the clustered table. In that scenario, the optimizer chooses a Full Table Scan because sequential disk reads are faster than hundreds of thousands of random page lookups.
-
-InnoDB updates cardinality by randomly sampling index pages. If statistics become outdated after heavy bulk operations, running `ANALYZE TABLE <table_name>;` forces a re-sampling of index pages to correct the optimizer's cost model.
-
-## 4. Real Code — See It Working
-
-Let us create a production-grade order processing table, inspect execution plans using `EXPLAIN` and `EXPLAIN ANALYZE`, and observe how different index configurations change database behavior.
+Your e-commerce platform has been fine for months. In development you had 500 rows and every page loaded in 5 ms. Six months later the `orders` table has 50 million rows. A customer opens their order history and you run:
 
 ```sql
--- 1. Create a production table with primary, composite, and prefix indexes
+SELECT * FROM orders WHERE customer_id = 94812 AND status = 'COMPLETED' ORDER BY created_at DESC LIMIT 10;
+```
+
+Without an index on `customer_id`, MySQL has no way to know where those 10 rows live. It does a Full Table Scan (`type: ALL`). InnoDB reads every 16KB page from disk into the Buffer Pool, streaming more than 20 GB of data to answer one query. CPU hits 100%, hot pages get evicted from RAM, connections back up, and the query takes 45 seconds. Put 50 users on that page at once and your API gateway starts throwing 504s.
+
+So you panic and add an index on every column — 15 single-column indexes. Reads get a bit better, but writes fall off a cliff. Every `INSERT`, `UPDATE`, and `DELETE` now has to update 15 separate B+Tree structures inside the same transaction. Page splits fragment storage, write amplification spikes, and write latency jumps 8x.
+
+MySQL indexing exists to fix both extremes: turn an `O(N)` scan of every row into an `O(log N)` tree walk that finds rows in 3 to 4 page reads, without destroying write throughput.
+
+## 2. The Analogy — Make the Mechanic Obvious
+
+Think of a 2,000-page printed medical encyclopedia.
+
+The Clustered Index is the physical book itself. The whole volume is printed and bound in strict order by Disease ID — that is the Primary Key. The full record — symptoms, medications, clinical notes — lives right on those pages. Paper can only be bound in one order, so a table can only have one clustered index.
+
+A Secondary Index is the "Index of Symptoms" in the last 20 pages. There, entries are sorted by symptom — "Abdominal Pain", "Chronic Cough", "Dizziness". But the symptom index does not reprint the whole record. Next to "Chronic Cough" it just lists a pointer: `Disease ID #4820 (Asthma)`.
+
+The secondary lookup: you want "Chronic Cough" so you flip to the back index (step 1), find `Disease ID #4820`, then flip to page 740 where Disease #4820 is bound (step 2). Two lookups.
+
+A Covering Index: suppose that back index also lists severity — `"Chronic Cough" -> Severity: High, Disease ID #4820`. If someone only asks "what is the severity of Chronic Cough?", you read "High" straight off the back pages. You never open the big book. One lookup, done. That is `Using index` in MySQL.
+
+The B+Tree lobby directory: at the entrance a sign says "A–H Floor 1, I–P Floor 2, Q–Z Floor 3" (root node). On Floor 2 another sign says "N–O Aisle 4" (internal node). In Aisle 4 the books sit side by side with a ribbon tying the end of one book to the start of the next (leaf linked list). If you need everything from "Nail Infection" to "Nosebleed", you walk to the shelf once and pull books along the ribbon without going back to the lobby.
+
+## 3. The Full Explanation — How It Actually Works
+
+InnoDB stores every table as a B+Tree. The choice of tree, what lives in leaf pages, and how secondary indexes point back to the primary key explains why some queries are microseconds and others time out.
+
+**B+Tree is the default, and why it is shallow**
+
+Databases are limited by disk I/O. Each page you read costs time. A normal binary tree has at most two children per node, so 50 million rows needs about `log2(50M) ≈ 26` hops — 26 random page reads.
+
+InnoDB stores data in fixed 16KB pages. A B+Tree is a multi-way tree built to maximize fanout — how many child pointers fit on one page. An internal node stores only keys and child pointers. If a `BIGINT` primary key is 8 bytes and a pointer is 6 bytes, one entry is about 14 bytes. With page headers, a single 16KB page holds roughly 1,170 pointers:
+
+- Level 1 (root): 1 page → 1,170 pointers to Level 2
+- Level 2: 1,170 pages × 1,170 pointers → 1,368,900 pointers to leaves
+- Level 3 (leaves): 1,368,900 leaves × ~100 rows each → ~136 million rows
+
+So three levels hold over 130 million rows. Four levels hold over 160 billion. The root and often Level 2 live in the Buffer Pool in RAM, so finding any row among 100 million rows costs at most one physical disk read, often zero. In MySQL, when you write `USING BTREE` (or write nothing at all) for InnoDB, you are getting this B+Tree — MySQL labels it BTREE even though under the hood it is a B+Tree.
+
+**B+Tree vs B-Tree vs Hash vs FULLTEXT**
+
+A classic B-Tree stores full row data in internal nodes too. That bloats internal nodes, fanout drops from 1,170 to maybe 15–20, depth grows to 6–10, and every lookup needs many more reads. A B+Tree stores full rows only in leaf pages. Internal nodes hold only keys and pointers, which is why it stays so shallow. Leaves are also doubly linked (`PAGE_PREV`/`PAGE_NEXT`), so a range scan like `WHERE id BETWEEN 100 AND 500` finds the first key in `O(log N)` and then walks the leaf chain sequentially without climbing back up.
+
+Hash indexes give `O(1)` lookups for exact equality (`WHERE id = 5`). MySQL's MEMORY engine uses HASH by default for that reason — great for a temporary in-memory lookup table. But hash has no order, so it cannot do range scans (`WHERE age > 21`), prefix searches (`LIKE 'abc%'`), `ORDER BY`, or partial composite-key lookups. InnoDB also builds an Adaptive Hash Index internally in RAM for hot B+Tree pages, but you do not create it by hand — it is automatic.
+
+FULLTEXT is a different structure entirely. It is an inverted index: term → list of documents. You create it with `FULLTEXT` when you need to search words inside text (`WHERE MATCH(col) AGAINST('cough fever')`). A B+Tree cannot efficiently answer `LIKE '%word%'` inside a huge text column, but FULLTEXT tokenizes the text and looks up the term list. InnoDB supports `FULLTEXT` since MySQL 5.6, MyISAM did before that. Use it for natural-language search, not for exact filters or sorting.
+
+Plain rule: InnoDB defaults to B+Tree, MEMORY defaults to Hash, and text search needs FULLTEXT. Pick the structure that matches the query shape.
+
+**Clustered index — the table is the index**
+
+In InnoDB every table is index-organized. There is no separate heap file. The leaf pages of the clustered index ARE the table:
+
+- If you define `PRIMARY KEY`, InnoDB uses it as the clustered index. Rows are physically ordered by that key.
+- If you do not define one but have a `UNIQUE NOT NULL` column, InnoDB picks the first one.
+- If neither exists, InnoDB creates a hidden 6-byte auto-increment row ID (`GEN_CLUST_INDEX`). That hidden index is shared globally and causes mutex contention under concurrent writes — always define an explicit primary key.
+
+There is only one clustered index because rows can only be stored in one physical order.
+
+**Secondary indexes store the primary key**
+
+Any index on a non-primary column is a secondary index — a separate B+Tree. Its leaves do not hold full rows and do not hold disk offsets. They hold the indexed column value plus the primary key value. That small detail drives everything.
+
+When you run `SELECT name, phone FROM users WHERE email = 'alex@example.com'` with an index on `email`:
+
+1. Search the `idx_email` B+Tree to find the leaf for `'alex@example.com'`.
+2. Read the primary key stored there, say `id = 7421`.
+3. Do a second B+Tree walk on the clustered index with `id = 7421` to fetch `name` and `phone`.
+
+That second hop is the Index Hop or Bookmark Lookup. It costs one extra tree traversal per matching row.
+
+**Covering index — `Using index`**
+
+If the query only asks for columns already inside the secondary index (plus the primary key, which InnoDB silently appends to every secondary leaf), MySQL skips the second hop entirely:
+
+```sql
+SELECT id, email FROM users WHERE email = 'alex@example.com';
+```
+
+Both `email` and `id` are already in the `idx_email` leaf page, so MySQL answers straight from the secondary index. In `EXPLAIN`, the `Extra` column shows `Using index`. That is the signal for a covering index — no table lookup, much less I/O.
+
+**Composite indexes and the leftmost prefix rule**
+
+A composite index like `INDEX (tenant_id, status, created_at)` is sorted first by `tenant_id`, then by `status` inside each `tenant_id`, then by `created_at` inside each `status`.
+
+MySQL can only use it if the query filters from the left without gaps:
+
+- `WHERE tenant_id = 5` → uses index (prefix `tenant_id`)
+- `WHERE tenant_id = 5 AND status = 'ACTIVE'` → uses prefix `tenant_id, status`
+- `WHERE tenant_id = 5 AND status = 'ACTIVE' AND created_at > '2024-01-01'` → uses all three
+- `WHERE status = 'ACTIVE'` → cannot use it — leftmost column `tenant_id` is missing
+- `WHERE tenant_id = 5 AND created_at > '2024-01-01'` → uses only `tenant_id`; cannot position on `created_at` because `status` is missing and `created_at` is not globally sorted
+
+Think of it like a phone book sorted by last name, then first name: you cannot find everyone named "John" without knowing the last name, because "John" is scattered throughout.
+
+**Range cutoff and Index Condition Pushdown**
+
+When a composite index hits a range condition (`>`, `<`, `BETWEEN`, `LIKE 'abc%'`), the B+Tree stops using later columns for tree positioning. With `INDEX (a, b, c)` and `WHERE a = 1 AND b > 10 AND c = 'X'`, `a` is an exact position, `b` is a range position, but `c` cannot be used to navigate the tree because inside a `b > 10` range, rows are not sorted by `c`.
+
+MySQL still optimizes this with Index Condition Pushdown (ICP), added in MySQL 5.6. Instead of hopping to the clustered index for every row matching `a = 1 AND b > 10` and letting the server layer filter `c = 'X'`, InnoDB checks `c = 'X'` right inside the secondary leaf pages first. Rows that fail are discarded before the expensive hop. In `EXPLAIN` you see `Using index condition` when ICP saves work.
+
+**Cardinality and the optimizer**
+
+Cardinality is how many distinct values a column has. High cardinality (email, user ID) is selective — an index narrows things a lot. Low cardinality (boolean `is_active`, a `status` where 90% is `COMPLETED`) is not selective.
+
+MySQL's cost-based optimizer estimates I/O. If a secondary index would match 30% of a huge table and the query is not covering, each match needs a random hop to the clustered index. Thousands of random reads is slower than one sequential scan of the table in big 16KB chunks, so the optimizer will choose a Full Table Scan even though an index exists. InnoDB estimates cardinality by sampling pages, and after big bulk loads you refresh it with `ANALYZE TABLE`.
+
+## 4. See It In Practice — Real Code or Queries
+
+Create a realistic orders table, add indexes with explicit `CREATE INDEX` statements, and inspect plans with `EXPLAIN`.
+
+```sql
+-- Base table with a clustered primary key
 CREATE TABLE orders (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     tenant_id INT UNSIGNED NOT NULL,
     customer_id BIGINT UNSIGNED NOT NULL,
     order_number VARCHAR(64) NOT NULL,
-    status ENUM('PENDING', 'PROCESSING', 'COMPLETED', 'CANCELLED') NOT NULL DEFAULT 'PENDING',
-    total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    status ENUM('PENDING','PROCESSING','COMPLETED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+    total_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     customer_notes VARCHAR(1000) DEFAULT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_order_number (order_number),
-    -- Composite index designed for multi-tenant customer filtering and date ordering
-    KEY idx_tenant_customer_created (tenant_id, customer_id, created_at),
-    -- Composite index for status workflows
-    KEY idx_tenant_status (tenant_id, status),
-    -- Prefix index on a long text column to conserve B+Tree page space
-    KEY idx_notes_prefix (customer_notes(50))
+    UNIQUE KEY uq_order_number (order_number)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Insert sample records
-INSERT INTO orders (tenant_id, customer_id, order_number, status, total_amount, customer_notes, created_at)
-VALUES 
+-- Runnable CREATE INDEX examples
+CREATE INDEX idx_tenant_customer_created ON orders (tenant_id, customer_id, created_at);
+CREATE INDEX idx_tenant_status ON orders (tenant_id, status);
+-- Prefix index on a long text column to save B+Tree space
+CREATE INDEX idx_notes_prefix ON orders (customer_notes(50));
+-- Full-text index for natural language search inside notes
+CREATE FULLTEXT INDEX ft_notes ON orders (customer_notes);
+-- MEMORY engine example (hash default) for a temp lookup table
+CREATE TABLE temp_sessions (session_id VARCHAR(64) PRIMARY KEY, user_id INT) ENGINE=MEMORY;
+
+INSERT INTO orders (tenant_id, customer_id, order_number, status, total_amount, customer_notes, created_at) VALUES
 (1, 101, 'ORD-2024-001', 'COMPLETED', 149.50, 'Leave package at front door please', '2024-01-15 10:00:00'),
-(1, 101, 'ORD-2024-002', 'COMPLETED', 89.00, 'Ring the bell twice on arrival', '2024-02-10 14:30:00'),
-(1, 102, 'ORD-2024-003', 'PENDING', 210.00, 'Call before delivery', '2024-02-12 09:15:00'),
-(2, 201, 'ORD-2024-004', 'PROCESSING', 45.00, NULL, '2024-02-15 11:00:00');
+(1, 101, 'ORD-2024-002', 'COMPLETED',  89.00, 'Ring the bell twice on arrival',      '2024-02-10 14:30:00'),
+(1, 102, 'ORD-2024-003', 'PENDING',   210.00, 'Call before delivery',                '2024-02-12 09:15:00'),
+(2, 201, 'ORD-2024-004', 'PROCESSING', 45.00, NULL,                                  '2024-02-15 11:00:00');
 ```
 
-Now let us analyze different query shapes and verify how the MySQL optimizer utilizes the indexes.
+Now inspect how the optimizer uses those indexes.
 
 ```sql
--- Scenario A: Non-covering secondary lookup (Requires Index Hop to Clustered Index)
--- Uses idx_tenant_customer_created to locate rows, then fetches total_amount from Clustered Index
-EXPLAIN
-SELECT id, total_amount 
-FROM orders 
+-- Scenario A: Non-covering lookup (needs hop to clustered index)
+-- idx_tenant_customer_created finds the PK, then fetches total_amount from clustered index
+EXPLAIN SELECT id, total_amount FROM orders
 WHERE tenant_id = 1 AND customer_id = 101;
+-- type: ref, key: idx_tenant_customer_created, key_len: 12
+-- Extra: NULL or Using index condition  -> had to visit the table
 
--- Output Analysis:
--- type: ref
--- key: idx_tenant_customer_created
--- key_len: 12 (tenant_id 4 bytes + customer_id 8 bytes)
--- ref: const,const
--- Extra: NULL (or Using index condition) -> Fetches row from Clustered Table to get total_amount
-```
-
-```sql
--- Scenario B: Covering Index (Zero Clustered Index Hops)
--- id is implicitly in the secondary index leaf; tenant_id, customer_id, created_at are explicit
-EXPLAIN
-SELECT id, created_at 
-FROM orders 
-WHERE tenant_id = 1 AND customer_id = 101 
+-- Scenario B: Covering index (no hop) + sorted already
+-- id is implicitly in every secondary leaf, so all requested columns are in the index
+EXPLAIN SELECT id, created_at FROM orders
+WHERE tenant_id = 1 AND customer_id = 101
 ORDER BY created_at DESC;
+-- type: ref, key: idx_tenant_customer_created
+-- Extra: Using index  -> fully covered, and no Using filesort because created_at is sorted in the tree
 
--- Output Analysis:
--- type: ref
--- key: idx_tenant_customer_created
--- Extra: Using index -> Completely resolved inside secondary index leaf pages. No table lookup.
--- No 'Using filesort' because created_at is already sorted in the B+Tree!
-```
+-- Scenario C: Leftmost prefix violation
+EXPLAIN SELECT * FROM orders WHERE customer_id = 101;
+-- type: ALL, key: NULL  -> cannot use idx_tenant_customer_created because tenant_id is missing
 
-```sql
--- Scenario C: Leftmost Prefix Violation
--- Skipping tenant_id means MySQL cannot use idx_tenant_customer_created
-EXPLAIN
-SELECT * 
-FROM orders 
-WHERE customer_id = 101;
+-- Scenario D: Index Condition Pushdown after a range
+-- With INDEX (tenant_id, status, created_at) imagine query:
+-- WHERE tenant_id = 1 AND status > 'PENDING' AND created_at > '2024-01-01'
+-- tenant_id positions the tree, status does a range scan, created_at is checked via ICP
+EXPLAIN SELECT id FROM orders
+WHERE tenant_id = 1 AND status > 'PENDING' AND created_at > '2024-01-01';
+-- Extra: Using index condition  -> created_at filtered inside index before hopping
 
--- Output Analysis:
--- type: ALL (Full Table Scan)
--- possible_keys: NULL
--- key: NULL
--- Rows scanned: Full table count. The index cannot be used because leftmost column is missing.
-```
-
-```sql
--- Scenario D: Prefix Index on long VARCHAR
--- Uses the first 50 characters of customer_notes for B+Tree lookup
-EXPLAIN
-SELECT id, order_number 
-FROM orders 
+-- Scenario E: Prefix index scan
+EXPLAIN SELECT id, order_number FROM orders
 WHERE customer_notes LIKE 'Leave package%';
-
--- Output Analysis:
--- type: range
--- key: idx_notes_prefix
--- key_len: 203 (50 characters * 4 bytes per utf8mb4 char + 2 prefix length bytes + 1 null byte)
+-- type: range, key: idx_notes_prefix
 -- Extra: Using index condition
-```
 
-```sql
--- Scenario E: Inspecting Cardinality and Refreshing Statistics
+-- Scenario F: FULLTEXT search (uses inverted index, not B+Tree range)
+SELECT id FROM orders WHERE MATCH(customer_notes) AGAINST('package delivery' IN NATURAL LANGUAGE MODE);
+
+-- Inspect optimizer choices with full detail
+EXPLAIN ANALYZE SELECT id, created_at FROM orders WHERE tenant_id = 1 AND customer_id = 101;
+EXPLAIN FORMAT=TREE SELECT id FROM orders WHERE tenant_id = 1 AND customer_id = 101;
+
+-- Cardinality and stats
 SHOW INDEX FROM orders;
--- Shows Column_name, Non_unique, Seq_in_index, Cardinality, Index_type (BTREE)
-
--- Recalculate optimizer statistics after bulk load
-ANALYZE TABLE orders;
--- Recalculates page sample distributions in mysql.innodb_index_stats
+ANALYZE TABLE orders; -- refresh sampled cardinality after bulk loads
 ```
 
-## 5. The Interview Questions — All of Them, Done Properly
+Every `EXPLAIN` above is runnable on a local MySQL 8.0 instance with the `orders` table. `EXPLAIN ANALYZE` actually executes the query and shows real timing.
 
-**Q: Why does MySQL InnoDB use B+Trees instead of standard B-Trees or Hash tables?**
+## 5. Interview Questions — All of Them, Done Properly
 
-InnoDB uses B+Trees primarily because of disk I/O economics. In a standard B-Tree, every node (including intermediate levels) stores full data rows alongside keys. Storing large rows inside intermediate nodes reduces the number of pointers per page (fanout) from over 1,000 down to 10–20. This forces the tree to grow deeper (6–10 levels), requiring 6–10 random disk reads per query.
+**Q: Why does InnoDB use B+Trees by default instead of Hash or plain B-Trees?**
 
-In a B+Tree, internal nodes store only search keys and child page pointers. This maximizes page fanout, keeping tree depth at 3 to 4 levels even for billions of rows. Furthermore, B+Trees store full data rows exclusively in leaf pages, and all leaf pages are stitched together in a doubly linked list. This allows range queries (`WHERE date BETWEEN x AND y`) and sorted scans (`ORDER BY`) to locate the first key in $O(\log N)$ time and then stream sequential leaf pages in physical memory order without climbing back up the tree.
+Because disk I/O decides performance. A Hash table is `O(1)` for `WHERE id = 5` but has no ordering, so it cannot do ranges, `ORDER BY`, `LIKE 'abc%'`, or partial composite matches. MEMORY uses hash for that exact-equality speed, and InnoDB builds an adaptive hash in RAM automatically for hot pages — but the on-disk structure needs order. A plain B-Tree stores row data in internal nodes too, which shrinks fanout from ~1,170 pointers per page to ~15 and pushes depth from 3–4 to 6–10, doubling or tripling disk reads. A B+Tree keeps internal nodes slim (keys + pointers only), stays shallow even for billions of rows, and links leaves together so range scans walk sequentially. That is why `CREATE INDEX ... USING BTREE` is the InnoDB default — and that BTREE is really a B+Tree.
 
-Hash tables are not used as primary indexes because hash buckets have no ordering. They provide $O(1)$ lookups for exact equality (`WHERE id = 10`), but cannot execute range scans (`WHERE id > 10`), prefix searches (`LIKE 'John%'`), sorting (`ORDER BY`), or partial composite key lookups.
+**Q: When would you use a HASH index or a FULLTEXT index instead of a B-Tree?**
+
+Use HASH when the workload is pure point lookups on an in-memory table and you never need ordering or ranges — the MEMORY engine does this by default for temporary session or counter tables. Use FULLTEXT when you need natural-language search inside text: `MATCH(body) AGAINST('refund delayed')` tokenizes words and looks them up in an inverted index (term → doc list). A B+Tree can handle `LIKE 'refund%'` with a range scan on a prefix index, but it cannot handle `LIKE '%refund%'` without scanning everything. FULLTEXT is built for that. For everything else — filters, joins, `ORDER BY`, composite conditions — B+Tree is the right default.
 
 **Q: What is the difference between a Clustered Index and a Secondary Index in InnoDB?**
 
-In InnoDB, a table is structured as a Clustered Index. The leaf pages of the Clustered Index (built on the Primary Key) contain the actual physical table rows with all column values. The data is physically stored in primary key order. There can only be one clustered index per table.
+The clustered index is the table. Its leaves hold the full row, physically ordered by the primary key. There is exactly one per InnoDB table — the one defined by `PRIMARY KEY`, or InnoDB's hidden 6-byte auto-increment if you forget one. A secondary index is a separate B+Tree whose leaves hold only the indexed columns plus the primary key value. To return columns not in the secondary index, MySQL does an index hop: search the secondary B+Tree, read the PK, then search the clustered B+Tree. That is why wide secondary indexes cost more space and why keeping the primary key small (8-byte `BIGINT` vs 36-char UUID string) keeps every secondary index smaller.
 
-A Secondary Index (any non-primary index) is a separate B+Tree where the leaf pages store only the indexed column values and the row's Primary Key value. When a query filters by a secondary index and requests columns not present in that index, MySQL performs an "Index Hop" (Bookmark Lookup): it traverses the secondary index to find the primary key, then traverses the clustered index to fetch the remaining columns.
+**Q: What is a covering index and how do you prove a query is using one?**
 
-**Q: What is a Covering Index, and how do you verify a query is using one?**
+A covering index is one where every column the query touches — `SELECT`, `WHERE`, `JOIN`, `ORDER BY`, `GROUP BY` — lives inside the secondary index itself (remember the PK is always implicitly there). MySQL then never visits the clustered index. You prove it with `EXPLAIN`: the `Extra` column says `Using index`. If you see `Using index condition` instead, that is ICP filtering inside the index but still needing a hop; `Using index` alone means zero hops. Designing covering indexes for your hottest queries (often `SELECT id, created_at WHERE tenant_id = ?`) is the single biggest read speedup you can get.
 
-A Covering Index is an indexing strategy where all columns requested by a query (`SELECT`, `WHERE`, `JOIN`, `ORDER BY`, `GROUP BY`) exist entirely within the secondary index itself (including the primary key, which InnoDB automatically appends to every secondary index leaf).
+**Q: What is the leftmost prefix rule and how does a range condition break it?**
 
-When a query is covered, MySQL reads all required data directly from the secondary index leaf pages and completely skips the secondary lookup into the clustered index. You verify a covering index by running `EXPLAIN` on the query and checking the `Extra` column. If the `Extra` column displays `Using index`, the query is using a covering index.
+A composite index `INDEX (tenant_id, status, created_at)` is sorted by `tenant_id`, then `status` within each `tenant_id`, then `created_at` within each `status`. MySQL can only walk the tree if you fix columns from the left without gaps. `WHERE tenant_id = 5` works, `WHERE tenant_id = 5 AND status = 'ACTIVE'` works, but `WHERE status = 'ACTIVE'` does not — without `tenant_id`, `status` values are scattered everywhere. When a range appears (`>`, `<`, `BETWEEN`, `LIKE 'abc%'`), positioning stops at that column. With `WHERE a = 1 AND b > 10 AND c = 'X'` on `INDEX (a,b,c)`, `a` positions exactly, `b` does a range scan, but `c` cannot position the tree because inside `b > 10`, `c` is not sorted. ICP can still filter `c` inside the leaves, but it is a filter, not a tree seek.
 
-**Q: What is the Leftmost Prefix Rule in composite indexes, and how does a range condition affect it?**
+**Q: What is Index Condition Pushdown (ICP)?**
 
-The Leftmost Prefix Rule dictates that a composite index on columns `(A, B, C)` can only be used by queries that filter on the leftmost column `A`, or `(A, B)`, or `(A, B, C)`. If a query filters on `B` and `C` without specifying `A`, the index cannot be used for B+Tree search because the index is sorted by `A` first; within `A`, it is sorted by `B`; and within `B`, it is sorted by `C`. Without fixing `A`, column `B` is not sorted globally.
+ICP, since MySQL 5.6, pushes filter evaluation down into the storage engine. Without it, InnoDB finds every secondary entry matching the part it can position (say `a = 1 AND b > 10`), hops to the clustered index for each, hands the full row to the server layer, and the server discards rows where `c = 'X'` fails — thousands of wasted hops. With ICP, InnoDB checks `c = 'X'` right in the secondary leaf before hopping. Failing entries are dropped early. In `EXPLAIN` you see `Using index condition` when this happens. It does not make the query covering, but it avoids most of the random I/O.
 
-When a query introduces a range condition (`>`, `<`, `BETWEEN`, `LIKE 'prefix%'`), the B+Tree can use the composite index for search positioning up to and including the first range column. Subsequent columns in the composite index cannot be used for B+Tree tree traversal because the sort order of subsequent columns is only guaranteed for exact equality matches on prior columns. For example, with `INDEX (dept_id, salary, hire_date)` and query `WHERE dept_id = 5 AND salary > 50000 AND hire_date > '2022-01-01'`: `dept_id` is used as an exact match, `salary` is used for range positioning, but `hire_date` cannot be used to navigate the tree.
+**Q: Why would MySQL ignore an index and do a Full Table Scan?**
 
-**Q: Why should Primary Keys in InnoDB ideally be auto-incrementing integers rather than random UUIDs?**
+The optimizer is cost-based. A secondary lookup is a random read to the clustered index per matching row. If selectivity is low — say `WHERE status = 'ACTIVE'` matches 85% of rows — doing hundreds of thousands of random hops is more expensive than a single sequential scan of the clustered table in large 16KB chunks. MySQL estimates this using sampled cardinality; if more than roughly 15–30% of rows would be visited via random hops and the query is not covering, it picks `type: ALL`. After bulk inserts or deletes, run `ANALYZE TABLE` if the plan seems stale.
 
-InnoDB stores clustered index data physically ordered by the Primary Key. 
+**Q: Why should InnoDB primary keys be auto-incrementing integers instead of random UUIDs?**
 
-When you use monotonically increasing auto-incrementing integers (`BIGINT AUTO_INCREMENT`), new rows are sequentially appended to the end of the last 16KB leaf page in the clustered index. Pages fill up to near 100% capacity (or the default 15/16 page fill factor) smoothly without disturbing existing pages.
+Rows are physically ordered by the primary key. Monotonic `BIGINT AUTO_INCREMENT` appends new rows to the end of the last leaf page — pages fill near 100% and no splits happen. Random UUIDv4 inserts land at random leaf positions; when a 16KB page is full, InnoDB must split it — allocate a new page, move half the rows, update parent pointers, flush both pages. That means write amplification, half-empty pages (fragmentation), buffer pool thrashing, and every secondary index becomes larger because each leaf stores a 36-byte UUID instead of an 8-byte integer. If you need UUIDs for business reasons, use `BIGINT AUTO_INCREMENT` as the clustered PK with a `UNIQUE` index on the UUID, or use an ordered UUIDv7 whose high bits are a timestamp so inserts stay sequential.
 
-When you use random UUIDv4 strings as a primary key, each new insert hashes to an arbitrary location in the middle of the B+Tree. If the target 16KB leaf page is already full, InnoDB is forced to perform a B+Tree Page Split: it allocates a new page, moves 50% of the existing rows from the full page to the new page, updates parent page pointers, and flushes both pages to disk. This causes:
-1. Massive write amplification and random disk I/O.
-2. Severe storage fragmentation (pages remain ~50% empty).
-3. Frequent eviction of active cache pages from the InnoDB Buffer Pool.
-4. Bloated secondary indexes, because every secondary index leaf stores the full primary key (a 36-byte UUID string vs an 8-byte integer).
+## 6. The Traps — What Goes Wrong in Production
 
-If UUIDs are required by business logic, you should use ordered UUIDs (such as UUIDv7) or store an auto-increment `BIGINT` as the clustered primary key while placing a `UNIQUE` secondary index on the UUID column.
+**Trap 1: Wrapping an indexed column in a function kills the index**
 
-**Q: What is Index Condition Pushdown (ICP) in MySQL?**
-
-Index Condition Pushdown (ICP) is an optimization introduced in MySQL 5.6 for queries using secondary indexes. 
-
-Without ICP, when a query has conditions on index columns that cannot be used for direct B+Tree traversal (such as columns appearing after a range operator), the storage engine fetches the Primary Key from the secondary index, performs an index hop to the Clustered Index to retrieve the full table row, and passes the row to the MySQL Server layer, which evaluates the remaining `WHERE` conditions.
-
-With ICP, MySQL pushes the evaluation of indexable `WHERE` conditions down to the InnoDB storage engine level. InnoDB checks the condition directly against the secondary index leaf values before performing the clustered index lookup. If the condition fails, InnoDB discards the entry immediately, saving thousands of unnecessary clustered table lookups. In `EXPLAIN`, ICP is indicated by `Using index condition` in the `Extra` column.
-
-**Q: Why would MySQL choose a Full Table Scan even when a valid index exists on the filtered column?**
-
-The MySQL query optimizer is cost-based. It estimates the disk I/O and CPU cost of using an index versus scanning the entire table.
-
-When a secondary index is used for a non-covering query, every matching row requires a random I/O hop to the clustered table. If the optimizer estimates that the query will match more than roughly 15% to 30% of the total rows in the table (such as filtering `WHERE status = 'ACTIVE'` when 85% of rows are active), doing millions of random page reads is significantly more expensive than sequentially scanning the entire clustered table into memory in large contiguous page blocks. When index selectivity is low, the optimizer intentionally chooses a Full Table Scan.
-
-## 6. The Traps — What Goes Wrong
-
-**Trap 1: Wrapping Indexed Columns in Functions or Mathematical Expressions**
-
-When an indexed column is wrapped inside a SQL function or arithmetic expression in the `WHERE` clause, MySQL cannot use the B+Tree index. The B+Tree stores raw column values, not the computed output of functions.
+The B+Tree stores raw values, not function results. `WHERE YEAR(created_at) = 2024` cannot seek the tree — MySQL must scan every row. The fix is to keep the column sargable (Search ARGument Able).
 
 ```sql
--- WRONG: Invalidates the index on created_at (Causes Full Table Scan)
+-- Wrong: function on indexed column -> Full Table Scan
 SELECT * FROM orders WHERE YEAR(created_at) = 2024;
-
--- WRONG: Arithmetic on column invalidates index
 SELECT * FROM orders WHERE id + 10 = 1000;
 
--- CORRECT: Sargable (Search-Argument-Able) range query uses idx_created_at
-SELECT * FROM orders 
-WHERE created_at >= '2024-01-01 00:00:00' 
-  AND created_at < '2025-01-01 00:00:00';
-
--- CORRECT: Isolate the column on one side of the operator
+-- Right: range on raw column -> index seek
+SELECT * FROM orders WHERE created_at >= '2024-01-01' AND created_at < '2025-01-01';
 SELECT * FROM orders WHERE id = 1000 - 10;
-```
 
-If querying by a computed expression is mandatory, use a Generated Column with an index:
-```sql
+-- If you must query the expression, index a generated column
 ALTER TABLE orders ADD COLUMN order_year INT GENERATED ALWAYS AS (YEAR(created_at)) STORED;
-CREATE INDEX idx_order_year ON orders(order_year);
+CREATE INDEX idx_order_year ON orders (order_year);
 ```
 
-**Trap 2: Implicit Type Coercion Silently Disabling Indexes**
+**Trap 2: Implicit type coercion silently disables the index**
 
-If the data type of the query parameter does not match the column data type, MySQL applies type conversion rules. When converting between strings and numbers, MySQL converts the string to a number. If a string column is queried with a numeric literal, MySQL applies the conversion function to every row in the column, destroying index usage.
+If a `VARCHAR` column is compared to a number, MySQL casts every row's string to a number — a function on the column.
 
 ```sql
--- Schema: phone_number is VARCHAR(20) with INDEX(phone_number)
-
--- WRONG: Numeric literal forces MySQL to execute CAST(phone_number AS DOUBLE) for all rows
--- Triggers a Full Table Scan across millions of rows!
+-- phone_number is VARCHAR(20) with INDEX(phone_number)
+-- Wrong: numeric literal forces CAST(phone_number AS DOUBLE) per row
 SELECT * FROM users WHERE phone_number = 9876543210;
 
--- CORRECT: Pass string literals for VARCHAR columns
+-- Right: string literal matches column type, index is used
 SELECT * FROM users WHERE phone_number = '9876543210';
 ```
 
-**Trap 3: Leading Wildcards in LIKE Queries**
+Always pass the same type the column was defined with.
 
-B+Trees are sorted lexicographically from left to right. An index on `VARCHAR` can find prefixes instantly because all matching prefixes sit contiguously on the same leaf pages. A leading wildcard means the prefix is unknown, making B+Tree navigation impossible.
+**Trap 3: Leading wildcards in LIKE**
 
-```sql
--- USES INDEX: Range scan on prefix 'John'
-SELECT * FROM users WHERE username LIKE 'John%';
+B+Trees are sorted left to right. `LIKE 'John%'` is a range scan on prefix `John` — fast. `LIKE '%John'` or `LIKE '%John%'` has no known prefix, so the tree cannot be navigated and MySQL scans the whole table. For substring or trailing searches use `FULLTEXT` (`MATCH ... AGAINST`) or a reverse index (`CREATE INDEX idx_rev ON users(REVERSE(username))` and search the reversed string).
 
--- TRAP: Leading wildcard causes Full Table Scan
-SELECT * FROM users WHERE username LIKE '%John';
+**Trap 4: Indexing a low-cardinality column and expecting it to help**
 
--- TRAP: Double wildcard causes Full Table Scan
-SELECT * FROM users WHERE username LIKE '%John%';
-```
+Adding an index on a boolean `is_active` or a `status` where 95% of rows are `COMPLETED` feels productive but often makes things slower. The index is not selective, the optimizer will usually ignore it for non-covering queries (choosing a table scan is cheaper than thousands of random hops), yet every write still pays to maintain the B+Tree, and `EXPLAIN` may show low `Cardinality` in `SHOW INDEX FROM`. Rule: index high-cardinality columns or, better, composite indexes that start with a selective column. If you must filter a common status, make it part of a composite like `(tenant_id, status, created_at)` where the leftmost column is selective, or use a partial/filtering strategy at the application level.
 
-If full substring searching is required, use a MySQL `FULLTEXT` index with `MATCH() AGAINST()`, a reverse string index (`REVERSE(username)` for trailing searches), or a dedicated search engine (Elasticsearch/Meilisearch).
-
-**Trap 4: Random UUIDv4 Clustered Primary Keys Causing Page Splits**
-
-Using random UUIDs generated by application code (`crypto.randomUUID()`) as an InnoDB Primary Key degrades write throughput as the table grows.
+**Trap 5: Random UUIDv4 clustered primary key causes page splits**
 
 ```sql
--- ANTI-PATTERN: Random UUID Primary Key
+-- Anti-pattern: random UUID as clustered PK
 CREATE TABLE event_logs (
-    id VARCHAR(36) NOT NULL, -- Random UUIDv4
+    id VARCHAR(36) NOT NULL, -- random UUIDv4 from app
     payload JSON,
     PRIMARY KEY (id)
 );
 ```
 
-Because UUIDv4 values are randomly distributed, consecutive inserts write to random 16KB pages across the multi-gigabyte table. When a page fills up, InnoDB splits the page in half (50% fragmentation). Buffer pool memory thrashing spikes as pages are constantly read from disk, split, and written back.
+Each insert lands at a random leaf, full 16KB pages split in half, fragmentation climbs, buffer pool churns.
 
 ```sql
--- PRODUCTION PATTERN 1: Auto-increment primary key with unique UUID
+-- Production pattern: auto-increment PK, unique UUID on the side
 CREATE TABLE event_logs (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     event_uuid CHAR(36) NOT NULL,
@@ -357,46 +299,38 @@ CREATE TABLE event_logs (
     UNIQUE KEY uq_event_uuid (event_uuid)
 );
 
--- PRODUCTION PATTERN 2: Time-ordered sequential UUID (UUIDv7)
--- UUIDv7 embeds a millisecond timestamp in the high bits, ensuring sequential B+Tree appends
+-- Or ordered UUIDv7 (time-ordered high bits) as BINARY(16) for sequential appends
 CREATE TABLE event_logs_v7 (
-    id BINARY(16) NOT NULL, -- Compact 16-byte UUIDv7
+    id BINARY(16) NOT NULL,
     payload JSON,
     PRIMARY KEY (id)
 );
 ```
 
-**Trap 5: Over-Indexing and Index Bloat (Write Amplification)**
+**Trap 6: Over-indexing — every index taxes writes**
 
-Indexes are not free. Every additional index created on a table:
-1. Adds write latency: Every `INSERT` must write to $N+1$ B+Trees; every `DELETE` removes entries from $N+1$ B+Trees; `UPDATE` statements modifying indexed columns re-balance trees.
-2. Increases transaction lock hold times, raising deadlock frequency.
-3. Consumes RAM in the InnoDB Buffer Pool, displacing hot table data pages.
-4. Increases storage size—it is common for 10 redundant indexes to consume 3x more disk space than the actual table data.
-
-Rule: Regularly audit unused and redundant indexes using `sys.schema_unused_indexes` and `sys.schema_redundant_indexes`.
+Every extra index means each `INSERT` writes to `N+1` B+Trees, each `DELETE` removes from `N+1`, and updates to indexed columns rebalance trees. Locks are held longer, deadlocks rise, buffer pool is polluted with index pages, and storage can triple. Audit regularly:
 
 ```sql
--- Query MySQL sys schema to identify unused indexes in production
-SELECT object_schema, object_name, index_name 
-FROM sys.schema_unused_indexes 
-WHERE object_schema = 'my_production_db';
+SELECT object_schema, object_name, index_name
+FROM sys.schema_unused_indexes WHERE object_schema = 'my_app';
+SELECT * FROM sys.schema_redundant_indexes WHERE table_schema = 'my_app';
+DROP INDEX idx_unused ON orders; -- remove what you no longer query
 ```
 
-**Trap 6: Misunderstanding OR Clauses Across Different Columns**
+Aim for a handful of well-chosen composite and covering indexes instead of a dozen single-column ones.
 
-When a query connects two different columns using `OR`, MySQL cannot use a single composite index.
+**Trap 7: OR across different columns cannot use one index well**
 
 ```sql
--- Index exists on (customer_id, status)
--- TRAP: Query cannot use idx_customer_status efficiently for the second condition
+-- Index on (customer_id, status) exists
+-- This cannot seek one composite index for both sides
 SELECT * FROM orders WHERE customer_id = 501 OR status = 'CANCELLED';
 ```
 
-MySQL must either perform an `index_merge` (scanning two separate indexes and merging the row ID sets in memory, which is CPU-heavy) or fallback to a full table scan. If high-performance `OR` logic is needed, rewrite it using `UNION ALL`:
+MySQL either does an `index_merge` (scanning two indexes and merging PK sets in CPU) or falls back to a table scan. Rewrite with `UNION ALL` so each branch uses its best index:
 
 ```sql
--- OPTIMIZED: Uses idx_customer_id for query 1 and idx_status for query 2
 SELECT * FROM orders WHERE customer_id = 501
 UNION ALL
 SELECT * FROM orders WHERE status = 'CANCELLED' AND customer_id != 501;
@@ -404,24 +338,25 @@ SELECT * FROM orders WHERE status = 'CANCELLED' AND customer_id != 501;
 
 ## 7. Compare With Related Concepts
 
-| Concept / Feature | Primary / Clustered Index | Secondary Index (B+Tree) | Hash Index | Full-Text Index (`FULLTEXT`) |
+| Feature | Clustered Index (Primary Key) | Secondary B+Tree Index | Hash Index (MEMORY) | FULLTEXT Index |
 | :--- | :--- | :--- | :--- | :--- |
-| **Physical Storage** | The leaf pages ARE the complete table rows | Leaf pages store indexed key + Primary Key | In-memory hash buckets with linked chains | Inverted index (term -> document list) |
-| **Count Per Table** | Exactly 1 per InnoDB table | Multiple (recommended 3–5 per table) | Memory engine only (or Adaptive Hash Index) | Multiple |
-| **Lookup Mechanism** | Direct $O(\log N)$ traversal to full data row | $O(\log N)$ traversal $\rightarrow$ Index Hop to Clustered Index | $O(1)$ exact key hash calculation | Tokenization $\rightarrow$ Inverted list lookup |
-| **Range Queries (`>`, `BETWEEN`)** | Highly optimal (sequential leaf page walking) | Optimal (sequential leaf page walking) | Not supported ($O(N)$ scan required) | Not supported |
-| **Sorting (`ORDER BY`)** | Direct hardware/memory sort order | Direct sort order for indexed columns | Not supported | By relevance score |
-| **Memory / Disk Overhead** | Zero extra overhead (data must be stored anyway) | Extra disk and buffer pool RAM per index | Memory-intensive bucket arrays | Auxiliary inverted index tables |
+| Physical storage | Leaves ARE the full rows | Leaves hold indexed key + PK | In-memory hash buckets with chains | Inverted index term → doc list |
+| Count per table | Exactly 1 (InnoDB) | Many (keep to 3–6 well-chosen) | Many on MEMORY tables; InnoDB adaptive hash is automatic | Many where text search is needed |
+| Lookup | `O(log N)` direct to row | `O(log N)` to PK → hop to clustered | `O(1)` for `=` | Tokenize → inverted list |
+| Range `>`, `BETWEEN` | Optimal (linked leaf walk) | Optimal | Not supported (full scan) | Not supported |
+| `ORDER BY` / `LIKE 'abc%'` | Sorted directly | Sorted for indexed columns | No order | By relevance rank |
+| Overhead | Zero extra (data must live anyway) | Extra disk + buffer pool per index | Memory-heavy bucket array | Auxiliary token tables |
 
-**Composite Index vs Multiple Single-Column Indexes**
-- Multiple Single-Column Indexes (`INDEX(a)`, `INDEX(b)`): MySQL generally chooses only ONE index per query table access. If you query `WHERE a = 1 AND b = 2`, MySQL picks whichever index has higher cardinality, reads the candidate rows, and filters `b = 2` in memory.
-- Single Composite Index (`INDEX(a, b)`): MySQL uses both columns simultaneously during the B+Tree search, narrowing down to the exact matching rows in a single tree traversal. Always prefer a composite index when columns are queried together.
+**Composite index vs multiple single-column indexes**
+
+Multiple singles `INDEX(a), INDEX(b)` — MySQL typically picks only one per table access. `WHERE a = 1 AND b = 2` will use whichever is more selective and filter the other condition in memory, or do a costly `index_merge`. One composite `INDEX(a,b)` narrows with both columns in a single tree walk. Prefer a composite when columns are queried together, ordered leftmost selective first.
 
 **Index Seek vs Index Scan vs Table Scan**
-- Index Seek (`type: const`, `eq_ref`, `ref`, `range`): Navigates the B+Tree from root to leaf to find specific keys. Reads only relevant pages. High efficiency.
-- Index Scan (`type: index`): Scans every page of a secondary index from start to finish. Reads all index pages without tree search positioning, but faster than `ALL` if index is covering because index pages are smaller than table pages.
-- Table Scan (`type: ALL`): Scans every page of the clustered index table from first page to last page. Slowest access path for large tables.
 
-## 8. 🧠 The Memory Hook — What Sticks
+- Index Seek (`type: const`, `eq_ref`, `ref`, `range`) — walk root to leaf for specific keys, read only relevant pages. Fastest.
+- Index Scan (`type: index`) — scan every page of a secondary index start to finish. Cheaper than `ALL` only if it is covering and the index is smaller than the table.
+- Table Scan (`type: ALL`) — scan every page of the clustered table. Slowest for large tables, but the optimizer correctly chooses it when selectivity is too low for random hops to be worth it.
 
-The Clustered Index is the physical book itself, ordered by Primary Key. Secondary Indexes are bookmarks in the back of the book that point to page numbers. If your query asks only for data written on the bookmark itself, you get a Covering Index and never have to open the heavy book.
+## 8. 🧠 The Memory Hook
+
+The clustered index is the book itself ordered by primary key. Every secondary index is a thin bookmark in the back that stores the keyword plus the page number. If your query only needs what is written on the bookmark, you get `Using index` and never open the book — that is a covering index.
