@@ -186,46 +186,94 @@ Executing a multi-table update across millions of rows locks large index ranges 
 
 ## 6. Variations and Follow-ups
 
-**Variation 1: Updating Columns in Both Tables Simultaneously**
-- *MySQL:* Allows updating columns across multiple tables in a single statement:
-  `UPDATE accounts a JOIN user_stats s ON a.user_id = s.user_id SET a.balance = 0, s.is_flagged = 1 WHERE a.is_suspended = 1;`
-- *PostgreSQL:* Does not support modifying multiple tables in a single `UPDATE`. To achieve this atomically in Postgres, use Data-Modifying Common Table Expressions (writable CTEs):
-  ```sql
-  WITH updated_accounts AS (
-    UPDATE accounts
-    SET balance = 0
-    WHERE is_suspended = true
-    RETURNING user_id
-  )
-  UPDATE user_stats s
-  SET is_flagged = true
-  FROM updated_accounts ua
-  WHERE s.user_id = ua.user_id;
-  ```
+**Variation 1: Conditional Update — Different Values Per Row (CASE WHEN)**
+Interviewers often follow up with "what if gold members get 15% off but silver gets 10%?" You do not write three separate updates. You put the logic in the SET with a CASE, still driven by the join.
+```sql
+-- MySQL: conditional amount inside UPDATE ... JOIN
+UPDATE accounts a
+INNER JOIN discounts d ON a.tier_id = d.tier_id
+SET a.balance = CASE
+  WHEN d.tier_id = 'GOLD' THEN a.balance - d.amount * 1.5
+  WHEN d.tier_id = 'SILVER' THEN a.balance - d.amount
+  ELSE a.balance
+END
+WHERE d.is_active = 1;
 
-**Variation 2: Updating Based on a `LEFT JOIN` (Updating When No Match Exists)**
-What if you want to set an account status to `'UNASSIGNED'` if it has no corresponding record in the discount table?
-- *MySQL:* Supports `LEFT JOIN` directly in the update:
-  ```sql
-  UPDATE accounts a
-  LEFT JOIN discounts d ON a.tier_id = d.tier_id
-  SET a.status = 'UNASSIGNED'
-  WHERE d.tier_id IS NULL;
-  ```
-- *PostgreSQL / ANSI:* Accomplished cleanly using `NOT EXISTS`:
-  ```sql
-  UPDATE accounts a
-  SET status = 'UNASSIGNED'
-  WHERE NOT EXISTS (
-    SELECT 1 FROM discounts d WHERE d.tier_id = a.tier_id
-  );
-  ```
+-- PostgreSQL: same logic with UPDATE ... FROM
+UPDATE accounts a
+SET balance = CASE
+  WHEN d.tier_id = 'GOLD' THEN a.balance - d.amount * 1.5
+  WHEN d.tier_id = 'SILVER' THEN a.balance - d.amount
+  ELSE a.balance
+END
+FROM discounts d
+WHERE a.tier_id = d.tier_id
+  AND d.is_active = true;
+```
+You could also filter with WHERE instead of CASE when you want to skip rows entirely. CASE is for when every matched row stays matched but gets a different new value.
 
-**Variation 3: How the Database Query Planner Executes Join Updates**
-When you run `EXPLAIN UPDATE ...`, the database engine plans the join update in three internal phases:
-1. **Candidate Scan & Join:** The query planner constructs a join tree (using Nested Loop, Hash Join, or Merge Join) between the target table and source tables using available indexes.
-2. **Tuple Identification:** The engine gathers the physical tuple identifiers (CTID in PostgreSQL, Clustered Primary Key / RowID in MySQL InnoDB) of the target rows that satisfy the join predicates and filters.
-3. **Lock & Write:** The engine acquires exclusive row locks (`X-locks`) on target tuples, writes before-and-after images to the write-ahead log (WAL/redo log) and undo logs, updates the target table heap/clustered index, and flags secondary indexes for maintenance if updated columns are indexed.
+**Variation 2: Upsert — "Update If Exists, Insert If Not"**
+"What if some tier adjustments come from a staging table and you need to create the account discount row when it does not exist?" That is not an UPDATE JOIN, that is an upsert. Do not force it through a join update.
+```sql
+-- PostgreSQL: INSERT ... ON CONFLICT DO UPDATE (requires a unique constraint on tier_id)
+INSERT INTO account_discounts (account_id, tier_id, discount_applied)
+SELECT a.account_id, a.tier_id, d.amount
+FROM accounts a JOIN discounts d ON a.tier_id = d.tier_id
+WHERE d.is_active = true
+ON CONFLICT (account_id) DO UPDATE
+SET discount_applied = EXCLUDED.discount_applied,
+    updated_at = NOW();
+
+-- MySQL: INSERT ... ON DUPLICATE KEY UPDATE
+INSERT INTO account_discounts (account_id, tier_id, discount_applied)
+SELECT a.account_id, a.tier_id, d.amount
+FROM accounts a JOIN discounts d ON a.tier_id = d.tier_id
+WHERE d.is_active = 1
+ON DUPLICATE KEY UPDATE
+  discount_applied = VALUES(discount_applied),
+  updated_at = NOW();
+```
+Rule of thumb for the interview: if the question says "update existing rows based on another table" use UPDATE JOIN / UPDATE FROM. If it says "make sure every source row ends up in the target, updating the ones that already exist" say upsert and name the correct syntax for the dialect.
+
+**Variation 3: Updating Based on a LEFT JOIN — When No Match Exists**
+What if you want to set an account status to 'UNASSIGNED' if it has no corresponding discount row?
+```sql
+-- MySQL: LEFT JOIN directly in the update
+UPDATE accounts a
+LEFT JOIN discounts d ON a.tier_id = d.tier_id
+SET a.status = 'UNASSIGNED'
+WHERE d.tier_id IS NULL;
+
+-- PostgreSQL / ANSI: clean NOT EXISTS version
+UPDATE accounts a
+SET status = 'UNASSIGNED'
+WHERE NOT EXISTS (
+  SELECT 1 FROM discounts d WHERE d.tier_id = a.tier_id
+);
+```
+This is the mirror of the main pattern. The main pattern says "update where a match exists." This says "update where no match exists." Interviewers use it to check you know INNER JOIN skips non-matches and LEFT JOIN preserves them.
+
+**Variation 4: Updating Two Tables Atomically and How the Planner Runs It**
+MySQL lets you update two tables in one statement, Postgres does not.
+```sql
+-- MySQL: update two tables at once
+UPDATE accounts a JOIN user_stats s ON a.user_id = s.user_id
+SET a.balance = 0, s.is_flagged = 1
+WHERE a.is_suspended = 1;
+
+-- PostgreSQL: writable CTE for the same atomic effect
+WITH updated_accounts AS (
+  UPDATE accounts
+  SET balance = 0
+  WHERE is_suspended = true
+  RETURNING user_id
+)
+UPDATE user_stats s
+SET is_flagged = true
+FROM updated_accounts ua
+WHERE s.user_id = ua.user_id;
+```
+When you run EXPLAIN on any join update, the engine does three things underneath: it builds a join plan between target and source using available indexes (Nested Loop, Hash Join, or Merge Join), it collects the physical row identifiers for the target rows (CTID in Postgres, clustered key / RowID in MySQL InnoDB), then it takes exclusive row locks, writes before and after images to the WAL and undo log, and updates the heap and any indexes on changed columns. Knowing that sequence is how you explain why chunking large updates matters.
 
 ## 7. 🧠 The Memory Hook
 
