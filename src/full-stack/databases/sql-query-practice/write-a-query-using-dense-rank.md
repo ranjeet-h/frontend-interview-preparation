@@ -2,229 +2,179 @@
 
 ## 1. What the Interviewer Is Really Testing
 
-When an interviewer asks you to write a query using `DENSE_RANK()`, they are not just checking whether you know SQL syntax. They are testing whether you understand how relational database engines rank rows when ties occur, how window frames partition data across dimensions, and why traditional grouping operations fail on top-N-per-category problems.
+You have an employees table and the product manager asks for the top 3 salary tiers per department. Or the 2nd highest distinct salary across the company. You write `ORDER BY salary DESC LIMIT 3` and it looks right until someone points out two people share the top salary. Now you are returning three rows but only two distinct pay levels. Or you tried `RANK()` and a tie left a gap that made the 3rd tier disappear.
 
-Candidates who struggle with this problem often confuse three core window ranking functions:
+That is the pain this question lives in. Real ranking is not just sorting. When salaries tie, you have to decide what the next number should be. Interviewers ask about `DENSE_RANK()` because they want to see if you actually know how the three ranking functions behave when values are equal.
 
-- `ROW_NUMBER()` assigns a strict sequential integer ($1, 2, 3, 4$) to every row, breaking ties arbitrarily unless you provide explicit secondary sort columns.
-- `RANK()` assigns the same rank to identical values, but skips subsequent rank numbers by the size of the tie ($1, 2, 2, 4$), leaving gaps in the ranking sequence.
-- `DENSE_RANK()` assigns the same rank to identical values and always assigns the immediate next integer to the next distinct value ($1, 2, 2, 3$), preserving a contiguous sequence without gaps.
-
-The interviewer also wants to see if you understand the SQL query evaluation lifecycle. Window functions execute in the `SELECT` phase, which happens after `FROM`, `WHERE`, `GROUP BY`, and `HAVING`. Because of this execution order, you cannot place a window function directly inside a `WHERE` filter. Demonstrating that you immediately reach for a Common Table Expression (CTE) or subquery proves you understand the database execution pipeline rather than guessing syntax.
+`ROW_NUMBER() OVER (ORDER BY salary DESC)` gives every row its own number, 1, 2, 3, 4, breaking ties arbitrarily. `RANK() OVER (ORDER BY salary DESC)` gives ties the same number but then skips, 1, 1, 3, because it counts how many rows came before. `DENSE_RANK() OVER (ORDER BY salary DESC)` gives ties the same number and never skips, 1, 1, 2, so the sequence stays dense with no gaps after ties. If the question says top N distinct salaries, tiers, or levels, they mean `DENSE_RANK()`. They also want to hear that you cannot filter a window function directly in `WHERE` because windows run after `WHERE` in the execution order, so you wrap it in a CTE or subquery and filter outside.
 
 ## 2. Think Before You Code — The Senior Dev Thought Process
 
-Here is the problem scenario: You are given an `ExamResults` table containing `student_id`, `classroom_id`, and `score`. Your task is to find the students who achieved the top 3 distinct exam scores within each classroom.
+The prompt I get most often is this: given an `employees` table with `id`, `name`, `department`, `salary`, find the employees who sit in the top 3 distinct salaries in each department, or find the nth highest distinct salary overall.
 
-When I look at this problem, my thought process unfolds in five distinct steps:
+The first thing I notice is the phrase distinct salaries. If two engineers both earn 5000, they are both rank 1. The next lower salary is rank 2, not rank 3. That one word tells me this is a dense ranking problem.
 
-First, I identify the core requirement: "top 3 distinct scores per classroom." This phrasing tells me that if three students in classroom 101 all score 100, all three share 1st place. The student with 95 is in 2nd place, and the student with 90 is in 3rd place. All of these students must appear in the final result set.
+My instinct is to consider the brute force way without windows. I could write a correlated subquery that counts how many distinct salaries in the same department are higher than the current row: `WHERE (SELECT COUNT(DISTINCT salary) FROM employees e2 WHERE e2.department = e1.department AND e2.salary > e1.salary) < 3`. That works logically but it scans the table for every row. On a table with hundreds of thousands of rows that is roughly O(N squared) work. It will be slow and hard to read.
 
-Second, I evaluate why a naive brute-force approach fails. Without window functions, developers often write a correlated subquery counting how many distinct scores in the same classroom are strictly higher than the current student's score:
+Then I think about the window options. If I use `ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC) <= 3`, I get exactly three rows per department no matter how ties fall. If three people tie at 5000, `ROW_NUMBER()` picks one of them for rank 1, one for 2, one for 3, and the person at 4000 who should be in the top 2 distinct tiers gets dropped. That violates the requirement.
 
-```sql
-SELECT e1.* 
-FROM ExamResults e1 
-WHERE (
-    SELECT COUNT(DISTINCT e2.score) 
-    FROM ExamResults e2 
-    WHERE e2.classroom_id = e1.classroom_id 
-      AND e2.score > e1.score
-) < 3;
-```
+If I use `RANK() OVER (PARTITION BY department ORDER BY salary DESC) <= 3`, ties share a rank but the next rank skips by the size of the tie. With salaries [5000, 5000, 4000], `RANK()` gives 1, 1, 3. That still passes `<=3`, but with [5000, 5000, 5000, 4000, 4000, 3000], `RANK()` gives 1, 1, 1, 4, 4, 6. Now rank 2 and 3 never exist, so `RANK() <=3` returns only the three people at 5000 and misses the people at 4000 who are actually the second distinct tier. That is the trap interviewers wait for.
 
-This correlated subquery runs an $O(N)$ scan for every single row in `ExamResults`, producing an overall time complexity of $O(N^2)$ or $O(N \cdot M)$ where $M$ is the average classroom size. On a table with 500,000 exam records, this locks up database worker threads and results in unacceptable query latency.
-
-Third, I evaluate why `ROW_NUMBER()` and `RANK()` produce incorrect business results:
-- If I use `ROW_NUMBER() <= 3`, the database arbitrarily selects only 3 student records per classroom. If three students tie with 100, the student with 95 is completely dropped, which violates the requirement of finding the top 3 distinct score tiers.
-- If I use `RANK() <= 3`, ties cause gaps. If two students tie for 1st place ($1, 1$), the next student receives rank 3 ($3$). But if three students tie for 1st place ($1, 1, 1$), the next student receives rank 4, meaning rank 2 and rank 3 are skipped, and the students with 95 and 90 are omitted entirely.
-
-Fourth, I recognize that `DENSE_RANK()` is the mathematically correct tool. Grouping by `classroom_id` via `PARTITION BY classroom_id` keeps ranking boundaries isolated per classroom. Ordering by `score DESC` guarantees that higher scores receive lower numeric rank integers ($1, 2, 3$).
-
-Fifth, I structure the query using a CTE. Because window functions evaluate during the projection phase of the query engine, I compute `rank_pos` inside the CTE, and then filter `WHERE rank_pos <= 3` in the outer query.
+So the pattern clicks: top N distinct values per group means `DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC)` and filter `rnk <= N`. For a global ranking like nth highest salary, drop the partition: `DENSE_RANK() OVER (ORDER BY salary DESC)`. And because windows are computed in the SELECT phase, I will compute the rank inside a CTE named `ranked` and filter on it in the outer query. That plan also tells me what index helps: `(department, salary DESC)`.
 
 ## 3. The Solution — Fully Explained Code
 
-To see the behavioral differences before writing the final query, consider how each window function processes identical input scores:
+First, the core difference side by side. Take a single department with three rows:
 
-| student_id | classroom_id | score | ROW_NUMBER() | RANK() | DENSE_RANK() | Why DENSE_RANK() Fits "Top 3 Distinct" |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 101 | A | 100 | 1 | 1 | 1 | Shared gold tier |
-| 102 | A | 100 | 2 | 1 | 1 | Shared gold tier |
-| 103 | A | 95 | 3 | 3 (Gap: 2 skipped) | 2 | Contiguous silver tier |
-| 104 | A | 90 | 4 | 4 (Excluded by <=3) | 3 | Contiguous bronze tier (Included!) |
-| 105 | A | 85 | 5 | 5 | 4 | 4th distinct tier (Excluded) |
+| name | salary | ROW_NUMBER() | RANK() | DENSE_RANK() | notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Asha | 5000 | 1 | 1 | 1 | tie, first distinct tier |
+| Ben | 5000 | 2 | 1 | 1 | tie keeps same dense rank |
+| Cara | 4000 | 3 | 3 | 2 | `RANK()` skips to 3, `DENSE_RANK()` goes to 2 with no gap |
 
-Here is the complete, production-ready SQL solution:
+Whenever you see no gaps after ties, that is dense.
+
+Here is runnable SQL you can paste into SQLite, PostgreSQL, or MySQL 8+. It creates the table, inserts data, and runs the dense rank correctly:
 
 ```sql
-WITH RankedScores AS (
-    SELECT 
-        student_id, 
-        classroom_id, 
-        score, 
-        DENSE_RANK() OVER (
-            PARTITION BY classroom_id 
-            ORDER BY score DESC
-        ) AS rank_pos 
-    FROM ExamResults
-) 
-SELECT 
-    classroom_id, 
-    rank_pos, 
-    score, 
-    student_id 
-FROM RankedScores 
-WHERE rank_pos <= 3 
-ORDER BY 
-    classroom_id ASC, 
-    rank_pos ASC, 
-    student_id ASC;
+-- runnable in sqlite3, postgres, mysql 8+
+CREATE TABLE employees (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  department TEXT,
+  salary INTEGER
+);
+
+INSERT INTO employees (id, name, department, salary) VALUES
+  (1, 'Asha', 'Eng', 5000),
+  (2, 'Ben', 'Eng', 5000),
+  (3, 'Cara', 'Eng', 4000),
+  (4, 'Dan', 'Eng', 3000),
+  (5, 'Eli', 'Sales', 6000),
+  (6, 'Fay', 'Sales', 6000),
+  (7, 'Gus', 'Sales', 4000),
+  (8, 'Hana', 'Sales', 3000);
+
+-- global dense rank: rank across all employees
+SELECT
+  name,
+  salary,
+  DENSE_RANK() OVER (ORDER BY salary DESC) AS dense_rank,
+  RANK() OVER (ORDER BY salary DESC) AS rnk,
+  ROW_NUMBER() OVER (ORDER BY salary DESC) AS row_num
+FROM employees
+ORDER BY salary DESC, name;
+
+-- top 3 distinct salaries per department
+WITH ranked AS (
+  SELECT
+    id,
+    name,
+    department,
+    salary,
+    DENSE_RANK() OVER (
+      PARTITION BY department
+      ORDER BY salary DESC
+    ) AS rnk
+  FROM employees
+)
+SELECT department, rnk, salary, name
+FROM ranked
+WHERE rnk <= 3
+ORDER BY department ASC, rnk ASC, name ASC;
 ```
 
-Let's break down the technical decisions in this query:
+A few decisions to call out in plain language. `DENSE_RANK() OVER (ORDER BY salary DESC)` says give the highest salary rank 1, ties get the same rank, next distinct salary gets rank 2 with no gap. Adding `PARTITION BY department` says restart the counting at 1 for each department, so Eng and Sales have independent leaderboards. `WITH ranked AS (...)` is the CTE that materializes the window column so the outer `WHERE rnk <= 3` can filter it, because you cannot put a window function directly in `WHERE`. The final `ORDER BY department, rnk, name` makes output deterministic for tests and UI.
 
-- `WITH RankedScores AS (...)`: Encapsulates the window evaluation into an inline temporary result set. The database engine calculates the window column during this step, making `rank_pos` available as a concrete column name for the subsequent `WHERE` clause filter.
-- `DENSE_RANK() OVER (...)`: Directs the database to generate gapless ranking integers starting at 1 for each distinct score value.
-- `PARTITION BY classroom_id`: Divides the underlying dataset into independent window partitions per classroom. When the window engine moves across classroom boundaries (for example, from classroom A to classroom B), the rank counter resets back to 1.
-- `ORDER BY score DESC`: Dictates the sorting order inside each partition frame. The highest score gets rank 1, ties get identical ranks, and the next lower distinct score receives rank 2.
-- `WHERE rank_pos <= 3`: Filters the rows so only students in the top 3 distinct score tiers are returned.
-- `ORDER BY classroom_id ASC, rank_pos ASC, student_id ASC`: Ensures the outer query produces a deterministic, well-organized output suitable for direct frontend display or API consumption.
-
-Complexity Analysis:
-- Time Complexity: $O(N \log N)$ where $N$ is the total number of rows in `ExamResults`. The query is bounded by the cost of sorting the records within each partition. If a composite index on `(classroom_id, score DESC)` exists, the engine reads the index in presorted order, reducing execution time to an $O(N)$ sequential index scan.
-- Space Complexity: $O(N)$ in temporary memory buffers (or disk spill for very large datasets) to materialize the partition frames and CTE output before applying the outer filter.
+Time complexity is dominated by sorting. Without a helpful index it is O(N log N) where N is the number of rows. Space is O(N) for the sort buffer and CTE materialization, spilling to disk if the partition is huge. If you have `CREATE INDEX idx_emp_dept_salary ON employees(department, salary DESC, name)`, the engine can read rows already partitioned and sorted and often avoids an explicit sort.
 
 ## 4. Dry Run — Walk Through a Real Example
 
-Let's trace how the database executes this query against a concrete sample dataset.
+Take the smallest case that shows the difference: salaries [5000, 5000, 4000] in one department. Three rows, two distinct pay tiers.
 
-Input Table `ExamResults`:
+Input rows unsorted:
 
-| student_id | classroom_id | score |
+| id | name | salary |
 | :--- | :--- | :--- |
-| S1 | 101 | 100 |
-| S2 | 101 | 100 |
-| S3 | 101 | 95 |
-| S4 | 101 | 90 |
-| S5 | 101 | 90 |
-| S6 | 101 | 80 |
-| S7 | 102 | 98 |
-| S8 | 102 | 98 |
-| S9 | 102 | 88 |
-| S10 | 102 | 75 |
+| 1 | Asha | 5000 |
+| 2 | Ben | 5000 |
+| 3 | Cara | 4000 |
 
-Step 1: Partitioning and Window Sorting
-The database splits the rows into two partitions (`classroom_id = 101` and `classroom_id = 102`) and sorts each partition by `score DESC`.
+Step 1 is partition and sort. With no `PARTITION BY` or with a single department partition, the engine sorts descending: 5000, 5000, 4000. Order between tied 5000 rows follows the secondary key if you add one, otherwise it is nondeterministic.
 
-Step 2: Assigning `DENSE_RANK()` in Partition `101`:
-- Row 1: S1 has score 100. Previous score was none. `rank_pos` = 1.
-- Row 2: S2 has score 100. Matches previous score (100). `rank_pos` remains 1.
-- Row 3: S3 has score 95. Different from previous score. `rank_pos` increments by 1 to 2.
-- Row 4: S4 has score 90. Different from previous score. `rank_pos` increments by 1 to 3.
-- Row 5: S5 has score 90. Matches previous score (90). `rank_pos` remains 3.
-- Row 6: S6 has score 80. Different from previous score. `rank_pos` increments by 1 to 4.
+Step 2 is walk the sorted list and assign ranks by comparing each salary to the previous distinct salary.
 
-Step 3: Assigning `DENSE_RANK()` in Partition `102` (Counter resets to 1):
-- Row 7: S7 has score 98. Previous score was none. `rank_pos` = 1.
-- Row 8: S8 has score 98. Matches previous score (98). `rank_pos` remains 1.
-- Row 9: S9 has score 88. Different from previous score. `rank_pos` increments to 2.
-- Row 10: S10 has score 75. Different from previous score. `rank_pos` increments to 3.
+Start with Asha at 5000. There is no previous salary, so both `RANK()` and `DENSE_RANK()` give 1, and `ROW_NUMBER()` gives 1.
 
-Step 4: Outer Query Filtering `WHERE rank_pos <= 3`
-The filter removes Row 6 (S6, `rank_pos` = 4). All other rows satisfy `rank_pos <= 3`.
+Move to Ben at 5000. It matches the previous salary, so `DENSE_RANK()` stays at 1 and `RANK()` stays at 1. `ROW_NUMBER()` must keep counting, so it goes to 2.
 
-Final Result Set:
+Move to Cara at 4000. It is a new distinct salary. `DENSE_RANK()` always adds one to the previous dense rank, so it goes from 1 to 2. `RANK()` adds the count of rows seen before, so it goes from 1 plus 2 rows before equals 3. `ROW_NUMBER()` goes to 3.
 
-| classroom_id | rank_pos | score | student_id |
-| :--- | :--- | :--- | :--- |
-| 101 | 1 | 100 | S1 |
-| 101 | 1 | 100 | S2 |
-| 101 | 2 | 95 | S3 |
-| 101 | 3 | 90 | S4 |
-| 101 | 3 | 90 | S5 |
-| 102 | 1 | 98 | S7 |
-| 102 | 1 | 98 | S8 |
-| 102 | 2 | 88 | S9 |
-| 102 | 3 | 75 | S10 |
+Result for [5000, 5000, 4000]:
 
-Notice that classroom 101 returned 5 student rows because of ties, but exactly 3 distinct score tiers (100, 95, 90) were captured.
+| name | salary | DENSE_RANK() | RANK() | ROW_NUMBER() |
+| :--- | :--- | :--- | :--- | :--- |
+| Asha | 5000 | 1 | 1 | 1 |
+| Ben | 5000 | 1 | 1 | 2 |
+| Cara | 4000 | 2 | 3 | 3 |
+
+That one line is the whole interview test. `DENSE_RANK()` is 1, 1, 2 with no gap. `RANK()` is 1, 1, 3 with a gap. `ROW_NUMBER()` is 1, 2, 3 with no ties at all.
+
+Now filter `WHERE dense_rank <= 2`. Both Asha and Ben at rank 1 and Cara at rank 2 pass, so you get all three rows but only two distinct tiers, which is correct for top 2 distinct salaries. If you had filtered `WHERE rnk <=2` using `RANK()`, Cara at rank 3 would be incorrectly excluded.
+
+If we run the per-department query on the larger sample from the previous section, the same logic repeats per partition. Eng partition sorts to 5000, 5000, 4000, 3000 and gets dense ranks 1, 1, 2, 3. Sales partition sorts to 6000, 6000, 4000, 3000 and also gets 1, 1, 2, 3. The counter resets when the department changes. Filtering `rnk <=3` keeps everyone in this small sample, but if we inserted another Eng row at 2000, that row would get dense rank 4 and be removed.
 
 ## 5. Edge Cases — The Ones That Break Naive Solutions
 
-Here are the critical real-world edge cases and database behaviors that expose fragile SQL implementations:
+Ties that cover the whole partition cause an unbounded result. If twenty people in Eng all earn 5000, they all get dense rank 1. `WHERE rnk <=3` then returns twenty rows, not three. That is correct for distinct tiers but it can blow up a UI that expected at most three cards. When the interviewer asks what breaks at scale, say you would discuss whether ties should expand the result or whether you need a secondary cap with `ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC, id)` and add `AND row_num <= 10` alongside the dense rank filter.
 
-- `NULL` Score Ordering Across Different SQL Dialects:
-  In SQL, `NULL` values participate in sorting, but database engines disagree on where they go by default. In PostgreSQL and Oracle, `ORDER BY score DESC` treats `NULL` as the largest possible value, placing `NULL` rows at the very top (`rank_pos = 1`). In MySQL and SQL Server, `NULL` is treated as the smallest value, placing it at the bottom. If a student missed an exam and has `score IS NULL`, they could unexpectedly receive rank 1 in PostgreSQL.
-  The fix is to be explicit in your query by adding `NULLS LAST` or filtering out nulls in the CTE:
-  `DENSE_RANK() OVER (PARTITION BY classroom_id ORDER BY score DESC NULLS LAST)` or `WHERE score IS NOT NULL`.
+NULL salaries are the dialect surprise. In PostgreSQL, `ORDER BY salary DESC` puts NULL first, so a row with `salary IS NULL` gets `DENSE_RANK()` 1 unless you say otherwise. In MySQL and SQLite, NULL is smallest, so `ORDER BY salary DESC` puts NULL last, which feels safer. The fix is to be explicit. Either filter them out before ranking with `WHERE salary IS NOT NULL` in the CTE, or control placement: `DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC NULLS LAST)`. If you forget this, a department where everyone has NULL salary will report NULL as the top tier.
 
-- Classrooms with Fewer Than 3 Distinct Scores:
-  If a classroom only has two students or if all students in a classroom scored 100, the partition will only produce `rank_pos = 1` or `rank_pos IN (1, 2)`. `DENSE_RANK()` gracefully handles this without runtime errors, returning all qualifying rows without requiring special conditional branching.
+Partitions that are too small are fine but worth stating. If a department has only one distinct salary, say all salaries are 5000, the partition only produces rank 1. `rnk <=3` returns every row and does not error. That graceful handling is one reason teams pick dense rank instead of hand-rolled rank math.
 
-- Huge Ties and Unbounded Result Sets:
-  If 500 students in a single classroom all score 100, all 500 will receive `rank_pos = 1` and all 500 will be returned by `WHERE rank_pos <= 3`. If your application has strict UI display limits (such as showing only top 3 cards on a dashboard), returning 500 rows might break frontend layouts. In such cases, discuss with your interviewer whether ties should expand the result set or whether a secondary deterministic tiebreaker (like `student_id ASC`) with `ROW_NUMBER()` is required.
-
-- Missing Database Indexes on High-Volume Tables:
-  Running `DENSE_RANK()` with `PARTITION BY classroom_id ORDER BY score DESC` on an unindexed table forces the database engine to perform a full table scan and allocate an in-memory sort buffer (like `Sort` / `WindowAgg` in PostgreSQL or `Using filesort` in MySQL).
-  To make this query lightning-fast in production, add a composite index matching the partition and order keys:
-  `CREATE INDEX idx_exam_classroom_score ON ExamResults (classroom_id, score DESC, student_id);`
-  This composite index allows the query planner to satisfy both the partition grouping and the descending sort directly from the B-Tree index structure, skipping explicit sorting operations entirely.
+Missing indexes show up fast in production. `DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC)` on an unindexed table forces a full scan plus a sort. You will see `Sort` and `WindowAgg` in Postgres or `Using filesort` in MySQL. Adding `CREATE INDEX idx_emp_dept_salary ON employees(department, salary DESC)` lets the planner read the B-Tree already grouped and sorted and often removes the sort step.
 
 ## 6. Variations and Follow-ups
 
-Interviewers frequently follow up with these common variations:
+Interviewers rarely stop at top 3 per group. They push into variations.
 
-- Finding the Overall N-th Highest Value (Global Ranking):
-  "How would you find the 2nd highest exam score or salary across the entire organization?"
-  Instead of partitioning by a dimension, omit `PARTITION BY` to create a single global window across all rows:
-  ```sql
-  WITH RankedScores AS (
-      SELECT 
-          score, 
-          DENSE_RANK() OVER (ORDER BY score DESC) AS rnk 
-      FROM ExamResults
-  ) 
-  SELECT DISTINCT score 
-  FROM RankedScores 
-  WHERE rnk = 2;
-  ```
+Finding the nth highest distinct salary globally is the classic. Drop the partition and rank over the whole table, then filter for that rank. For second highest:
 
-- Bottom-N Per Category:
-  "How would you find the 3 lowest distinct scores per classroom?"
-  Simply flip the sort direction in the window specification from `DESC` to `ASC`:
-  `DENSE_RANK() OVER (PARTITION BY classroom_id ORDER BY score ASC)`
+```sql
+WITH ranked AS (
+  SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk
+  FROM employees
+  WHERE salary IS NOT NULL
+)
+SELECT DISTINCT salary
+FROM ranked
+WHERE rnk = 2;
+```
 
-- Combining `DENSE_RANK()` with Strict Row Limits:
-  "What if we want top 3 distinct scores, but at most 10 students total per classroom if there are massive ties?"
-  Compute both `DENSE_RANK()` and `ROW_NUMBER()` inside the same CTE, then filter on both conditions:
-  ```sql
-  WITH RankedScores AS (
-      SELECT 
-          student_id, 
-          classroom_id, 
-          score, 
-          DENSE_RANK() OVER (
-              PARTITION BY classroom_id ORDER BY score DESC
-          ) AS rank_pos,
-          ROW_NUMBER() OVER (
-              PARTITION BY classroom_id ORDER BY score DESC, student_id ASC
-          ) AS row_pos
-      FROM ExamResults
-  )
-  SELECT classroom_id, rank_pos, score, student_id
-  FROM RankedScores
-  WHERE rank_pos <= 3 AND row_pos <= 10
-  ORDER BY classroom_id, rank_pos, student_id;
-  ```
+That returns 5000 if salaries are 6000, 5000, 5000, 4000. Using `rnk = 2` after `DENSE_RANK()` is the key, because `rnk` counts distinct tiers. If you wanted the nth highest salary including duplicates with row counting, you would switch to `ROW_NUMBER()`, but the interview almost always means distinct.
 
-- Legacy SQL Without Window Functions (Pre-MySQL 8.0):
-  If asked how this was solved before window functions existed, explain that developers had to rely on correlated subqueries counting distinct higher scores or self-joins with `GROUP BY` and `HAVING COUNT(DISTINCT ...) < 3`. Demonstrating knowledge of the legacy approach highlights why modern window functions were such a revolutionary performance and readability improvement.
+Top N per group is the general form of the earlier query. Change `rnk <= 3` to any N, or flip direction for bottom N: `DENSE_RANK() OVER (PARTITION BY department ORDER BY salary ASC)` gives the lowest distinct tiers first. Product teams often ask for top 2 earners per department for a dashboard, so you would set `rnk <= 2`.
+
+When they add a row limit on top of dense rank, combine both windows in one CTE:
+
+```sql
+WITH ranked AS (
+  SELECT
+    name, department, salary,
+    DENSE_RANK() OVER (PARTITION BY department ORDER BY salary DESC) AS rnk,
+    ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC, id) AS row_num
+  FROM employees
+)
+SELECT department, rnk, salary, name
+FROM ranked
+WHERE rnk <= 2 AND row_num <= 5
+ORDER BY department, rnk, name;
+```
+
+That keeps the top 2 distinct tiers but never more than five people per department, which protects the frontend.
+
+If the interviewer asks how you did this before window functions, mention the old correlated subquery counting distinct higher salaries or a self-join with `GROUP BY` and `HAVING COUNT(DISTINCT ...)`. It worked but was O(N squared) and unreadable. The window version is why MySQL 8 and modern Postgres made ranking a single pass.
 
 ## 7. 🧠 The Memory Hook
 
-To instantly pick the right ranking function under pressure, remember this rule:
-
-**`ROW_NUMBER()` counts rows ($1, 2, 3, 4$). `RANK()` leaves gaps on ties ($1, 2, 2, 4$). `DENSE_RANK()` stays dense ($1, 2, 2, 3$).** 
-
-Whenever a problem asks for "Top N distinct values or tiers," always reach for `DENSE_RANK()` wrapped in a CTE.
+`ROW_NUMBER()` counts rows, 1, 2, 3, 4. `RANK()` counts rows but ties skip, 1, 1, 3. `DENSE_RANK()` counts distinct values, 1, 1, 2, no gaps. If the question says distinct salaries, tiers, or levels, you want `DENSE_RANK() OVER (ORDER BY salary DESC)` wrapped in a CTE and filtered outside. Partition adds per group, `PARTITION BY department` just restarts the counting at 1 for each group.
