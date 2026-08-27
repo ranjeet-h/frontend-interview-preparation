@@ -176,7 +176,7 @@ Because a `WHERE` clause only accepts rows where the condition evaluates strictl
 
 ## 5. Edge Cases — The Ones That Break Naive Solutions
 
-- **Nullable Foreign Keys (Guest Checkout):** When `Orders.user_id` allows `NULL`, naive `NOT IN` returns zero results. Always use `NOT EXISTS` or `LEFT JOIN ... WHERE IS NULL` to ensure immunity to `NULL` rows.
+- **Orphan Orders / Nullable Foreign Keys (Guest Checkout):** When `Orders.user_id` allows `NULL` — orphan orders from guest checkouts, deleted users, or data imports — naive `NOT IN` returns zero rows (the entire result becomes empty) because the subquery contains a `NULL`. Always use `NOT EXISTS` or `LEFT JOIN ... WHERE IS NULL` to ensure immunity to `NULL` rows.
 - **Multiple Orders Per User (Fan-Out):** A user with 1,000 orders produces 1,000 intermediate rows in a raw `LEFT JOIN`. If you omit `WHERE o.user_id IS NULL` or write grouping queries without care, the engine expends significant CPU and memory managing row explosion. `NOT EXISTS` never suffers from fan-out because it stops at the first match.
 - **Empty `Orders` Table:** If no orders have ever been placed in the database, `NOT EXISTS` and `LEFT JOIN` both return all rows from `Users`.
 - **Empty `Users` Table:** Returns zero rows immediately without throwing errors or running unbounded subqueries.
@@ -184,9 +184,9 @@ Because a `WHERE` clause only accepts rows where the condition evaluates strictl
 
 ## 6. Variations and Follow-ups
 
-**Variation 1: Users With No Orders in the Last 90 Days**
+**Variation 1: Users With No Orders in the Last 30 Days**
 
-Interviewers frequently add a time window: *"Find all users who haven't placed an order in the last 90 days."* This includes users who never placed an order AND users who placed orders long ago.
+Interviewers frequently add a time window: *"Find all users who haven't placed an order in the last 30 days."* This includes users who never placed an order AND users whose last order was more than 30 days ago.
 
 *Solution using `NOT EXISTS` (Cleanest):*
 
@@ -199,7 +199,7 @@ WHERE NOT EXISTS (
     SELECT 1
     FROM Orders o
     WHERE o.user_id = u.id
-      AND o.order_date >= CURRENT_DATE - INTERVAL '90 days'
+      AND o.order_date >= CURRENT_DATE - INTERVAL '30 days'
 );
 ```
 
@@ -212,11 +212,11 @@ SELECT
 FROM Users u
 LEFT JOIN Orders o
     ON u.id = o.user_id
-   AND o.order_date >= CURRENT_DATE - INTERVAL '90 days'
+   AND o.order_date >= CURRENT_DATE - INTERVAL '30 days'
 WHERE o.user_id IS NULL;
 ```
 
-*The Trap to Mention:* If you accidentally place `AND o.order_date >= CURRENT_DATE - INTERVAL '90 days'` in the `WHERE` clause instead of the `ON` clause, you convert the `LEFT JOIN` into an `INNER JOIN` (because `WHERE NULL >= ...` evaluates to `UNKNOWN`), completely eliminating users who never placed any orders at all.
+*The Trap to Mention:* If you accidentally place `AND o.order_date >= CURRENT_DATE - INTERVAL '30 days'` in the `WHERE` clause instead of the `ON` clause, you convert the `LEFT JOIN` into an `INNER JOIN` (because `WHERE NULL >= ...` evaluates to `UNKNOWN`), completely eliminating users who never placed any orders at all.
 
 **Variation 2: Finding Inactive Users via `GROUP BY ... HAVING`**
 
