@@ -623,63 +623,96 @@ Process 30 leaf pages under `src/full-stack/databases/mysql/` as Type E in alpha
 6. [x] rewritten — `src/full-stack/databases/mysql/innodb-vs-myisam.md` — Type E
 7. [x] rewritten — `src/full-stack/databases/mysql/what-are-mysql-isolation-levels.md` — Type E
 8. [x] rewritten — `src/full-stack/databases/mysql/what-are-mysql-json-functions.md` — Type E
-9. [ ] assigned — `src/full-stack/databases/mysql/what-is-auto-increment.md` — Type E
-10. [ ] assigned — `src/full-stack/databases/mysql/what-is-binlog.md` — Type E
-11. [ ] assigned — `src/full-stack/databases/mysql/what-is-charset.md` — Type E
-12. [ ] assigned — `src/full-stack/databases/mysql/what-is-collation.md` — Type E
-13. [ ] assigned — `src/full-stack/databases/mysql/what-is-composite-index-in-mysql.md` — Type E
-14. [ ] assigned — `src/full-stack/databases/mysql/what-is-connection-pool-in-mysql.md` — Type E
-15. [ ] assigned — `src/full-stack/databases/mysql/what-is-datetime-vs-timestamp.md` — Type E
-16. [ ] assigned — `src/full-stack/databases/mysql/what-is-deadlock-in-mysql.md` — Type E
-17. [ ] queued — `src/full-stack/databases/mysql/what-is-explain-in-mysql.md` — Type E
-18. [ ] queued — `src/full-stack/databases/mysql/what-is-full-text-index-in-mysql.md` — Type E
-19. [ ] queued — `src/full-stack/databases/mysql/what-is-gap-lock.md` — Type E
-20. [ ] queued — `src/full-stack/databases/mysql/what-is-innodb.md` — Type E
-21. [ ] queued — `src/full-stack/databases/mysql/what-is-master-slave-replication.md` — Type E
-22. [ ] queued — `src/full-stack/databases/mysql/what-is-myisam.md` — Type E
-23. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-indexing.md` — Type E
-24. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-query-cache.md` — Type E
-25. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-replication.md` — Type E
-26. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql-storage-engine.md` — Type E
-27. [ ] queued — `src/full-stack/databases/mysql/what-is-mysql.md` — Type E
-28. [ ] queued — `src/full-stack/databases/mysql/what-is-next-key-lock.md` — Type E
-29. [ ] queued — `src/full-stack/databases/mysql/what-is-read-replica.md` — Type E
-30. [ ] queued — `src/full-stack/databases/mysql/what-is-varchar-vs-text.md` — Type E
-17. [ ] queued — `src/full-stack/databases/postgresql/what-is-expression-index.md` — Type E
-18. [ ] queued — `src/full-stack/databases/postgresql/what-is-full-text-search-in-postgresql.md` — Type E
-19. [ ] queued — `src/full-stack/databases/postgresql/what-is-gin-index.md` — Type E
-20. [ ] queued — `src/full-stack/databases/postgresql/what-is-gist-index.md` — Type E
-21. [ ] queued — `src/full-stack/databases/postgresql/what-is-jsonb.md` — Type E
-22. [ ] queued — `src/full-stack/databases/postgresql/what-is-logical-replication.md` — Type E
-23. [ ] queued — `src/full-stack/databases/postgresql/what-is-mvcc.md` — Type E
-24. [ ] queued — `src/full-stack/databases/postgresql/what-is-on-conflict.md` — Type E
-25. [ ] queued — `src/full-stack/databases/postgresql/what-is-partial-index.md` — Type E
-26. [ ] queued — `src/full-stack/databases/postgresql/what-is-partitioning-in-postgresql.md` — Type E
-27. [ ] queued — `src/full-stack/databases/postgresql/what-is-postgis.md` — Type E
-28. [ ] queued — `src/full-stack/databases/postgresql/what-is-postgresql.md` — Type E
-29. [ ] queued — `src/full-stack/databases/postgresql/what-is-row-level-locking.md` — Type E
-30. [ ] queued — `src/full-stack/databases/postgresql/what-is-serial.md` — Type E
-31. [ ] queued — `src/full-stack/databases/postgresql/what-is-streaming-replication.md` — Type E
-32. [ ] queued — `src/full-stack/databases/postgresql/what-is-transaction-isolation-in-postgresql.md` — Type E
-33. [ ] queued — `src/full-stack/databases/postgresql/what-is-upsert.md` — Type E
-34. [ ] queued — `src/full-stack/databases/postgresql/what-is-uuid-in-postgresql.md` — Type E
-35. [ ] queued — `src/full-stack/databases/postgresql/what-is-vacuum.md` — Type E
-25. [ ] queued — `src/full-stack/databases/sql/what-is-indexing.md` — Type E
-26. [ ] queued — `src/full-stack/databases/sql/what-is-isolation-level.md` — Type E
-27. [ ] queued — `src/full-stack/databases/sql/what-is-non-repeatable-read.md` — Type E
-28. [ ] queued — `src/full-stack/databases/sql/what-is-normalization.md` — Type E
-29. [ ] queued — `src/full-stack/databases/sql/what-is-optimistic-locking.md` — Type E
-30. [ ] queued — `src/full-stack/databases/sql/what-is-partitioning.md` — Type E
-31. [ ] queued — `src/full-stack/databases/sql/what-is-pessimistic-locking.md` — Type E
-32. [ ] queued — `src/full-stack/databases/sql/what-is-phantom-read.md` — Type E
-33. [ ] queued — `src/full-stack/databases/sql/what-is-query-execution-plan.md` — Type E
-34. [ ] queued — `src/full-stack/databases/sql/what-is-rdbms.md` — Type E
-35. [ ] queued — `src/full-stack/databases/sql/what-is-read-replica.md` — Type E
-36. [ ] queued — `src/full-stack/databases/sql/what-is-row-level-locking.md` — Type E
-37. [ ] queued — `src/full-stack/databases/sql/what-is-schema-migration.md` — Type E
-38. [ ] queued — `src/full-stack/databases/sql/what-is-sql.md` — Type E
-39. [ ] queued — `src/full-stack/databases/sql/what-is-table-level-locking.md` — Type E
-40. [ ] queued — `src/full-stack/databases/sql/when-can-indexes-hurt-performance.md` — Type E
+9. [x] rewritten — `src/full-stack/databases/mysql/what-is-auto-increment.md` — Type E
+10. [x] rewritten — `src/full-stack/databases/mysql/what-is-binlog.md` — Type E
+11. [x] rewritten — `src/full-stack/databases/mysql/what-is-charset.md` — Type E
+12. [x] rewritten — `src/full-stack/databases/mysql/what-is-collation.md` — Type E
+13. [x] rewritten — `src/full-stack/databases/mysql/what-is-composite-index-in-mysql.md` — Type E
+14. [x] rewritten — `src/full-stack/databases/mysql/what-is-connection-pool-in-mysql.md` — Type E
+15. [x] rewritten — `src/full-stack/databases/mysql/what-is-datetime-vs-timestamp.md` — Type E
+16. [x] rewritten — `src/full-stack/databases/mysql/what-is-deadlock-in-mysql.md` — Type E
+17. [x] rewritten — `src/full-stack/databases/mysql/what-is-explain-in-mysql.md` — Type E
+18. [x] rewritten — `src/full-stack/databases/mysql/what-is-full-text-index-in-mysql.md` — Type E
+19. [x] rewritten — `src/full-stack/databases/mysql/what-is-gap-lock.md` — Type E
+20. [x] rewritten — `src/full-stack/databases/mysql/what-is-innodb.md` — Type E
+21. [x] rewritten — `src/full-stack/databases/mysql/what-is-master-slave-replication.md` — Type E
+22. [x] rewritten — `src/full-stack/databases/mysql/what-is-myisam.md` — Type E
+23. [x] rewritten — `src/full-stack/databases/mysql/what-is-mysql-indexing.md` — Type E
+24. [x] rewritten — `src/full-stack/databases/mysql/what-is-mysql-query-cache.md` — Type E
+25. [x] rewritten — `src/full-stack/databases/mysql/what-is-mysql-replication.md` — Type E
+26. [x] rewritten — `src/full-stack/databases/mysql/what-is-mysql-storage-engine.md` — Type E
+27. [x] rewritten — `src/full-stack/databases/mysql/what-is-mysql.md` — Type E
+28. [x] rewritten — `src/full-stack/databases/mysql/what-is-next-key-lock.md` — Type E
+29. [x] rewritten — `src/full-stack/databases/mysql/what-is-read-replica.md` — Type E
+30. [x] rewritten — `src/full-stack/databases/mysql/what-is-varchar-vs-text.md` — Type E
+31. [x] complete — all 30 `src/full-stack/databases/mysql/*.md` leaf pages rewritten; track gate clean
+
+## Phase 4 — SQL Query Practice
+
+Process 30 leaf pages under `src/full-stack/databases/sql-query-practice/` as Type B (one SQL problem per page) in alphabetical order. Skip `index.md`.
+
+1. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-aggregate-json-data.md` — Type B
+2. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-calculate-monthly-revenue.md` — Type B
+3. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-calculate-running-total.md` — Type B
+4. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-count-users-by-role.md` — Type B
+5. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-delete-duplicate-rows.md` — Type B
+6. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-filter-by-date-range.md` — Type B
+7. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-find-customers-who-ordered-in-the-last-30-days.md` — Type B
+8. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-find-duplicate-emails.md` — Type B
+9. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-find-inactive-users.md` — Type B
+10. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-find-parent-child-hierarchy.md` — Type B
+11. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-find-top-5-products-by-sales.md` — Type B
+12. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-get-orders-with-user-details.md` — Type B
+13. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-get-the-nth-highest-salary.md` — Type B
+14. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-get-the-second-highest-salary.md` — Type B
+15. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-get-users-with-no-orders.md` — Type B
+16. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-paginate-records.md` — Type B
+17. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-soft-delete-records.md` — Type B
+18. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-to-update-records-using-join.md` — Type B
+19. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-cte.md` — Type B
+20. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-dense-rank.md` — Type B
+21. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-full-outer-join.md` — Type B
+22. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-group-by.md` — Type B
+23. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-having.md` — Type B
+24. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-inner-join.md` — Type B
+25. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-left-join.md` — Type B
+26. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-rank.md` — Type B
+27. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-right-join.md` — Type B
+28. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-row-number.md` — Type B
+29. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-subquery.md` — Type B
+30. [x] rewritten — `src/full-stack/databases/sql-query-practice/write-a-query-using-window-functions.md` — Type B
+31. [x] complete — all 30 `src/full-stack/databases/sql-query-practice/*.md` leaf pages rewritten; track gate clean
+
+## Phase 7 — Senior Scenarios
+
+Process 25 leaf pages under `src/full-stack/backend/senior-scenarios/` as Type E/D in alphabetical order. Skip `index.md`. Classify Type D only if the page is genuinely a system-design build; most are debugging/pattern pages → Type E.
+
+1. [x] rewritten — `src/full-stack/backend/senior-scenarios/api-is-slow-in-production-how-will-you-debug-it.md` — Type E
+2. [x] rewritten — `src/full-stack/backend/senior-scenarios/api-works-locally-but-fails-in-production-how-will-you-debug-it.md` — Type E
+3. [x] rewritten — `src/full-stack/backend/senior-scenarios/backend-has-high-traffic-spikes-how-will-you-scale-it.md` — Type E
+4. [x] rewritten — `src/full-stack/backend/senior-scenarios/cors-works-in-postman-but-fails-in-browser-why.md` — Type E
+5. [x] rewritten — `src/full-stack/backend/senior-scenarios/database-cpu-is-high-how-will-you-debug-it.md` — Type E
+6. [x] rewritten — `src/full-stack/backend/senior-scenarios/duplicate-orders-are-getting-created-how-will-you-fix-it.md` — Type E
+7. [x] rewritten — `src/full-stack/backend/senior-scenarios/fastapi-server-workers-are-blocked-how-will-you-debug-it.md` — Type E
+8. [x] rewritten — `src/full-stack/backend/senior-scenarios/file-upload-fails-for-large-files-how-will-you-fix-it.md` — Type E
+9. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-deploy-a-breaking-schema-change-safely.md` — Type E
+10. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-design-a-backend-that-supports-mobile-and-web-clients.md` — Type E/D
+11. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-handle-large-reports.md` — Type E
+12. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-handle-multi-tenant-data-isolation.md` — Type E
+13. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-migrate-a-large-table-without-downtime.md` — Type E
+14. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-prevent-one-tenant-from-accessing-another-tenant-s-data.md` — Type E
+15. [x] rewritten — `src/full-stack/backend/senior-scenarios/how-will-you-process-1-million-records-efficiently.md` — Type E
+16. [x] rewritten — `src/full-stack/backend/senior-scenarios/jwt-works-for-some-users-but-fails-for-others-why.md` — Type E
+17. [x] rewritten — `src/full-stack/backend/senior-scenarios/mongodb-query-is-slow-how-will-you-optimize-it.md` — Type E
+18. [x] rewritten — `src/full-stack/backend/senior-scenarios/mysql-deadlock-occurs-how-will-you-debug-it.md` — Type E
+19. [x] rewritten — `src/full-stack/backend/senior-scenarios/node-js-server-memory-keeps-increasing-how-will-you-debug-it.md` — Type E
+20. [x] rewritten — `src/full-stack/backend/senior-scenarios/one-endpoint-randomly-times-out-how-will-you-debug-it.md` — Type E
+21. [x] rewritten — `src/full-stack/backend/senior-scenarios/payment-webhook-is-called-multiple-times-how-will-you-handle-it.md` — Type E
+22. [x] rewritten — `src/full-stack/backend/senior-scenarios/postgresql-query-is-slow-how-will-you-optimize-it.md` — Type E
+23. [x] rewritten — `src/full-stack/backend/senior-scenarios/refresh-token-rotation-causes-logout-issues-how-will-you-fix-it.md` — Type E
+24. [x] rewritten — `src/full-stack/backend/senior-scenarios/search-api-returns-old-results-how-will-you-debug-it.md` — Type E
+25. [x] rewritten — `src/full-stack/backend/senior-scenarios/users-are-getting-logged-out-randomly-how-will-you-debug-it.md` — Type E
+26. [x] complete — all 25 `src/full-stack/backend/senior-scenarios/*.md` leaf pages rewritten; track gate clean
 
 ## Phase 10 — SQLAlchemy
 

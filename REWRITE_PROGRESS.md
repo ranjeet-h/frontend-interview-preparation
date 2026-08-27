@@ -29,7 +29,8 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **648** | **100% Done** |
+| **Senior Scenarios** (`src/full-stack/backend/senior-scenarios/`) | 25 / 25 | Complete |
+| **Total Completed Concept & Practice Pages** | **673** | **100% Done** |
 
 ---
 
@@ -63,10 +64,10 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Queues | 20 | 0 | 0 | 20 |
 | Redis | 20 | 0 | 0 | 20 |
 | Security | 30 | 0 | 0 | 30 |
-| Senior scenarios | 25 | 0 | 0 | 25 |
+| Senior scenarios | 25 | 25 | 0 | 0 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **300** | **0** | **0** | **300** |
+| **Total Backend** | **300** | **25** | **0** | **275** |
 
 ### Database Sections Status (135/135 Complete)
 
@@ -82,8 +83,8 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **588**
+- **Total Completed Concept/System Pages:** **673**
 - **Total Completed Output Question Puzzles:** **53**
 - **JavaScript Polyfills:** **1 / 1 complete**
 - **Database Remaining:** **0** (All 135 database pages complete!)
-- **Backend Remaining:** **360** (14 remaining backend sections)
+- **Backend Remaining:** **275** (11 remaining sections — senior scenarios 25/25 complete)
