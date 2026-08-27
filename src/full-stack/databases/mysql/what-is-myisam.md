@@ -1,6 +1,6 @@
-# MyISAM Storage Engine in MySQL: Non-Clustered Storage, Table Locks, and Legacy Pitfalls
+# What is MyISAM?
 
-## 1. Why This Exists — The Problem First
+## 1. The Real-World Problem — When You Actually Hit This
 
 Imagine running a high-traffic analytics and reporting dashboard backed by legacy MySQL tables. During off-peak testing, single-user read queries return in under 5 milliseconds. But the moment real traffic surges, hundreds of users start generating background events, triggering simultaneous `INSERT` and `UPDATE` statements. Suddenly, the entire web application grinds to a halt. API response times explode from 20 milliseconds to 45 seconds, database connection pools exhaust, and incoming HTTP requests time out.
 
@@ -8,7 +8,7 @@ When you run `SHOW PROCESSLIST` to diagnose the outage, you find dozens of simpl
 
 This failure mode is the reality of MyISAM—the original default storage engine of MySQL from version 3.23 until MySQL 5.5 (when InnoDB became the default). MyISAM was built in the 1990s for simple, read-heavy workloads on hardware with scarce memory. It achieved blazing raw read speed by cutting out all the machinery of modern databases: no transactions, no row-level locking, no foreign keys, and no crash-recovery logs. Understanding MyISAM's non-clustered architecture, table-level locking bottlenecks, and lack of ACID guarantees is critical for diagnosing legacy MySQL systems, performing zero-downtime migrations, and answering senior database interview questions.
 
-## 2. The Analogy — Make It Obvious
+## 2. The Analogy — Make the Mechanic Obvious
 
 Think of a physical public reading library that maintains visitor records using a paper-based filing system:
 
@@ -22,7 +22,7 @@ The Lack of Carbon Copies (No WAL / Crash Recovery) means the clerk writes direc
 
 Modern storage engines like InnoDB replace this entire setup with a digital database: every reader reads their own snapshot simultaneously, writes modify individual isolated rows, and every change is journaled to an append-only log before touching memory.
 
-## 3. How It Actually Works — The Full Explanation
+## 3. The Full Explanation — How It Actually Works
 
 Storage engines in MySQL are pluggable components responsible for the physical storage, indexing, locking, and retrieval of table data. The MySQL server layer handles SQL parsing, optimization, and client connections, while the underlying storage engine interacts with the filesystem.
 
@@ -58,7 +58,7 @@ The most dangerous aspect of MyISAM in production is its total absence of ACID c
 
 Because of these limitations, modern architectures exclusively use InnoDB for general transactional workloads. Migrating a legacy MyISAM table to InnoDB is done via `ALTER TABLE tbl_name ENGINE=InnoDB`, which locks the table, builds an InnoDB clustered index and tablespace (`.ibd`), and replaces the old `.frm`, `.MYD`, and `.MYI` files.
 
-## 4. Real Code — See It Working
+## 4. See It In Practice — Real Code or Queries
 
 Let us look at real SQL commands that demonstrate table inspection, locking behavior, transaction ignorance, table repair, and InnoDB migration.
 
@@ -167,7 +167,7 @@ WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'visitor_logs';
 -- Output confirms: Engine: InnoDB
 ```
 
-## 5. The Interview Questions — All of Them, Done Properly
+## 5. Interview Questions — All of Them, Done Properly
 
 **Q: What is MyISAM and how does its physical file layout on disk work?**
 
@@ -219,9 +219,9 @@ To migrate a MyISAM table to InnoDB safely:
 3. Size the `innodb_buffer_pool_size` appropriately so the newly converted InnoDB table and its indexes can fit in memory.
 4. Account for locking: `ALTER TABLE` will hold a metadata lock on the table during the conversion. For massive tables with continuous traffic, use online schema change tools like `pt-online-schema-change` or `gh-ost` to copy data in chunks without blocking application traffic.
 
-## 6. The Traps — What Goes Wrong
+## 6. The Traps — What Goes Wrong in Production
 
-### Trap 1: Expecting `ROLLBACK` to Undo Failed Operations
+**Trap 1: Expecting `ROLLBACK` to Undo Failed Operations**
 
 Developers writing application code often wrap multiple queries inside a transaction block in their ORM or database driver:
 
@@ -238,25 +238,25 @@ except Exception:
 
 If the `accounts` table is backed by MyISAM, the `UPDATE` is applied immediately and permanently to the `.MYD` file. When the `INSERT` fails and the exception handler executes `ROLLBACK`, MySQL silently ignores it. The balance has been decremented, the audit log was not written, and the application is left in an inconsistent state with missing funds.
 
-### Trap 2: Believing `SELECT COUNT(*)` Speed Justifies Using MyISAM
+**Trap 2: Believing `SELECT COUNT(*)` Speed Justifies Using MyISAM**
 
 A classic myth is that MyISAM should be used because `SELECT COUNT(*)` is instantaneous. In MyISAM, an exact row counter is maintained in the `.MYI` file header, so `SELECT COUNT(*)` returns in $O(1)$ time without reading data blocks. In InnoDB, `COUNT(*)` must scan the primary key or secondary index to evaluate active transactions under MVCC isolation rules.
 
 However, choosing MyISAM for `COUNT(*)` ignores the catastrophic penalty of table-level write locks. The moment an `INSERT` or `UPDATE` runs, the entire table is locked, turning all your fast reads into stalled queries. If fast counts are needed in InnoDB, developers use cached counters (e.g., Redis) or summary tables rather than sacrificing ACID compliance across an entire database.
 
-### Trap 3: Silent Foreign Key Failure
+**Trap 3: Silent Foreign Key Failure**
 
 When migrating a schema from PostgreSQL or SQL Server to MySQL, teams often define `FOREIGN KEY (user_id) REFERENCES users(id)` in their DDL scripts. If the table engine defaults to or is set to MyISAM, MySQL will create the table successfully without warnings.
 
 In production, child records can be inserted with non-existent `user_id` values, and parent records can be deleted while leaving orphaned child rows. The database engine never checks or enforces the constraint.
 
-### Trap 4: Write Starvation Freezing Web Traffic
+**Trap 4: Write Starvation Freezing Web Traffic**
 
 Under default MySQL settings, write locks have higher priority than read locks (`low_priority_updates = 0`). If an application issues a batch of 50 `INSERT` or `UPDATE` queries on a MyISAM table, every single incoming `SELECT` query from web users is queued behind all 50 writes.
 
 The application connection pool exhausts within seconds, health checks fail, load balancers drop the backend instances, and the entire system experiences a cascading outage—all caused by table lock queuing.
 
-### Trap 5: Data File Holes Disabling Concurrent Inserts
+**Trap 5: Data File Holes Disabling Concurrent Inserts**
 
 MyISAM's only write-concurrency mechanism is Concurrent Inserts, which allows `INSERT` statements to append to the end of `.MYD` while `SELECT` queries are running. However, this optimization only works if there are zero deleted or resized records in the table (`Data_free = 0`).
 
@@ -275,11 +275,11 @@ The moment an application runs `DELETE FROM events WHERE created_at < NOW() - IN
 | **`SELECT COUNT(*)` Cost** | $O(1)$ constant time (stored in `.MYI` header) | $O(N)$ index scan (due to MVCC isolation visibility) | $O(1)$ constant time |
 | **Concurrency Model** | Single writer blocks all readers; severe write starvation | Multi-Version Concurrency Control (MVCC); readers never block writers | Single writer blocks all readers |
 
-### MyISAM vs. InnoDB
+**MyISAM vs. InnoDB**
 - **Key Difference**: InnoDB organizes data physically around the primary key in a clustered B+tree, provides row-level locks, and uses a Write-Ahead Log (WAL) to guarantee transactions and zero data loss on crashes. MyISAM stores data in an unorganized heap with independent index files, uses whole-table locks, and has no crash recovery mechanism.
 - **Rule of Thumb**: Always use InnoDB for application data, transactional tables, and any workload requiring concurrent reads and writes or crash safety.
 
-### Table-Level Locking vs. Row-Level Locking
+**Table-Level Locking vs. Row-Level Locking**
 - **Key Difference**: A table-level lock serializes access to the entire dataset (one writer blocks thousands of concurrent users across every row). A row-level lock locks only the specific index record or row being modified, allowing thousands of other users to read and update adjacent rows concurrently.
 - **Rule of Thumb**: Table-level locks are acceptable only for read-only static reference data or batch processing; row-level locks are mandatory for interactive, multi-user web services.
 
