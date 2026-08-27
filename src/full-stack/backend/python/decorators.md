@@ -1,118 +1,760 @@
-# Decorators
+# Decorators in Python: First-Class Functions, Closures, and Metadata Preservation (`functools.wraps`)
 
-## Detailed explanation
+## 1. Why This Exists — The Problem First
 
-Decorators wrap functions or classes to add behavior without changing the original definition body. For backend interviews, explain how this affects API correctness, performance, testing, reliability, and maintainability in Python services.
+Imagine you are maintaining a production Python backend with 50 REST API endpoints. Every endpoint must perform the same three operational requirements: verify an incoming authentication token, log execution latency to Prometheus, and retry on intermittent database timeouts.
 
-## 1. One-line mental model
-
-Decorator is a function that returns an enhanced function.
-
-## 2. Problem it solves
-
-This concept helps Python backend code stay predictable under real service conditions: request handling, validation, database access, async work, tests, dependency management, and production debugging.
-
-## 3. Core idea
-
-- Understand the language behavior before applying a framework.
-- Use explicit contracts where possible.
-- Avoid hidden mutation and hidden dependencies.
-- Choose concurrency tools based on I/O-bound vs CPU-bound work.
-- Write code that is easy to test and debug.
-
-## 4. Visual / analogy
-
-```txt
-Python concept -> service code behavior -> API reliability -> production debugging
-```
-
-## 5. Minimal example
+If you implement this inline inside every endpoint function, your codebase quickly degrades into repetitive boilerplate. Every route handler ends up wrapped in identical `try/except` retry loops, timestamp calculations (`time.perf_counter()`), and token inspection checks:
 
 ```python
-def example(value):
-    return value
+# The boilerplate nightmare: 50 endpoints with identical cross-cutting logic
+def get_user_profile(user_id: int):
+    # 1. Auth check
+    token = get_current_token()
+    if not token or not token.is_valid:
+        raise PermissionError("Unauthorized")
+    
+    # 2. Timing logic
+    start_time = time.perf_counter()
+    
+    # 3. Retry loop
+    attempts = 0
+    while attempts < 3:
+        try:
+            profile = db.query_user(user_id)  # Actual business logic (1 line!)
+            duration = time.perf_counter() - start_time
+            metrics.record("user_profile_latency", duration)
+            return profile
+        except DatabaseTimeout:
+            attempts += 1
+            if attempts == 3:
+                raise
 ```
 
-## 6. Real-world example
+Your single line of business logic is buried under fifteen lines of operational plumbing. When security asks you to change token validation, you have to find and patch 50 different functions. If an engineer forgets the retry block on endpoint #42, that endpoint crashes on routine database failovers.
 
-In a FastAPI or Django backend, decorators affects how request data is represented, how dependencies are passed, how resources are cleaned up, and how code behaves under load.
+Extracting these concerns into helper functions helps, but manually passing functions into wrapper functions (`get_user_profile = apply_retries(apply_timing(apply_auth(get_user_profile)))`) is awkward, error-prone, and destroys function metadata. Without explicit metadata management, `get_user_profile.__name__` becomes `"wrapper"`, docstrings disappear, and parameter signatures are wiped out. As a result, automated OpenAPI documentation tools (like FastAPI's Swagger UI), debugging stack traces, and serialization schemas break completely.
 
-## 7. Common interview questions
+Python decorators exist to solve this exact problem: they provide a clean, declarative syntax for wrapping functions with reusable cross-cutting behaviors while preserving function identity, signatures, and runtime predictability.
 
-#### What are decorators in Python?
-- **The Engine Mechanism (Why it behaves this way):** A decorator is a callable that takes a function (or class) as input and returns a modified version. The `@decorator` syntax is syntactic sugar for `func = decorator(func)`. The decorator receives the original function object, creates a wrapper function (usually using `*args, **kwargs`), and returns the wrapper. When the decorated function is called, the wrapper executes — it can run code before, after, or around the original function, modify arguments, modify the return value, or even skip calling the original entirely. `functools.wraps` copies metadata (`__name__`, `__doc__`, `__module__`) from the original to the wrapper, preserving introspection.
-- **The Unforgettable Mental Model:** The **Gift Wrapping**. The original function is the gift. The decorator is the wrapping paper and bow — it doesn't change what's inside, but it adds presentation (logging, auth, caching) around it. The recipient (caller) sees the wrapped version.
-- **The Trap:** Forgetting `functools.wraps` — without it, `func.__name__` returns `"wrapper"` instead of the original function name, breaking debugging, logging, and documentation tools.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: A decorator is a function that takes another function and returns an enhanced version. It's syntactic sugar for function composition — `@decorator` is equivalent to `func = decorator(func)`. The wrapper can add behavior like logging, authentication, caching, or timing without modifying the original function. I always use `functools.wraps` to preserve the original function's metadata, which is critical for debugging and documentation. In FastAPI, decorators are used extensively for route definitions, dependency injection, and middleware."
+---
 
-#### Why do decorators matter in backend Python services?
-- **The Engine Mechanism (Why it behaves this way):** Decorators provide cross-cutting concern separation — authentication, rate limiting, logging, error handling, and caching are applied declaratively without cluttering business logic. In FastAPI, `@app.get("/users")` is a decorator that registers the function as a route handler. In Django, `@login_required` and `@csrf_exempt` control access. Custom decorators like `@retry`, `@cache`, and `@timing` add operational concerns. Because decorators execute at import time (when the module is loaded), they can register functions, build routing tables, and configure behavior before any request is handled.
-- **The Unforgettable Mental Model:** The **Security Checkpoint**. Instead of checking every employee's ID at their desk (inline auth checks), you place a checkpoint at the building entrance (decorator). Every request passes through it automatically.
-- **The Trap:** Decorators run at import time, not call time. If a decorator has side effects (like database queries or network calls), they execute when the module is imported, not when the function is called.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Decorators are essential for separating cross-cutting concerns from business logic. In backend services, I use them for authentication (`@require_auth`), rate limiting (`@rate_limit`), caching (`@cache`), retry logic (`@retry`), and error handling (`@handle_errors`). They make code cleaner — the business function focuses on its core logic, while decorators handle operational concerns. In FastAPI, the entire routing system is decorator-based. I'm careful to keep decorators import-time safe — no side effects during decoration, only setup."
+## 2. The Analogy — Make It Obvious
 
-#### What bug can happen if you misunderstand decorators?
-- **The Engine Mechanism (Why it behaves this way):** The metadata loss bug: without `@functools.wraps`, the decorated function loses its `__name__`, `__doc__`, and signature — breaking introspection, help(), and tools like Sphinx. The argument mismatch bug: a decorator wrapper that uses `def wrapper(arg)` instead of `def wrapper(*args, **kwargs)` breaks functions with different signatures. The import-time side effect bug: a decorator that makes a database connection at decoration time fails during testing or CLI commands that import the module. The async decorator bug: decorating an async function with a sync wrapper breaks it — you need `async def wrapper` and `await func(*args, **kwargs)`.
-- **The Unforgettable Mental Model:** The **Identity Theft**. Without `functools.wraps`, the decorated function loses its identity — it looks like "wrapper" to every introspection tool. It's like someone wearing a mask to a party — nobody knows who they really are.
-- **The Trap:** Writing a decorator that works for sync functions but breaks async ones. Async functions need async-aware decorators.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The most common decorator bugs are: forgetting `functools.wraps`, which breaks introspection and debugging; using fixed signatures in the wrapper instead of `*args, **kwargs`, which breaks functions with different parameters; and writing sync decorators for async functions, which breaks the event loop. I also watch for import-time side effects — decorators should only set up behavior, not execute it. For async decorators, I use `async def wrapper` and `await func(*args, **kwargs)`, or I use libraries like `asgiref.sync.sync_to_async`."
+Think of a decorator like an **Airport Security and Boarding Gate Checkpoint**:
 
-#### How do decorators affect testing?
-- **The Engine Mechanism (Why it behaves this way):** Decorators can make testing harder if they add behavior you don't want in tests — like authentication checks, rate limiting, or network calls. You can test the undecorated function by accessing `func.__wrapped__` (set by `functools.wraps`). You can also use `unittest.mock.patch` to replace decorator behavior. When testing the decorator itself, you create a mock function, apply the decorator, and verify the wrapper's behavior. Parameterized decorators (like `@retry(times=3)`) need testing with different parameter combinations.
-- **The Unforgettable Mental Model:** The **X-Ray Machine**. `__wrapped__` is like an X-ray — it lets you see through the decorator wrapping to test the original function underneath.
-- **The Trap:** Testing only the decorated function without testing the decorator in isolation. The decorator might have bugs that only appear with certain function signatures.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I test decorators in two ways. First, I test the decorator itself by applying it to mock functions and verifying the wrapper's behavior — does it call the original? Does it handle errors? Does it respect parameters? Second, I test the decorated function by accessing `func.__wrapped__` to bypass the decorator when I want to test the core logic in isolation. I also use `mock.patch` to replace external dependencies that decorators might use, like auth services or cache backends."
+```txt
+┌──────────────────────────────────────────────────────────────────┐
+│                   AIRPORT BOARDING GATE (Wrapper)                │
+│                                                                  │
+│  [Passenger Arrives]                                             │
+│          │                                                       │
+│          ▼                                                       │
+│  1. Check Boarding Pass (Authentication Pre-Check)               │
+│  2. Start Boarding Timer (Metrics / Latency Tracking)            │
+│          │                                                       │
+│          ▼                                                       │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                AIRPLANE FLIGHT (Core Function)             │  │
+│  │              Passengers fly to their destination           │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│          │                                                       │
+│          ▼                                                       │
+│  3. Stop Timer & Log Manifest (Post-Execution Logging)           │
+│  4. Catch In-Flight Turbulence / Divert (Error Handling/Retry)   │
+│          │                                                       │
+│          ▼                                                       │
+│  [Passenger Exits at Destination]                                │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-#### How do decorators affect performance?
-- **The Engine Mechanism (Why it behaves this way):** Each decorator adds a function call layer — calling a decorated function means calling the wrapper, which then calls the original. This adds a small overhead (nanoseconds per call). For frequently-called functions in hot paths, stacking many decorators can add measurable overhead. However, decorators that add caching (`@lru_cache`) or skip execution (early returns for auth failures) can dramatically improve performance. The import-time cost of decorators is paid once when the module loads, not per request.
-- **The Unforgettable Mental Model:** The **Toll Road**. Each decorator is a toll booth — a small delay per pass. But some toll booths (caching) give you a fast-pass that skips future tolls entirely.
-- **The Trap:** Stacking too many decorators on hot-path functions. Five decorators means five function call layers per invocation.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Decorators add a small per-call overhead — each wrapper is an extra function call. For most backend code, this is negligible. But for hot-path functions called millions of times, I'm mindful of decorator stacking. On the flip side, decorators like `@lru_cache` can dramatically improve performance by avoiding redundant computation. I profile with `cProfile` to identify if decorator overhead is significant, and I use `@lru_cache` strategically for expensive pure functions. The import-time cost is paid once and is rarely a concern."
+Here is how each part of the analogy maps to Python internals:
 
-#### How would you explain decorators with code?
-- **The Engine Mechanism (Why it behaves this way):** Show a basic decorator: `def timing(func): def wrapper(*args, **kwargs): start = time.perf_counter(); result = func(*args, **kwargs); print(f"{func.__name__} took {time.perf_counter()-start:.4f}s"); return result; return wrapper`. Show `@functools.wraps`: add `@wraps(func)` above `wrapper`. Show a parameterized decorator: `def retry(max_attempts=3): def decorator(func): def wrapper(*args, **kwargs): ...; return wrapper; return decorator`. Show async decorator: `def async_timing(func): async def wrapper(*args, **kwargs): ...; return wrapper`. Show decorator stacking: `@auth @cache @timing def handler(): ...` — decorators apply bottom-up (`timing` first, then `cache`, then `auth`).
-- **The Unforgettable Mental Model:** The **Layer Cake**. Stacking decorators is like building a cake — the bottom layer (closest to the function) executes first, then the next, then the next. The top layer (closest to the caller) is the first to receive the call.
-- **The Trap:** Thinking decorators apply top-to-bottom. They apply bottom-to-bottom — `@a @b @c def f` is `f = a(b(c(f)))`, so `c` wraps first.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I demonstrate decorators with four examples. First, a timing decorator that measures execution time — shows the basic wrapper pattern. Second, the same decorator with `@functools.wraps` — shows why metadata preservation matters. Third, a parameterized retry decorator — shows the three-level nesting pattern (parameter → decorator → wrapper). Fourth, an async-aware decorator — shows that async functions need async wrappers. I also explain decorator stacking order: `@a @b @c def f` applies `c` first, then `b`, then `a` — bottom-up."
+1. **The Flight (`Core Function`):** The pilot's sole job is flying passengers from Point A to Point B. The flight does not care how tickets were scanned or how security screening was handled.
+2. **The Gate & Attendants (`Decorator Wrapper`):** The security gate stands in front of the airplane. It checks identification before boarding, starts a timer, lets the passenger board, and handles passenger issues if the flight is delayed.
+3. **Setting Up the Gate (`Decorator Definition Time`):** The airport sets up the physical gate once when the terminal opens (module load / definition time). It does not rebuild the gate every time an individual passenger boards.
+4. **The Flight Number & Manifest (`functools.wraps`):** If the security team stamps their own name on the boarding pass instead of the flight's destination, air traffic control and passengers will have no idea what plane they are on. `@functools.wraps` ensures the flight number, departure time, and pilot identity remain intact on the ticket, even though passengers walk through the security gate.
 
-## 8. Active recall test
+---
 
-1. **What does `@decorator` syntax actually do?**
-   - **Explanation:** It's syntactic sugar for `func = decorator(func)`. The decorator receives the original function and returns a replacement (usually a wrapper). The original name is rebound to the wrapper.
+## 3. How It Actually Works — The Full Explanation
 
-2. **Why is `functools.wraps` important?**
-   - **Explanation:** It copies metadata (`__name__`, `__doc__`, `__module__`, `__qualname__`, `__annotations__`, `__dict__`) from the original function to the wrapper. Without it, introspection tools see "wrapper" instead of the original function name.
+### First-Class Functions and Higher-Order Functions
 
-3. **How do you test a function that has a decorator?**
-   - **Explanation:** Access `func.__wrapped__` to get the original undecorated function. Or use `mock.patch` to replace the decorator's behavior. Test the decorator separately by applying it to mock functions.
+In Python, functions are **first-class objects** (`PyFunctionObject`). This means functions are instances of the `function` class, just like integers or strings. You can:
+- Assign a function to a variable (`alias = my_func`)
+- Pass a function as an argument to another function (`run(my_func)`)
+- Return a function from inside another function (`return my_func`)
+- Store functions in data structures like dictionaries or lists
 
-4. **What is the order of decorator application when stacking?**
-   - **Explanation:** Bottom-up. `@a @b @c def f` is equivalent to `f = a(b(c(f)))`. The decorator closest to the function (`c`) wraps first, then `b`, then `a`. The outermost decorator (`a`) is called first at runtime.
+A function that takes another function as an argument or returns a function is called a **higher-order function**. A decorator is simply a higher-order function that takes a callable and returns a replacement callable.
 
-5. **How do you write a decorator for an async function?**
-   - **Explanation:** The wrapper must also be async: `async def wrapper(*args, **kwargs): ... result = await func(*args, **kwargs); ...`. A sync wrapper around an async function returns a coroutine object without awaiting it.
+---
 
-6. **When does decorator code execute — at import time or call time?**
-   - **Explanation:** The decorator function itself executes at import time (when the module is loaded). The wrapper function executes at call time (when the decorated function is invoked). Side effects in the decorator body happen at import time.
+### The Syntactic Sugar: `@decorator`
 
-## 9. Mistakes / traps
+The `@` symbol is syntactic sugar introduced in PEP 318. When Python's parser encounters `@decorator` above a function definition:
 
-- Memorizing syntax without explaining runtime behavior.
-- Ignoring mutation, cleanup, or dependency boundaries.
-- Using async/thread/process tools without matching the workload.
-- Letting environment-specific dependency issues reach production.
+```python
+@timer
+def calculate_metrics(data):
+    return sum(data)
+```
 
-## 10. Compare with related concepts
+The Python interpreter translates this at **import/definition time** into:
 
-Compare Decorators with nearby Python concepts by asking whether it is about data structure choice, object lifetime, typing, resource cleanup, concurrency, packaging, or testing.
+```python
+def calculate_metrics(data):
+    return sum(data)
 
-## 11. Summary from memory
+calculate_metrics = timer(calculate_metrics)
+```
 
-Explain Decorators and connect it to one backend API or service example.
+The original function object is passed into `timer()`. The name `calculate_metrics` in the local/global scope is immediately rebound to whatever `timer()` returns (typically an inner `wrapper` function).
 
-## 12. Spaced revision prompts
+---
 
-- Day 1: Define Decorators.
-- Day 3: Write a small code example.
-- Day 7: Explain one production bug.
-- Day 14: Compare with a related Python concept.
+### Closures and Lexical Scoping
+
+When a decorator defines an inner function, it creates a **closure**. A closure is an inner function that remembers and retains access to variables from its enclosing lexical scope, even after the outer function has finished executing:
+
+```python
+def my_decorator(func):
+    # 'func' is in the enclosing scope of 'wrapper'
+    def wrapper(*args, **kwargs):
+        # 'wrapper' retains access to 'func' via its closure
+        return func(*args, **kwargs)
+    return wrapper
+```
+
+Under the hood, CPython creates a cell object in `wrapper.__closure__` that references the original `func`. When the outer `my_decorator` returns, the execution frame of `my_decorator` is destroyed, but the memory allocated for `func` is kept alive because the cell in `wrapper.__closure__` holds a reference to it:
+
+```txt
+┌────────────────────────────────────────────────────────┐
+│ Global Scope: calculate_metrics ──────────┐            │
+└───────────────────────────────────────────│────────────┘
+                                            ▼
+┌────────────────────────────────────────────────────────┐
+│ Wrapper Function Object                                │
+│   __name__: 'wrapper' (without wraps)                  │
+│   __closure__: (<cell: points to original func>,)      │
+│                     │                                  │
+│                     ▼                                  │
+│   ┌──────────────────────────────────────────────────┐ │
+│   │ Original Function Object (calculate_metrics)    │ │
+│   │   __name__: 'calculate_metrics'                  │ │
+│   │   __doc__: 'Sums data elements'                  │ │
+│   │   __code__: <bytecode of original function>      │ │
+│   └──────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Why `functools.wraps` Is Essential
+
+When you replace a function with a wrapper function:
+
+```python
+def naive_decorator(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@naive_decorator
+def fetch_user(user_id: int) -> dict:
+    """Fetch user record by ID."""
+    return {"id": user_id}
+```
+
+Because `fetch_user` now points to `wrapper`, all introspection metadata belongs to `wrapper`:
+- `fetch_user.__name__` returns `'wrapper'` (instead of `'fetch_user'`)
+- `fetch_user.__doc__` returns `None` (instead of `'Fetch user record by ID.'`)
+- `fetch_user.__annotations__` returns `{}` (type hints are lost)
+- `inspect.signature(fetch_user)` returns `(*args, **kwargs)` (parameter list is destroyed)
+
+This breaks:
+1. **API Documentation:** FastAPI, Flask-RESTful, and Sphinx use `__doc__`, `__name__`, and `__annotations__` to generate OpenAPI documentation and route schemas.
+2. **Debugging and Profiling:** Stack traces and APM tools (Datadog, New Relic, Sentry) log error locations as `wrapper` instead of the actual endpoint name.
+3. **Unit Testing & Mocking:** You cannot easily inspect or bypass decorators without access to the underlying function.
+
+`@functools.wraps(func)` solves this by calling `functools.update_wrapper()`. It copies the standard metadata attributes (`WRAPPER_ASSIGNMENTS`: `__module__`, `__name__`, `__qualname__`, `__doc__`, `__annotations__`), updates `WRAPPER_UPDATES` (`__dict__`), and sets the `__wrapped__` attribute pointing directly to the original function:
+
+```python
+from functools import wraps
+
+def proper_decorator(func):
+    @wraps(func)  # Preserves __name__, __doc__, __annotations__, and sets __wrapped__
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+```
+
+---
+
+### Parameterized Decorators (Decorators with Arguments)
+
+When a decorator takes arguments (e.g., `@retry(max_attempts=3, delay=1.5)`), Python needs an extra layer of function nesting. Python evaluates the outer call first:
+
+```python
+@retry(max_attempts=3, delay=1.5)
+def send_payload(payload):
+    pass
+```
+
+Is translated by Python to:
+
+```python
+# 1. Call retry(...) with configuration parameters -> returns the actual decorator
+decorator_func = retry(max_attempts=3, delay=1.5)
+
+# 2. Apply decorator to the function -> returns wrapper
+send_payload = decorator_func(send_payload)
+```
+
+This architecture requires three nested function layers:
+1. **Outer Factory:** Accepts decorator arguments (`max_attempts`, `delay`) and returns the decorator.
+2. **Middle Decorator:** Accepts the function (`func`) and returns the wrapper.
+3. **Inner Wrapper:** Accepts the runtime arguments (`*args`, `**kwargs`), executes pre/post logic, and calls `func`.
+
+```txt
+Layer 1: retry(max_attempts=3)          -> Configuration scope
+   │
+   └── Layer 2: decorator(func)         -> Decoration scope (receives function)
+          │
+          └── Layer 3: wrapper(*args)   -> Call scope (runs on every invocation)
+```
+
+---
+
+### Stacking Decorators (Order of Execution)
+
+When multiple decorators are stacked above a function:
+
+```python
+@auth_required
+@log_metrics
+@rate_limit
+def process_order(order_id):
+    return f"Order {order_id} processed"
+```
+
+Python evaluates them **bottom-up at definition time** and **top-down at runtime**:
+
+```python
+# Definition Time (Wrapping from inner to outer):
+process_order = auth_required(log_metrics(rate_limit(process_order)))
+```
+
+1. **Definition Time:** `rate_limit` wraps `process_order` first. Then `log_metrics` wraps that result. Finally, `auth_required` wraps the entire chain.
+2. **Runtime Execution:** When a caller invokes `process_order()`, it hits the outermost wrapper (`auth_required`) first:
+   - `auth_required` wrapper runs pre-check -> calls next wrapper
+   - `log_metrics` wrapper starts timer -> calls next wrapper
+   - `rate_limit` wrapper checks token bucket -> calls original `process_order`
+   - `process_order` executes
+   - `rate_limit` completes post-action -> returns to `log_metrics`
+   - `log_metrics` logs latency -> returns to `auth_required`
+   - `auth_required` returns final response to caller
+
+---
+
+### Built-in Python Decorators and Descriptors
+
+Python includes several core decorators that rely on Python's **Descriptor Protocol** (`__get__`, `__set__`, `__delete__`):
+
+1. **`@property`:** Converts a method into a descriptor, allowing getter, setter, and deleter access via attribute syntax (`user.full_name` instead of `user.full_name()`).
+2. **`@classmethod`:** Converts a method into a descriptor that passes the class object (`cls`) as the first argument instead of the instance (`self`).
+3. **`@staticmethod`:** Disables method binding completely, leaving the function as a plain function attached to the class namespace without passing `self` or `cls`.
+4. **`@functools.lru_cache`:** Implements memoization around pure functions. It caches return values in an internal hash table using arguments as the cache key, evicting the least recently used entries when `maxsize` is exceeded.
+
+---
+
+## 4. Real Code — See It Working
+
+### Example 1: Universal Execution Timing Decorator with Metrics
+
+```python
+import functools
+import time
+import logging
+from typing import Callable, Any
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger("api.metrics")
+
+def measure_latency(metric_name: str | None = None) -> Callable:
+    """
+    Measures and logs function execution latency.
+    Supports custom metric names and preserves full metadata.
+    """
+    def decorator(func: Callable) -> Callable:
+        # Resolve metric name at definition time
+        name = metric_name or func.__name__
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # High-resolution monotonic clock for latency benchmarking
+            start_time = time.perf_counter()
+            try:
+                # Call the wrapped function with forwarded arguments
+                return func(*args, **kwargs)
+            finally:
+                elapsed = time.perf_counter() - start_time
+                logger.info(f"Metric '{name}' executed in {elapsed * 1000:.2f}ms")
+
+        return wrapper
+    return decorator
+
+
+@measure_latency(metric_name="database_user_lookup")
+def get_user_record(user_id: int) -> dict:
+    """Fetch user record from database."""
+    time.sleep(0.05)  # Simulate I/O latency
+    return {"id": user_id, "username": "alex_dev"}
+
+
+# Verification:
+result = get_user_record(42)
+print(f"Result: {result}")
+print(f"Preserved function name: {get_user_record.__name__}")
+print(f"Preserved docstring: {get_user_record.__doc__}")
+```
+
+---
+
+### Example 2: Parameterized Retry Decorator with Exponential Backoff and Jitter
+
+```python
+import functools
+import time
+import random
+import logging
+from typing import Callable, Type, Tuple, Any
+
+logger = logging.getLogger("resilience")
+
+def retry(
+    max_attempts: int = 3,
+    base_delay: float = 0.1,
+    backoff_factor: float = 2.0,
+    jitter: bool = True,
+    retry_exceptions: Tuple[Type[Exception], ...] = (Exception,)
+) -> Callable:
+    """
+    Retries an operation on failure with exponential backoff and randomized jitter.
+    """
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            delay = base_delay
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except retry_exceptions as exc:
+                    if attempt == max_attempts:
+                        logger.error(
+                            f"Function '{func.__name__}' failed after {max_attempts} attempts. Raising error."
+                        )
+                        raise
+
+                    # Calculate exponential backoff with optional full jitter
+                    sleep_time = delay * (1 + random.uniform(0, 0.5) if jitter else 1)
+                    logger.warning(
+                        f"Attempt {attempt}/{max_attempts} failed for '{func.__name__}': {exc}. "
+                        f"Retrying in {sleep_time:.3f}s..."
+                    )
+                    time.sleep(sleep_time)
+                    delay *= backoff_factor
+
+        return wrapper
+    return decorator
+
+
+# Simulate an unstable external network call
+attempt_counter = 0
+
+@retry(max_attempts=3, base_delay=0.05, retry_exceptions=(ConnectionError,))
+def call_external_payment_gateway(account_id: str) -> str:
+    global attempt_counter
+    attempt_counter += 1
+    if attempt_counter < 3:
+        raise ConnectionError("Gateway timeout (504)")
+    return f"Payment authorized for {account_id}"
+
+
+print(call_external_payment_gateway("acc_9921"))
+```
+
+---
+
+### Example 3: Role-Based Authorization Guard Decorator
+
+```python
+import functools
+from typing import Callable, List, Any
+
+# Mock context object representing current authenticated request
+current_user = {
+    "username": "sarah_admin",
+    "roles": ["editor", "billing_admin"]
+}
+
+class InsufficientPermissionsError(Exception):
+    pass
+
+def require_roles(*required_roles: str) -> Callable:
+    """
+    Restricts endpoint execution to users with specific roles.
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            user_roles = set(current_user.get("roles", []))
+            needed_roles = set(required_roles)
+
+            # Check if user has at least one matching required role
+            if not needed_roles.intersection(user_roles):
+                missing = list(needed_roles - user_roles)
+                raise InsufficientPermissionsError(
+                    f"Access denied for user '{current_user.get('username')}'. Missing required role(s): {missing}"
+                )
+            
+            # Auth passed; execute original handler
+            return func(*args, **kwargs)
+
+        return wrapper
+    return decorator
+
+
+@require_roles("admin", "billing_admin")
+def refund_transaction(transaction_id: str, amount_cents: int) -> dict:
+    """Issues a monetary refund to a customer account."""
+    return {"status": "success", "tx_id": transaction_id, "refunded": amount_cents}
+
+
+print(refund_transaction("tx_4001", 5000))
+```
+
+---
+
+### Example 4: Dual Sync/Async Compatible Decorator
+
+In modern backend frameworks like FastAPI, services mix synchronous helper functions and `async def` route handlers. A naive synchronous decorator breaks coroutines. Here is how to handle both cleanly:
+
+```python
+import asyncio
+import functools
+import inspect
+import time
+from typing import Callable, Any
+
+def audit_log(action_name: str) -> Callable:
+    """
+    A decorator that inspects whether the wrapped target is a coroutine function
+    and returns either an async wrapper or a sync wrapper accordingly.
+    """
+    def decorator(func: Callable) -> Callable:
+        # Check if the target is an async coroutine function
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                print(f"[AUDIT-ASYNC START] Action: {action_name} | Target: {func.__name__}")
+                start = time.perf_counter()
+                result = await func(*args, **kwargs)  # Crucial: await the coroutine!
+                print(f"[AUDIT-ASYNC END] Action: {action_name} | Elapsed: {(time.perf_counter()-start)*1000:.2f}ms")
+                return result
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+                print(f"[AUDIT-SYNC START] Action: {action_name} | Target: {func.__name__}")
+                start = time.perf_counter()
+                result = func(*args, **kwargs)
+                print(f"[AUDIT-SYNC END] Action: {action_name} | Elapsed: {(time.perf_counter()-start)*1000:.2f}ms")
+                return result
+            return sync_wrapper
+
+    return decorator
+
+
+@audit_log("FETCH_USER_ASYNC")
+async def async_fetch_data(item_id: int):
+    await asyncio.sleep(0.01)
+    return {"item": item_id}
+
+@audit_log("PARSE_PAYLOAD_SYNC")
+def sync_parse_data(raw_str: str):
+    return raw_str.strip().upper()
+
+
+# Test both sync and async execution paths
+async def main():
+    sync_res = sync_parse_data("  order_confirmed  ")
+    async_res = await async_fetch_data(101)
+    print(f"Sync result: {sync_res}")
+    print(f"Async result: {async_res}")
+
+asyncio.run(main())
+```
+
+---
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: What does the `@decorator` syntax actually do under the hood, and when does it execute?**
+
+The `@decorator` syntax is pure syntactic sugar for function rebinding:
+
+```python
+@my_decorator
+def target_func(): pass
+
+# Is strictly equivalent to:
+def target_func(): pass
+target_func = my_decorator(target_func)
+```
+
+The decorator function executes at **module definition/import time**, not at function call time. When Python loads or imports a module, it evaluates the `@decorator` expression immediately, invokes the decorator callable with the original function as an argument, and reassigns the function name to the returned object (usually an inner `wrapper`). 
+
+The inner `wrapper` function, however, executes at **call time** whenever someone invokes `target_func()`.
+
+---
+
+**Q: Why is `@functools.wraps` essential, and what breaks in production if you omit it?**
+
+When you decorate a function without `@functools.wraps`, the original function is replaced by the inner wrapper. Consequently:
+1. `func.__name__` becomes `"wrapper"` instead of the original name.
+2. `func.__doc__` becomes `None` or the wrapper's docstring.
+3. `func.__annotations__` (type hints) are erased.
+4. `inspect.signature(func)` returns `(*args, **kwargs)` instead of the explicit argument names and defaults.
+
+In production:
+- **FastAPI / Swagger / OpenAPI:** Schema generators inspect type annotations and docstrings to build API documentation and validate request payloads. Without `wraps`, endpoints fail schema validation or show blank documentation.
+- **APM Tools & Sentry:** Stack traces and error monitors group all exceptions under the name `wrapper`, obscuring the real failing function.
+- **Testing:** You cannot access the undecorated original function via `func.__wrapped__`.
+
+`@functools.wraps(func)` copies `__module__`, `__name__`, `__qualname__`, `__doc__`, and `__annotations__` from the target to the wrapper, and sets `wrapper.__wrapped__ = func`.
+
+---
+
+**Q: How does Python retain access to the original function inside the wrapper?**
+
+Through **closures and lexical scoping**. When `decorator(func)` is called, `func` is a local parameter in the decorator's scope. The inner `wrapper` references `func`. 
+
+When `decorator` finishes and returns `wrapper`, CPython creates a cell object in `wrapper.__closure__` containing a pointer to the original `func`. Even though the decorator's stack frame is popped off the call stack, the `cell` object keeps the reference alive in memory. When `wrapper()` is called later, Python retrieves `func` from `wrapper.__closure__[0].cell_contents`.
+
+---
+
+**Q: In what exact order do stacked decorators execute?**
+
+Decorator application (definition time) occurs **bottom-up**, while execution (runtime call time) occurs **top-down** (outside-in).
+
+Given:
+```python
+@decorator_a
+@decorator_b
+def my_func(): pass
+```
+
+At definition time:
+```python
+my_func = decorator_a(decorator_b(my_func))
+```
+`decorator_b` executes first on the raw function, and `decorator_a` executes on the result returned by `decorator_b`.
+
+At runtime:
+When `my_func()` is called, `decorator_a`'s wrapper runs first, performs its pre-processing, calls `decorator_b`'s wrapper, which runs its pre-processing, and finally calls the core function. Post-processing happens in reverse on the return path (inside-out).
+
+---
+
+**Q: How do parameterized decorators work under the hood, and why do they require three function levels?**
+
+A regular decorator takes a function as its only argument (`def dec(func): ...`). A parameterized decorator (e.g. `@retry(max_attempts=3)`) takes arguments for configuration.
+
+When Python sees `@retry(max_attempts=3)`, it must first evaluate `retry(max_attempts=3)`. That call must return an actual decorator function that can accept `func`.
+
+This requires three nested layers:
+1. **Outer Function (Factory):** Accepts configuration parameters (`max_attempts=3`) and returns the decorator callable.
+2. **Middle Function (Decorator):** Accepts the target function (`func`) and returns the wrapper callable.
+3. **Inner Function (Wrapper):** Accepts runtime arguments (`*args, **kwargs`), performs pre/post logic, and invokes `func`.
+
+---
+
+**Q: How do built-in decorators like `@property`, `@classmethod`, and `@staticmethod` work under the hood?**
+
+They are implemented using Python's **Descriptor Protocol** (`__get__`, `__set__`, `__delete__`):
+
+- **`@property`:** Wraps a method in a `property` object. When accessed on an instance (`obj.attr`), the property descriptor's `__get__` method is triggered, calling the underlying method and returning the computed value.
+- **`@classmethod`:** Wraps a method so that when accessed via an instance or class (`obj.method()` or `Cls.method()`), its `__get__` method binds the class object (`type(obj)` or `Cls`) as the first argument (`cls`).
+- **`@staticmethod`:** Wraps a method so that its `__get__` method returns the plain, unbound function without inserting `self` or `cls`.
+
+---
+
+**Q: How do you write a decorator that works with both synchronous and asynchronous functions?**
+
+A synchronous wrapper cannot `await` an async function, and calling an async function without `await` merely returns an un-awaited coroutine object.
+
+To support both:
+1. Use `inspect.iscoroutinefunction(func)` inside the decorator body at definition time.
+2. If `True`, define and return an `async def wrapper(*args, **kwargs): ... result = await func(*args, **kwargs)` wrapper.
+3. If `False`, define and return a standard `def wrapper(*args, **kwargs): ... result = func(*args, **kwargs)` wrapper.
+4. Apply `@functools.wraps(func)` to both wrappers.
+
+---
+
+**Q: How can you bypass or unit test a decorated function without triggering decorator side effects?**
+
+If the decorator used `@functools.wraps`, Python stores a direct reference to the original, undecorated function on the `__wrapped__` attribute.
+
+In unit tests:
+```python
+# To test business logic in isolation without triggering auth or rate-limiting:
+raw_function = my_decorated_endpoint.__wrapped__
+result = raw_function(test_user_id=123)
+```
+
+If multiple decorators were stacked with `@functools.wraps`, `__wrapped__` chains backwards to unwrapped layers. Python 3.4+ provides `inspect.unwrap(func)` to unwrap all decorator layers in one call down to the original function.
+
+---
+
+## 6. The Traps — What Goes Wrong
+
+### Trap 1: Omitting `@functools.wraps` (Masked Identity and Broken Schemas)
+
+**The Mistake:** Writing custom wrappers without `@functools.wraps(func)`.
+
+```python
+# BAD
+def log_call(func):
+    def wrapper(*args, **kwargs):
+        print(f"Calling {func.__name__}")
+        return func(*args, **kwargs)
+    return wrapper
+
+@log_call
+def create_invoice(invoice_id: str, amount: float) -> bool:
+    """Generates customer invoice."""
+    return True
+
+print(create_invoice.__name__)  # 'wrapper' (Function name is lost!)
+print(create_invoice.__doc__)   # None (Docstring is lost!)
+```
+
+**Why It Fails:** FastAPI, Celery, and Sphinx rely on `__name__` and `__doc__` for routing, task registration, and API generation. With Celery, two tasks decorated without `wraps` will both be named `"wrapper"`, causing task collisions and silent message routing failures.
+
+**The Fix:** Always decorate the inner wrapper with `@functools.wraps(func)`.
+
+---
+
+### Trap 2: Side Effects at Import/Definition Time
+
+**The Mistake:** Executing heavy operations (database connections, network requests, reading environment variables) directly inside the decorator body rather than inside the wrapper.
+
+```python
+# DANGEROUS BUG
+def requires_db_connection(func):
+    # This runs at MODULE IMPORT TIME when Python loads the file!
+    db_conn = create_production_db_connection()  # Crashes during unit tests or CLI builds!
+    
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(db_conn, *args, **kwargs)
+    return wrapper
+```
+
+**Why It Fails:** The code inside the decorator body executes the moment the Python file is imported, even during test discovery (e.g. `pytest`), linting, or building Docker images. If the database is not reachable at build/test time, imports crash.
+
+**The Fix:** Move all connection creation and dynamic evaluation inside the inner `wrapper` function, or pass connection pools lazily.
+
+---
+
+### Trap 3: Decorating `async def` Functions with Synchronous Wrappers
+
+**The Mistake:** Applying a standard synchronous decorator to an `async def` coroutine function.
+
+```python
+# BROKEN
+def sync_timer(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)  # BUG: Returns a coroutine object; does NOT await it!
+        print(f"Elapsed: {time.perf_counter() - start}s")
+        return result  # Returns un-awaited coroutine; time measured is 0.00001s
+    return wrapper
+
+@sync_timer
+async def fetch_remote_data():
+    await asyncio.sleep(2)
+    return "Data"
+```
+
+**Why It Fails:** Calling an `async def` function without `await` returns a coroutine object immediately without executing its body. The timing decorator reports 0ms elapsed time, and the caller receives an un-awaited coroutine, throwing `RuntimeWarning: coroutine 'fetch_remote_data' was never awaited`.
+
+**The Fix:** Inspect with `inspect.iscoroutinefunction(func)` and provide an `async def wrapper` that uses `await func(*args, **kwargs)`.
+
+---
+
+### Trap 4: Mutable State Leaking in Decorator Scope
+
+**The Mistake:** Storing mutable data structures (like lists or dicts) in the decorator function's scope to track state across calls without synchronization.
+
+```python
+# THREAD-UNSAFE TRAP
+def simple_cache(func):
+    cache = {}  # Shared across all threads and requests
+    
+    @functools.wraps(func)
+    def wrapper(*args):
+        if args not in cache:
+            cache[args] = func(*args)
+        return cache[args]
+    return wrapper
+```
+
+**Why It Fails:** 
+1. `cache` grows indefinitely without an eviction policy (TTL or LRU), creating a memory leak.
+2. In multi-threaded ASGI/WSGI servers (e.g., Gunicorn with threads), concurrent dictionary mutations can corrupt state or cause race conditions.
+3. Arguments that are mutable (lists, dicts) are not hashable and will raise `TypeError: unhashable type: 'dict'`.
+
+**The Fix:** Use thread-safe, bounded caching mechanisms like `@functools.lru_cache` or Redis for backend service caching.
+
+---
+
+### Trap 5: Hardcoding Wrapper Signatures
+
+**The Mistake:** Defining wrappers that don't accept `*args, **kwargs` or that discard keyword arguments.
+
+```python
+# BAD
+def validate_inputs(func):
+    @functools.wraps(func)
+    def wrapper(arg1, arg2):  # Breaks any function with != 2 positional arguments!
+        return func(arg1, arg2)
+    return wrapper
+```
+
+**Why It Fails:** The decorator cannot be reused on functions with keyword-only arguments, variable arguments, or different parameter counts.
+
+**The Fix:** Always use `def wrapper(*args: Any, **kwargs: Any) -> Any:` unless the decorator explicitly needs to inspect and validate specific keyword arguments via `inspect.signature`.
+
+---
+
+## 7. Compare With Related Concepts
+
+| Concept | Key Difference | When to Use Which |
+| :--- | :--- | :--- |
+| **Python Decorator** | Wraps individual functions or classes at definition time using closure composition. | Use for fine-grained, endpoint-specific or method-specific cross-cutting logic (e.g. `@retry`, `@lru_cache`, `@require_roles("admin")`). |
+| **ASGI / WSGI Middleware** | Intercepts the entire HTTP request/response pipeline at the server boundary before routing occurs. | Use for global, application-wide concerns that apply to every incoming request (e.g. CORS headers, GZip compression, request ID injection, global exception handlers). |
+| **Higher-Order Function (HOF)** | Any function that accepts or returns a function (e.g. `map()`, `filter()`, `sorted(key=...)`). | Use when passing functional transforms inline; a decorator is simply a specialized HOF with syntactic sugar (`@`). |
+| **Class Inheritance / Template Method** | Uses OOP polymorphism and subclassing to override specific lifecycle steps. | Use when building reusable component hierarchies with shared internal state; avoid when you only need to wrap independent standalone functions. |
+| **Monkey Patching** | Dynamically modifies a module or class attribute at runtime from external code. | Use only in testing (e.g. `unittest.mock.patch`) to stub out network calls; strictly avoid in production application code. |
+
+---
+
+## 8. 🧠 The Memory Hook
+
+> **`@decorator` is just `func = decorator(func)` evaluated once at import time.** The wrapper is the security guard at the gate; `@functools.wraps(func)` is the badge that keeps the original function's name and identity intact so debugging and API tools don't see a ghost.
