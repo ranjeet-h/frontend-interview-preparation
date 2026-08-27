@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (634 pages complete)
+## Completed Sections Summary (641 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -28,7 +28,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **634** | **100% Done** |
+| **Total Completed Concept & Practice Pages** | **641** | **100% Done** |
 
 ---
 
@@ -38,10 +38,10 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Collection | Total Puzzles | Accepted Pages | Remaining |
 |---|---:|---:|---:|
-| Part 1 | 40 | 15 | 25 |
-| Part 2 | 100 | 12 | 88 |
-| Part 3 | 203 | 12 | 191 |
-| **Total Output Questions** | **343** | **39** | **304** |
+| Part 1 | 40 | 5 | 35 |
+| Part 2 | 100 | 5 | 95 |
+| Part 3 | 203 | 5 | 198 |
+| **Total Output Questions** | **343** | **15** | **328** |
 
 ### JavaScript Polyfills
 
@@ -53,7 +53,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Section | Total Pages | Completed | In-Flight / Assigned | Not Started |
 |---|---:|---:|---:|---:|
-| API design | 30 | 16 | 0 | 14 |
+| **API design** (in rewrite now) | **30** | **23** | **0** | **7** |
 | Authentication | 30 | 0 | 0 | 30 |
 | Coding practice | 30 | 0 | 0 | 30 |
 | Deployment | 25 | 0 | 0 | 25 |
@@ -66,7 +66,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Senior scenarios | 25 | 0 | 0 | 25 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **330** | **16** | **0** | **314** |
+| **Total Backend** | **330** | **23** | **0** | **307** |
 
 ### Database Sections Status (135/135 Complete)
 
