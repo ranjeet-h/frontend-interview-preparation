@@ -178,13 +178,13 @@ Suppose our table contains these representative timestamp records:
 
 ## 5. Edge Cases — The Ones That Break Naive Solutions
 
-**1. The Sub-Second Precision Rounding Trap**
+**1. The Midnight and Sub-Second Precision Trap (Time Component on DATE Columns)**
 
-Different SQL database engines store sub-second timestamps with varying precision:
+Different SQL database engines store sub-second timestamps with varying precision, and the classic midnight bug is that `'2024-01-31'` means `'2024-01-31 00:00:00'` — so `BETWEEN '2024-01-01' AND '2024-01-31'` silently drops every row after midnight on the last day.
 - PostgreSQL `TIMESTAMPTZ`: Microsecond precision (6 decimal places, e.g., `23:59:59.999999`).
 - MySQL `DATETIME(6)`: Microsecond precision.
 - Microsoft SQL Server `DATETIME`: Rounds time to increments of `.000`, `.003`, or `.007` seconds. If you write `23:59:59.999`, SQL Server rounds it up to `00:00:00.000` of the next day, pulling in February 1st data.
-- The half-open interval `< '2024-02-01 00:00:00'` is mathematically immune to precision differences. It does not care whether your database stores milliseconds, microseconds, or nanoseconds.
+- The half-open interval `>= '2024-01-01 00:00:00' AND < '2024-02-01 00:00:00'` is mathematically immune to both the midnight trap and precision differences. It captures every time on Jan 31 after 00:00:00 without guessing at `.999`.
 
 **2. Timezone Normalization and Client Offset Mismatches**
 
@@ -203,6 +203,10 @@ If a date column is nullable (such as `shipped_at`), standard comparison operato
 **4. Leap Years and Month Endings**
 
 Hardcoding day offsets (such as `+ INTERVAL 30 DAY`) produces incorrect date boundaries for February and 31-day months. Always use date arithmetic with calendar month intervals (`+ INTERVAL '1 month'`) or compute explicit calendar start dates on the caller side.
+
+**5. The Index-Use Trap — Any Function on the Column Kills the Seek**
+
+Wrapping the indexed column in `DATE(created_at)`, `TRUNC(created_at)`, `EXTRACT()`, or `created_at AT TIME ZONE` forces a full scan even if an index exists, because the B-Tree is sorted by raw `created_at` values, not by computed results. The fix is always to leave the column bare and move the math to the literal side: `created_at >= :start AND created_at < :end` stays an `Index Range Scan`, while `DATE(created_at) = :d` becomes a `Seq Scan` on millions of rows. Verify with `EXPLAIN` — you want `Index Cond` on `created_at`, not `Filter: (date(created_at) = ...)`.
 
 ---
 
@@ -271,6 +275,27 @@ WHERE start_time < :req_end
 ```
 
 This two-clause condition handles every possible overlap permutation (full containment, partial left overlap, partial right overlap, and exact match) with complete mathematical correctness.
+
+**Variation 5: Fiscal Quarter and Dynamic Rolling Windows**
+
+Interviewers love to extend the fixed January example to "last N days" and "current fiscal quarter" because both test whether you keep the column sargable while computing boundaries on the input side.
+
+For a rolling window, compute against the literal, never the column — this stays sargable and keeps the index usable:
+
+```sql
+-- Last 30 days (rolling, sargable)
+SELECT * FROM orders
+WHERE created_at >= NOW() - INTERVAL '30 days'
+  AND created_at <  NOW();
+
+-- Current fiscal quarter Q1 = Feb-Apr example, with quarter start computed in app
+-- or via DATE_TRUNC in Postgres on the literal side only
+SELECT * FROM orders
+WHERE created_at >= DATE_TRUNC('quarter', CURRENT_TIMESTAMP)
+  AND created_at <  DATE_TRUNC('quarter', CURRENT_TIMESTAMP) + INTERVAL '3 months';
+```
+
+For a fiscal year that does not align to calendar quarters (e.g., fiscal year starts April 1), do not put `EXTRACT(quarter FROM created_at)` in the WHERE clause. Compute the quarter start and next-quarter start as UTC timestamps in your application layer (Node.js/Python/Go using the user's timezone, then convert to UTC), and pass two plain values to the same half-open shape: `created_at >= :fiscal_quarter_start AND created_at < :next_quarter_start`. That preserves the B-Tree range seek and partition pruning exactly like the January example, and it avoids the midnight gap at the quarter boundary.
 
 ---
 
