@@ -258,6 +258,28 @@ The interviewer asks: "The `Person` table has 100 million rows and this query is
 1. **Covering B+Tree Index:** Add `CREATE INDEX idx_person_email ON Person (email);`. Because the index is ordered, the query engine performs an index-only stream aggregation. It scans the index leaves sequentially without touching heap table pages or allocating a temporary table.
 2. **Chunking / Range Partitioning:** If modifying schema is not immediately possible, partition the workload by email prefix (e.g. `WHERE email >= 'a' AND email < 'b'`) or hash bucket, processing each slice in parallel background worker tasks.
 
+**Variation 5: Find Duplicates Case-Insensitive (alex@example.com = Alex@example.com)**
+
+The interviewer asks: "What if `alex@example.com` and `Alex@example.com` should count as the same person?"
+
+In MySQL with a case-sensitive collation or in PostgreSQL (which is case-sensitive by default), a plain `GROUP BY email` misses these. Normalize with `LOWER()` and index the expression:
+
+```sql
+-- Case-insensitive grouping: LOWER() normalizes before bucketing
+SELECT
+    LOWER(email) AS normalized_email
+FROM
+    Person
+WHERE
+    email IS NOT NULL
+GROUP BY
+    LOWER(email)
+HAVING
+    COUNT(*) > 1;
+```
+
+To keep it fast on a large table, add a functional index so the engine does not compute `LOWER()` per row at query time: MySQL `CREATE INDEX idx_email_lower ON Person ((LOWER(email)))`, PostgreSQL `CREATE INDEX idx_email_lower ON Person (LOWER(email))`. If you need the original casing back, use the window approach partitioned by `LOWER(email)` and return the distinct raw emails per bucket.
+
 ## 7. 🧠 The Memory Hook
 
 Group by the key, count the non-nulls, and filter the buckets with `HAVING`.
