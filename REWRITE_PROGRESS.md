@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (540 pages complete)
+## Completed Sections Summary (558 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -18,6 +18,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **Backend System Design** (`src/full-stack/backend/system-design/`) | 30 / 30 | Complete |
 | **Node.js Core Concepts** (`src/full-stack/backend/nodejs/`) | 30 / 30 | Complete |
 | **Express Core Concepts** (`src/full-stack/backend/express/`) | 30 / 30 | Complete |
+| **FastAPI Core Concepts** (`src/full-stack/backend/fastapi/`) | 50 / 50 | Complete |
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
 | **SQLAlchemy Core Concepts** (`src/full-stack/backend/sqlalchemy/`) | 30 / 30 | Complete |
@@ -25,7 +26,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **540** | **100% Done** |
+| **Total Completed Concept & Practice Pages** | **558** | **100% Done** |
 
 ---
 
@@ -48,7 +49,6 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Authentication | 30 | 0 | 0 | 30 |
 | Coding practice | 30 | 0 | 0 | 30 |
 | Deployment | 25 | 0 | 0 | 25 |
-| **FastAPI** (in rewrite now) | **50** | **34** | **0** | **16** |
 | Full-stack integration | 20 | 0 | 0 | 20 |
 | Observability | 25 | 0 | 0 | 25 |
 | Performance | 25 | 0 | 0 | 25 |
@@ -59,7 +59,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Senior scenarios | 25 | 0 | 0 | 25 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **410** | **34** | **0** | **376** |
+| **Total Backend** | **360** | **0** | **0** | **360** |
 
 ### MERN Status
 
@@ -81,7 +81,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ## Cross-Project Summary
 
-- **Total Completed Concept/System Pages:** **540**
+- **Total Completed Concept/System Pages:** **558**
 - **Total Completed Output Question Puzzles:** **15**
 - **Database Remaining:** **0** (All 135 database pages complete!)
-- **Backend Remaining:** **376** (FastAPI 16 + other backend sections 360)
+- **Backend Remaining:** **360** (14 remaining backend sections)
