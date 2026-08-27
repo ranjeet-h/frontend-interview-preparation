@@ -1,150 +1,447 @@
-# User Registration API
+# Designing User Registration APIs: Password Hashing, Verification Tokens, and Atomic Account Provisioning
 
-## Detailed explanation
+## 1. Why This Exists — The Problem First
 
-Create a new user safely with validation, duplicate checks, password hashing, and clear response/error contracts. A strong answer explains endpoint shape, validation, authentication or authorization, idempotency where needed, database changes, error responses, observability, and frontend contract impact.
+Every beginner backend tutorial writes user registration in five careless lines: take the request body, check if the email exists with a `findUser` query, hash the password, insert a row into the database, and send an email. 
 
-## 1. One-line mental model
+In production, that five-line script causes catastrophic outages and security breaches.
 
-Registration is a controlled account-creation workflow, not just an insert into users.
+Consider what happened at a fast-growing SaaS startup on launch day. Two things immediately caught fire. First, multiple users double-clicked the submit button, and automated registration bots fired parallel requests with the same email address. Because the application relied on a simple `if (await findByEmail(email))` check before calling `createUser()`, concurrent requests executed that check at the exact same millisecond. Both checks saw that the email did not exist yet. Both proceeded to insert a new row. The database ended up with duplicate accounts for the same email address—one stored as `Alex@Company.com` and the other as `alex@company.com`. When those users later attempted to log in, the backend crashed with unhandled `MultipleRowsFound` exceptions or silently authenticated them into the wrong profile.
 
-## 2. Problem it solves
+Second, security researchers discovered that typing an email into the registration form returned `409 Conflict: Email already registered` in 8 milliseconds, whereas a new email took 350 milliseconds to hash a password and return `201 Created`. Attackers automated this endpoint with a script to enumerate the company's entire corporate directory, discovering exactly which employees had accounts on the platform.
 
-This design prevents inconsistent client behavior, duplicated backend logic, unclear errors, security gaps, and production-only workflow bugs.
+A user registration API is not an `INSERT` statement. It is a secure, fault-tolerant state machine that must coordinate memory-hard cryptographic hashing, atomic multi-table provisioning, high-entropy token hashing at rest, anti-enumeration protections, and isolated asynchronous side effects.
 
-## 3. Core idea
+## 2. The Analogy — Make It Obvious
 
-- Define the resource or workflow clearly.
-- Validate input at the API boundary.
-- Enforce authentication, authorization, and ownership checks.
-- Return consistent success and error shapes.
-- Plan idempotency, retries, logging, and monitoring for production behavior.
+Think of user registration like opening a private safety-deposit account at a high-security bank branch.
 
-## 4. Visual / analogy
+You do not simply write your name on a slip of paper and receive a master key. The process follows strict, deliberate physical protocols:
 
-```txt
-Client request
-  -> auth/validation
-  -> domain rules
-  -> database/cache/queue
-  -> serialized response/error
-  -> frontend behavior
-```
+1. **The Lobby Security Guard (Bot Defense & Rate Limiting):** Before you can even approach a teller window, security ensures you are a real person and not an automated puppet flooding the lobby with thousands of fake applications every minute.
+2. **The Application Audit (NIST Input Validation):** You hand your chosen secret combination to the teller. The teller verifies that your combination is not "123456" or on a known list of compromised locks, and normalizes your name so uppercase and lowercase letters cannot be used to forge identity.
+3. **The Heavy Hydraulic Stamping Press (Argon2id Hashing):** The bank does not write your combination in a ledger. Instead, they insert it into a slow, heavy, memory-intensive hydraulic press that takes a deliberate fraction of a second of intense mechanical work to forge an irreversible physical imprint. A thief cannot guess millions of combinations a second because each attempt requires physical machinery and substantial energy.
+4. **The Atomic Vault Ledger (Database Transactions):** The bank manager opens the master ledger. In a single continuous pen stroke, they assign you a box number, register your profile, initialize your default sub-account, and log your temporary access permit. If their pen runs out of ink or the power flickers before the entire record is inscribed, they rip up the page completely. You never end up with half an account created.
+5. **The Tamper-Evident Activation Voucher (Verification Tokens):** The teller seals a random one-time voucher in a courier envelope and mails it to your home address to prove you actually live there. Crucially, the bank does not store a photocopy of that voucher in their unlocked front drawer—they only store a mathematical fingerprint of it. Even if an insider breaks into the bank lobby, they cannot forge your activation envelope.
+6. **Discreet Customer Service (Enumeration Defense):** If someone tries to open an account with a tax ID that is already registered, the teller does not yell across the crowded lobby, "This person already has an account here!" They quietly take the paper and state, "If this address is eligible, instructions will be delivered to your registered mailbox."
 
-## 5. Minimal example
+## 3. How It Actually Works — The Full Explanation
+
+A production-grade registration pipeline consists of five tightly orchestrated stages: perimeter filtering, validation, cryptographic transformation, atomic persistence, and isolated side-effect dispatch.
 
 ```txt
-REQUEST  /api/example
-CHECK    auth + validation + domain rules
-WRITE    database or enqueue job
-RETURN   status code + response body
+[Client Request: email, password, turnstile_token]
+                        │
+                        ▼
+    ┌───────────────────────────────────────┐
+    │ 1. Rate Limiting & Bot Verification   │  ──> Reject automated abuse (429 / 400)
+    └───────────────────────────────────────┘
+                        │
+                        ▼
+    ┌───────────────────────────────────────┐
+    │ 2. Input Sanitization & NIST Checks   │  ──> Lowercase email, check zxcvbn / pwned
+    └───────────────────────────────────────┘
+                        │
+                        ▼
+    ┌───────────────────────────────────────┐
+    │ 3. Memory-Hard Password Hashing       │  ──> Argon2id (m=64MB, t=3, p=4) or Bcrypt (cost=12)
+    └───────────────────────────────────────┘
+                        │
+                        ▼
+    ┌───────────────────────────────────────┐
+    │ 4. Atomic Database Transaction        │
+    │    - Lock/Insert LOWER(email) UNIQUE  │
+    │    - Create User + Default Workspace  │  ──> Single ACID commit or rollback
+    │    - Store SHA-256(Raw Token)         │
+    └───────────────────────────────────────┘
+                        │
+                        ▼
+    ┌───────────────────────────────────────┐
+    │ 5. Outbox / Asynchronous Email Queue  │  ──> Deliver raw verification token via worker
+    └───────────────────────────────────────┘
+                        │
+                        ▼
+[Client Response: 201 Created (Generic Anti-Enumeration Payload)]
 ```
 
-## 6. Real-world example
+**Stage 1: Perimeter Rate Limiting and Bot Defense**
 
-In production, user registration api should define request schema, response schema, error codes, permission rules, rate limits, and logging fields before implementation starts.
+Before allocating CPU cycles to expensive cryptographic operations, the server must filter malicious and automated traffic. Apply sliding-window rate limiting in Redis (for example, a maximum of 5 registration attempts per 15 minutes per IP address or `/64` IPv6 subnet). Next, verify a Cloudflare Turnstile or reCAPTCHA v3 challenge token server-side. If the challenge verification fails or the score falls below threshold, reject the request immediately with `400 Bad Request`. This prevents attackers from exhausting server CPU via password hashing loops.
 
-## 7. Common interview questions
+**Stage 2: Input Sanitization and Password Strength (NIST SP 800-63B)**
 
-#### What endpoints would you expose for user registration?
-- **The Engine Mechanism (Why it behaves this way):** A registration API typically exposes a single `POST /api/auth/register` endpoint. Some systems split email verification into `POST /api/auth/register` (creates user in unverified state) and `POST /api/auth/verify-email` (confirms ownership). The endpoint accepts email, password, and optional profile fields. It returns the created user object (excluding password hash) or a 201 with a verification notice.
-- **The Unforgettable Mental Model:** The **Bouncer at the Club**. The bouncer checks your ID (validation), makes sure you're not already on the guest list (duplicate check), gives you a wristband (hashed password stored), and tells you to verify your identity at the coat check (email verification) before full access.
-- **The Trap:** Exposing `GET /api/users` publicly or returning the full user object with sensitive fields. Registration should only accept POST and return minimal safe data.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I'd expose a `POST /api/auth/register` endpoint that accepts email, password, and optional profile data. It creates the user in an unverified state, hashes the password with bcrypt or argon2, and returns a 201 with a message prompting email verification. A separate `POST /api/auth/verify-email` endpoint consumes the verification token and activates the account."
+Modern security standards have moved away from legacy password composition rules. The National Institute of Standards and Technology (NIST) guidelines explicitly discourage forcing users to include arbitrary combinations of uppercase letters, numbers, and special symbols. Arbitrary rules lead to predictable human patterns (like capitalizing the first letter and appending `!` at the end).
 
-#### What request body and response shape would you use?
-- **The Engine Mechanism (Why it behaves this way):** The request body contains `{ email, password, name?, phone? }` with strict schema validation. The response on success returns `{ success: true, data: { id, email, name, createdAt }, message: "Verification email sent" }`. On failure, it returns `{ success: false, error: { code: "EMAIL_DUPLICATE", message: "...", field: "email" } }`. Password is never echoed back.
-- **The Unforgettable Mental Model:** The **Application Form**. You fill out the form (request), the clerk reviews it (validation), and hands you a receipt with your application number (response) — never your social security number (password).
-- **The Trap:** Returning the password hash or internal database IDs in the response. Only return safe, client-needed fields.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: The request body accepts email, password, and optional fields like name. The response returns a 201 with the user ID, email, and a verification message — never the password or hash. Error responses include a machine-readable error code, a human-readable message, and the specific field that failed validation so the frontend can display inline errors."
+First, normalize the email: strip leading and trailing whitespace and convert the entire string to lowercase (`email.trim().toLowerCase()`). Store and index the normalized version.
 
-#### What validations are required for registration?
-- **The Engine Mechanism (Why it behaves this way):** Validations run in layers: (1) Schema validation — email format, password length/complexity, field types; (2) Business validation — email uniqueness via a unique DB constraint, password not in breach databases (HaveIBeenPwned API), rate limiting per IP; (3) Security validation — SQL injection sanitization, XSS-safe field encoding. All validations must run server-side regardless of frontend checks.
-- **The Unforgettable Mental Model:** The **Airport Security Checkpoint**. First, your ticket format is checked (schema). Then your identity is verified against the no-fly list (business rules). Finally, your bags are scanned for hidden threats (security checks).
-- **The Trap:** Relying only on frontend validation. Attackers bypass the browser and hit the API directly with curl or Postman.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I validate at three layers. Schema level checks email format, password minimum length, and required fields. Business level enforces email uniqueness with a database unique constraint and checks password strength. Security level applies rate limiting per IP, sanitizes all inputs against injection, and never trusts frontend validation. The database unique constraint is the final safety net against race conditions."
+Second, enforce length over complexity: set a minimum length of 8 to 12 characters and allow up to 64 to 128 characters, supporting long passphrases and spaces.
 
-#### What status codes can the registration API return?
-- **The Engine Mechanism (Why it behaves this way):** `201 Created` on success, `400 Bad Request` for validation failures, `409 Conflict` for duplicate email, `429 Too Many Requests` when rate limited, `500 Internal Server Error` for unexpected failures. Each code maps to a specific error structure so the frontend can handle each case differently.
-- **The Unforgettable Mental Model:** The **Traffic Light System**. Green (201) means go ahead, yellow (400/409) means fix your input, red (429) means slow down, and black (500) means the road itself is broken.
-- **The Trap:** Returning 200 for creation instead of 201, or returning 400 for duplicates instead of the more specific 409 Conflict.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: Success returns 201 Created. Validation errors return 400 Bad Request with field-level error details. Duplicate email returns 409 Conflict. Rate limiting returns 429 Too Many Requests with a Retry-After header. Server errors return 500. The key is using the most specific HTTP status code so the frontend can display the right UX for each case."
+Third, verify entropy and compromised credential status: evaluate password strength using entropy calculators like `zxcvbn` (requiring a minimum score of 3 out of 4) and query the HaveIBeenPwned API using k-Anonymity (sending only the first 5 characters of the SHA-1 hash of the password) to reject passwords that appear in known data breaches.
 
-#### How do you secure the registration API?
-- **The Engine Mechanism (Why it behaves this way):** Security layers include: (1) Rate limiting — 5-10 requests per minute per IP; (2) Password hashing — bcrypt with cost factor 12+ or argon2id; (3) Input sanitization — parameterized queries, no raw SQL; (4) CORS — restrict to known frontend origins; (5) CAPTCHA — on suspicious traffic patterns; (6) Email verification — account stays unverified until email ownership is proven; (7) Audit logging — log registration attempts with IP and timestamp.
-- **The Unforgettable Mental Model:** The **Castle Defense**. Moat (rate limiting), drawbridge (CORS), guards at the gate (validation), inner vault (password hashing), and a secret handshake (email verification).
-- **The Trap:** Storing passwords in plain text or using weak hashing like MD5. Also, not rate limiting allows credential stuffing attacks.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I apply defense in depth. Rate limiting prevents abuse at the network edge. Input validation and parameterized queries prevent injection. Passwords are hashed with bcrypt or argon2id — never stored in plain text. CORS restricts which origins can call the API. Email verification proves ownership before granting access. And every attempt is logged for audit and anomaly detection."
+**Stage 3: Memory-Hard Password Hashing**
 
-#### How do you avoid duplicate or unsafe registration operations?
-- **The Engine Mechanism (Why it behaves this way):** Database-level unique constraints on email prevent duplicates even under concurrent requests. Application-level checks query before insert, but the unique constraint is the authoritative guard. For idempotency, a client-supplied idempotency key can be stored and checked before processing. Email verification tokens are single-use and time-limited.
-- **The Unforgettable Mental Model:** The **Double-Entry Ledger**. Even if two clerks try to write the same entry at the same time, the ledger's unique numbering system ensures only one gets recorded.
-- **The Trap:** Relying only on an application-level "check if exists" query without a database unique constraint — race conditions between the check and insert will create duplicates.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I use a database unique constraint on email as the authoritative duplicate guard. The application checks first for a better error message, but the constraint catches race conditions. For unsafe retries, I accept an idempotency key from the client. Email verification tokens are single-use with a short TTL, so even if intercepted, they expire quickly."
+Passwords must never be hashed with general-purpose cryptographic hash functions like MD5, SHA-1, SHA-256, or SHA-512. General-purpose hash functions are designed to be fast. A modern consumer GPU can compute over 10 billion SHA-256 hashes per second. If an attacker gains access to a database dump of SHA-256 hashes, they can crack standard passwords in minutes.
 
-#### How do you test the registration API?
-- **The Engine Mechanism (Why it behaves this way):** Test layers: (1) Unit tests — validation logic, password hashing, email formatting; (2) Integration tests — full request/response cycle with a test database, checking success, duplicate, and validation error paths; (3) Security tests — SQL injection payloads, XSS attempts, rate limit enforcement; (4) Load tests — concurrent registrations to verify unique constraint behavior; (5) Contract tests — verify response shape matches the documented schema.
-- **The Unforgettable Mental Model:** The **Car Crash Test**. Unit tests check individual parts, integration tests drive the whole car, security tests try to break in, and load tests see how it handles a traffic jam.
-- **The Trap:** Only testing the happy path. Most bugs live in edge cases: duplicate emails, weak passwords, concurrent requests, and malformed input.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I test at four levels. Unit tests cover validation rules and password hashing. Integration tests hit the full endpoint with a test database, covering success, duplicates, and validation errors. Security tests send injection payloads and verify rate limiting. Load tests fire concurrent registrations to confirm the unique constraint prevents duplicates under race conditions."
+Password hashing algorithms must be slow and memory-hard. Argon2id combines data-dependent and data-independent memory access patterns to defend against both GPU/ASIC hardware attacks and side-channel cache attacks (recommended parameters: memory cost `m = 65536` for 64 MB, time iterations `t = 3`, and parallelism `p = 4`). As a battle-tested alternative, Bcrypt with a cost factor of 12 (requiring 4,096 iterations, taking roughly 250–350ms on modern server CPUs) provides strong protection.
 
-#### What logs and metrics would you add?
-- **The Engine Mechanism (Why it behaves this way):** Logs capture: registration attempt (IP, email domain, timestamp, outcome), verification sent, verification completed. Metrics track: registrations per minute, success rate, duplicate rate, verification completion rate, average latency, error rate by type. Alerts trigger on: spike in registrations (bot attack), high duplicate rate (user confusion), low verification rate (email deliverability issues).
-- **The Unforgettable Mental Model:** The **Factory Dashboard**. Every widget produced is counted, defects are categorized, and alarms sound when the production line behaves abnormally.
-- **The Trap:** Logging sensitive data like passwords, full request bodies, or PII. Logs should contain only operational metadata.
-- **Senior Interview Playbook (Verbal Script):** "When asked this in an interview, say: I log registration attempts with IP, email domain, and outcome — never passwords or full request bodies. Metrics track registration rate, success/failure ratio, and verification completion rate. I set alerts for traffic spikes that suggest bot attacks, high duplicate rates, and low verification rates that might indicate email deliverability problems."
+Always execute password hashing functions asynchronously. Password hashing functions are CPU-bound. Never use synchronous methods (such as `bcrypt.hashSync`) on the main Node.js event loop thread, as they block all incoming HTTP traffic during computation.
 
-## 8. Active recall test
+**Stage 4: High-Entropy Verification Token Generation and Hashing at Rest**
 
-1. **What HTTP method and endpoint handles user registration?**
-   - **Explanation:** `POST /api/auth/register` — it creates a new resource (user account) and should use POST, not GET or PUT.
+When an account is created, it should remain in an unverified state (`is_verified: false`) until the user proves ownership of the email address.
 
-2. **What status code is returned on successful registration?**
-   - **Explanation:** `201 Created` — it signals that a new resource was successfully created on the server.
+The security architecture of the verification token follows four rules:
+1. Generate a cryptographically secure, high-entropy random string using `crypto.randomBytes(32).toString('hex')` (256 bits of entropy).
+2. Do not store this raw token in the database. Instead, compute its fast hash: `SHA-256(raw_token)` and store only the hash along with an expiration timestamp (`expires_at`, typically 24 hours).
+3. Send the raw token in the verification link to the user's email (`https://app.com/verify-email?token=<raw_token>`).
+4. When the user clicks the link, the backend computes `SHA-256(received_raw_token)` and performs a database lookup for that hash.
 
-3. **What is the most important validation rule for registration?**
-   - **Explanation:** Email uniqueness enforced by a database unique constraint — this is the authoritative guard against duplicate accounts, even under concurrent requests.
+We hash the verification token before storing it because if an attacker compromises a read-replica database snapshot, having access to raw verification tokens would allow them to activate any pending account or intercept unverified admin accounts without accessing the email inbox. By storing only the SHA-256 hash, a database leak does not expose valid activation links.
 
-4. **How should passwords be stored in the database?**
-   - **Explanation:** Hashed with bcrypt (cost 12+) or argon2id — never in plain text, never with weak algorithms like MD5 or SHA1.
+**Stage 5: Atomic Database Provisioning & Transaction Boundaries**
 
-5. **What prevents duplicate registrations under concurrent requests?**
-   - **Explanation:** A database-level unique constraint on the email column — application-level checks alone have a race condition gap between the check and the insert.
+Account creation frequently spans multiple tables: the `users` table, an `organizations` or `workspaces` table, a `roles_permissions` mapping, and the `email_verification_tokens` table.
 
-6. **What status code handles duplicate email registration?**
-   - **Explanation:** `409 Conflict` — it specifically indicates that the request conflicts with an existing resource (the email is already registered).
+All database insertions must occur inside a single ACID database transaction. If creating the default workspace or token record throws an error, the user record is rolled back cleanly. Furthermore, never rely on application-level uniqueness checks. Under high concurrency, two requests can execute `SELECT * FROM users WHERE email = ?` simultaneously, both receive empty results, and both proceed to insert. A strict database-level unique constraint on `LOWER(email)` (`CREATE UNIQUE INDEX idx_users_lower_email ON users (LOWER(email))`) is the only authoritative defense against race conditions.
 
-7. **Why is email verification important in registration?**
-   - **Explanation:** It proves ownership of the email address, prevents fake accounts, and provides a recovery channel. Accounts remain in an unverified state until the user clicks the verification link.
+**Stage 6: Isolated Asynchronous Side Effects (The Outbox Pattern)**
 
-8. **What rate limit would you set on the registration endpoint?**
-   - **Explanation:** 5-10 requests per minute per IP — enough for legitimate users but low enough to deter automated abuse and credential stuffing.
+Never invoke third-party network services—such as sending an email via SendGrid, Postmark, or AWS SES—inside the database transaction block.
 
-9. **What should never appear in the registration response?**
-   - **Explanation:** The password, password hash, or any internal security tokens. Only safe fields like id, email, name, and createdAt should be returned.
+If the email provider experiences latency or network timeouts, the database transaction remains open, holding active connection pool slots and locks, which can quickly exhaust the backend database pool. Conversely, if the email sends successfully but the database transaction rolls back immediately afterward due to a subsequent constraint violation, the user receives an activation email with a link that points to a non-existent account ID.
 
-10. **What metric would alert you to a bot attack on registration?**
-    - **Explanation:** A sudden spike in registrations per minute, especially from a single IP range or with similar email patterns (e.g., sequential usernames).
+Commit the database transaction first. Once the transaction successfully commits, push an email delivery task onto a persistent message queue (such as BullMQ, RabbitMQ, or AWS SQS), or write an event to a transactional outbox table within the same transaction and let a dedicated background worker process it.
 
-## 9. Mistakes / traps
+**Stage 7: Defending Against User Enumeration**
 
-- Designing only the happy path.
-- Ignoring idempotency, retries, and partial failure.
-- Trusting frontend validation.
-- Returning inconsistent error shapes.
-- Forgetting authorization and ownership checks.
+When a user submits an email that is already registered, returning `409 Conflict: Email already exists` allows attackers to discover whether a target person has an account.
 
-## 10. Compare with related concepts
+There are two primary architectural approaches to balance security with user experience. In a generic anti-enumeration response, the API returns `201 Created` or `200 OK` with a uniform message regardless of whether the user exists: *"If your email is eligible, a verification link has been sent to your inbox."* If the user is new, generate the token and send the verification email. If the user already exists, do not create a second account; instead, send an email to the existing user: *"Someone attempted to register an account using your email. If this was you, you can log in here or reset your password."* Alternatively, in non-sensitive B2B tools where enumeration risk is considered low compared to onboarding friction, return a clear `409 Conflict` with an action payload directing the user to the login screen.
 
-This is an API design scenario, not just a concept definition. It combines HTTP semantics, validation, auth, data modeling, errors, and operational behavior.
+## 4. Real Code — See It Working
 
-## 11. Summary from memory
+Here is a complete, production-ready implementation in Node.js / TypeScript using Express, Zod for validation, Argon2 for password hashing, and Node's built-in `crypto` module for high-entropy hashed verification tokens.
 
-Explain the endpoints, request body, response body, errors, security checks, and production risks for User Registration API.
+```typescript
+import { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+import argon2 from 'argon2';
+import crypto from 'crypto';
 
-## 12. Spaced revision prompts
+// 1. Strict input validation schema with email normalization
+export const RegisterSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .email('Invalid email address format')
+    .max(255, 'Email too long')
+    .transform((val) => val.toLowerCase()),
+  password: z
+    .string()
+    .min(10, 'Password must be at least 10 characters long')
+    .max(128, 'Password must not exceed 128 characters'),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Name is required')
+    .max(100, 'Name too long'),
+  turnstileToken: z
+    .string()
+    .min(1, 'Bot verification token required'),
+});
 
-- Day 1: Sketch endpoint names and methods.
-- Day 3: Add validation and error cases.
-- Day 7: Add auth, idempotency, and logging.
-- Day 14: Explain how frontend consumes the API safely.
+type RegisterInput = z.infer<typeof RegisterSchema>;
+
+// Helper: Verify Cloudflare Turnstile token server-side
+async function verifyTurnstile(token: string, ip: string): Promise<boolean> {
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        secret: process.env.TURNSTILE_SECRET_KEY,
+        response: token,
+        remoteip: ip,
+      }),
+    });
+    const outcome = await res.json();
+    return outcome.success === true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// Controller: POST /api/auth/register
+export async function registerController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    // Step 1: Validate payload shape
+    const validated: RegisterInput = RegisterSchema.parse(req.body);
+    const clientIp = req.ip || req.socket.remoteAddress || '';
+
+    // Step 2: Validate Bot Challenge before expensive hashing
+    const isHuman = await verifyTurnstile(validated.turnstileToken, clientIp);
+    if (!isHuman) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'BOT_CHALLENGE_FAILED', message: 'Bot verification failed.' },
+      });
+      return;
+    }
+
+    // Step 3: Compute Memory-Hard Password Hash (Argon2id)
+    // Runs on worker thread pool, does not block the Node.js main event loop
+    const passwordHash = await argon2.hash(validated.password, {
+      type: argon2.argon2id,
+      memoryCost: 65536, // 64 MB
+      timeCost: 3,       // 3 iterations
+      parallelism: 4,    // 4 parallel threads
+    });
+
+    // Step 4: Generate High-Entropy Raw Verification Token & Its SHA-256 Hash
+    const rawVerificationToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto
+      .createHash('sha256')
+      .update(rawVerificationToken)
+      .digest('hex');
+    const tokenExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    let emailJobPayload: { to: string; rawToken: string; type: 'VERIFY' | 'ALREADY_REGISTERED' } | null = null;
+
+    // Step 5: Execute Atomic Database Transaction
+    // All table creations succeed together or roll back completely
+    await db.$transaction(async (tx) => {
+      // Check existing user inside transaction
+      const existingUser = await tx.user.findUnique({
+        where: { email: validated.email },
+      });
+
+      if (existingUser) {
+        // Anti-enumeration branch: prepare security notice email, do not create duplicate
+        emailJobPayload = {
+          to: validated.email,
+          rawToken: '',
+          type: 'ALREADY_REGISTERED',
+        };
+        return;
+      }
+
+      // Provision user account (unverified)
+      const user = await tx.user.create({
+        data: {
+          email: validated.email,
+          passwordHash: passwordHash,
+          name: validated.name,
+          isVerified: false,
+        },
+      });
+
+      // Provision default workspace / tenant
+      const workspace = await tx.workspace.create({
+        data: {
+          name: `${validated.name}'s Workspace`,
+          ownerId: user.id,
+        },
+      });
+
+      await tx.workspaceMember.create({
+        data: {
+          workspaceId: workspace.id,
+          userId: user.id,
+          role: 'OWNER',
+        },
+      });
+
+      // Store hashed verification token at rest
+      await tx.emailVerificationToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: tokenHash,
+          expiresAt: tokenExpiresAt,
+        },
+      });
+
+      emailJobPayload = {
+        to: validated.email,
+        rawToken: rawVerificationToken,
+        type: 'VERIFY',
+      };
+    });
+
+    // Step 6: Dispatch Email Asynchronously OUTSIDE the database transaction
+    if (emailJobPayload) {
+      await emailQueue.add('send-auth-email', emailJobPayload, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+      });
+    }
+
+    // Step 7: Return Anti-Enumeration Safe Response
+    res.status(201).json({
+      success: true,
+      message: 'If your email is eligible, a verification link has been sent to your inbox.',
+    });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid input fields',
+          details: error.flatten().fieldErrors,
+        },
+      });
+      return;
+    }
+
+    // Handle database unique constraint violation race conditions
+    if (error.code === 'P2002' || error.code === '23505') {
+      res.status(201).json({
+        success: true,
+        message: 'If your email is eligible, a verification link has been sent to your inbox.',
+      });
+      return;
+    }
+
+    next(error);
+  }
+}
+
+// Controller: POST /api/auth/verify-email
+export async function verifyEmailController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const { token } = req.body;
+    if (!token || typeof token !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_TOKEN', message: 'Verification token is required.' },
+      });
+      return;
+    }
+
+    // Compute hash of the incoming raw token to look up in DB
+    const incomingTokenHash = crypto
+      .createHash('sha256')
+      .update(token)
+      .digest('hex');
+
+    await db.$transaction(async (tx) => {
+      const record = await tx.emailVerificationToken.findUnique({
+        where: { tokenHash: incomingTokenHash },
+        include: { user: true },
+      });
+
+      if (!record || record.expiresAt < new Date()) {
+        throw new Error('TOKEN_EXPIRED_OR_INVALID');
+      }
+
+      // Mark user as verified
+      await tx.user.update({
+        where: { id: record.userId },
+        data: { isVerified: true },
+      });
+
+      // Delete consumed verification token (single-use enforcement)
+      await tx.emailVerificationToken.delete({
+        where: { id: record.id },
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Email successfully verified. You may now log in.',
+    });
+  } catch (error: any) {
+    if (error.message === 'TOKEN_EXPIRED_OR_INVALID') {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'TOKEN_INVALID',
+          message: 'Verification link is invalid or has expired.',
+        },
+      });
+      return;
+    }
+    next(error);
+  }
+}
+```
+
+## 5. The Interview Questions — All of Them, Done Properly
+
+**Q: How do you prevent duplicate account creation when two identical registration requests arrive simultaneously at two different API servers?**
+
+Application-level checks (`SELECT * FROM users WHERE email = ?`) are vulnerable to Time-of-Check to Time-of-Use (TOCTOU) race conditions. If both servers execute the `SELECT` check before either completes the `INSERT`, both queries return zero rows and both servers execute the insert.
+
+The only reliable defense is an authoritative unique constraint at the database layer on the normalized lowercase email column: `CREATE UNIQUE INDEX idx_users_lower_email ON users (LOWER(email))`. When two concurrent transactions attempt to insert identical lowercase emails, the database storage engine uses index locks to serialize the write; the first transaction commits successfully, and the second transaction immediately fails with a unique constraint violation code (`23505` in PostgreSQL, `1062` in MySQL, `P2002` in Prisma). The application intercepts this error and handles it gracefully without throwing an unhandled 500 error.
+
+**Q: Why should an engineering team choose Argon2id over SHA-256, PBKDF2, or standard Bcrypt for password storage?**
+
+General-purpose hashing algorithms like SHA-256 are designed for maximum throughput. Attackers using customized FPGA or GPU cracking rigs can calculate tens of billions of SHA-256 hashes per second.
+
+Bcrypt and PBKDF2 improve on this by introducing computational iterations (work factor), but they require very little RAM per calculation. A modern graphics card with thousands of parallel execution cores can run thousands of Bcrypt checks concurrently.
+
+Argon2id introduces memory hardness. When configured with 64 MB of RAM per hash, each parallel cracking thread on an attacker's GPU must allocate 64 MB of dedicated high-speed memory. Because GPUs have limited total VRAM, an attacker can only evaluate a small handful of password guesses concurrently. Argon2id also blends data-independent memory access (defending against side-channel timing attacks) with data-dependent memory access (defending against GPU memory trade-off attacks), making it the gold standard for password storage.
+
+**Q: Why is it dangerous to send verification emails directly inside the database transaction block?**
+
+Including network I/O calls to external email providers (like SendGrid or AWS SES) inside a database transaction causes two severe failure modes:
+
+First, connection pool starvation: an SMTP or REST email API call takes anywhere from 200ms to 5,000ms. If the email provider suffers from transient latency, the database transaction remains open during that entire duration, holding row locks and consuming an active database connection. Under moderate traffic, this rapidly exhausts the database connection pool, taking down the entire application.
+
+Second, transaction rollback inconsistency: if the email API call succeeds but the database transaction rolls back on a subsequent SQL statement (or if the database connection drops before commit), the user receives a real verification email containing a link to a user record that was never committed to the database.
+
+The correct pattern is to commit the database transaction first, and then push an email delivery message to an asynchronous job queue (such as BullMQ or RabbitMQ) or write an event to a transactional outbox table within the same transaction.
+
+**Q: Why do we store a SHA-256 hash of the email verification token in the database rather than the raw token itself?**
+
+Treat verification and password reset tokens with the same security posture as session tokens. If you store the raw token in plaintext in the `email_verification_tokens` table and an attacker gains read-only access to a database backup, replica snapshot, or SQL injection vulnerability, they can read every active verification token. The attacker could immediately activate unauthorized accounts or execute password resets to hijack accounts.
+
+By generating a 256-bit high-entropy random token, emailing the raw token to the user, and storing only its `SHA-256` hash in the database, the database record contains only an irreversible fingerprint. Even if the database is completely leaked, an attacker cannot reverse the SHA-256 hash to determine the raw token required to activate accounts.
+
+**Q: How do you defend a registration API against user enumeration attacks, and what are the trade-offs involved?**
+
+An enumeration attack occurs when an attacker scripts requests to discover which email addresses exist on a platform. If an API returns `409 Conflict: Email already exists` for registered emails and `201 Created` for new emails, the attacker can verify thousands of corporate emails against the endpoint.
+
+To defend against enumeration, return identical HTTP status codes (`201 Created` or `200 OK`) and identical response JSON payloads regardless of whether the email was newly registered or already existed. If the email exists, trigger a background email notifying the owner of the attempt rather than creating a duplicate. Also, equalize response times so the endpoint does not return in 5ms for existing users (cache hit) while taking 300ms for new users (Argon2 computation).
+
+The trade-off: pure anti-enumeration can harm user experience. A legitimate user who forgot they already created an account will receive a success message, check their inbox, and wonder why no standard activation email arrived (unless the alert email is carefully worded). For internal tools or non-sensitive B2B platforms, teams sometimes accept enumeration risk in exchange for immediate in-UI feedback directing the user to the login screen.
+
+**Q: Should a registration API immediately authenticate the user by returning JWT access and refresh tokens, or require email verification first?**
+
+The decision depends on the platform's risk profile:
+
+Strict gating (recommended for multi-tenant, financial, and high-security apps): The registration API returns only a confirmation message. The user cannot log in or access protected APIs until they click the verification link in their email. This guarantees that every authenticated user owns a valid email address and prevents bad actors from creating thousands of ghost accounts with forged email identities.
+
+Immediate onboarding with restricted scope (product-led growth): The registration API creates the account and returns active session tokens immediately, allowing the user to experience the product immediately. However, sensitive actions (such as sending invitations, exporting data, making payments, or modifying billing) remain locked behind a middleware check (`if (!req.user.isVerified) return 403 Forbidden`) until the email is verified within a grace period (such as 7 days).
+
+## 6. The Traps — What Goes Wrong
+
+PostgreSQL's default `VARCHAR` comparison is case-sensitive (`'User@domain.com' != 'user@domain.com'`). If your table defines `email VARCHAR(255) UNIQUE`, PostgreSQL will happily insert both `John@example.com` and `john@example.com`. When a user later logs in with `john@example.com`, `findUnique({ where: { email } })` might select the wrong record, or a case-insensitive query `WHERE LOWER(email) = LOWER($1)` will return multiple rows and crash your ORM. Always normalize incoming emails to lowercase in your validation layer, and create a functional unique index in your database migration (`CREATE UNIQUE INDEX idx_users_lower_email ON users (LOWER(email))`).
+
+Developers often import libraries and call synchronous methods without considering the concurrency model: calling `bcrypt.hashSync(password, 12)` blocks the entire Node.js single-threaded event loop for 300ms. While it runs, the Node.js process cannot accept new HTTP connections, process I/O events, or resolve promises. If 10 users register at the same time, the server completely freezes for 3 seconds. Always use asynchronous, promise-based hashing methods (`await argon2.hash(...)` or `await bcrypt.hash(...)`) which delegate computation to the worker thread pool, leaving the main JavaScript event loop completely unblocked.
+
+When a user registers but does not verify immediately, they often return to the UI and click "Resend Verification Email." If your backend generates a new token without invalidating or deleting the previous token, multiple active activation links exist simultaneously. Invalidate all previous unused verification tokens for that user before issuing a new one, and delete or mark the token as used inside the same database transaction that flips the account status to verified.
+
+Attackers can also use visually identical Cyrillic characters (like the Cyrillic 'а' with unicode `U+0430` vs ASCII 'a' with `U+0061`) to register fake lookalike accounts. Apply Unicode NFKC normalization during validation before running hashing or database lookups using `rawEmail.trim().normalize('NFKC').toLowerCase()`.
+
+## 7. Compare With Related Concepts
+
+Registration API vs. Login API: Registration creates a new identity record, validates password entropy, and provisions initial tenant states. Login verifies provided credentials against an existing hash and issues session tokens (JWTs, HTTP-only cookies). Registration computes a brand-new salt and executes a slow password hash, while login extracts the existing salt from the stored modular hash and re-computes the hash for constant-time comparison. Registration is rate-limited primarily by Client IP and Bot Challenge, whereas login is rate-limited by both Client IP and target account email to prevent credential stuffing attacks.
+
+Email Verification Flow vs. Password Reset Flow: Email verification transitions an existing account from unverified to verified without altering security credentials. Password reset invalidates the existing password hash, clears all active session tokens and refresh tokens across all devices, and replaces the credential. Because a leaked password reset token allows complete account takeover, reset tokens require much shorter lifespans (15–30 minutes vs. 24 hours for email verification) and immediate revocation of all active sessions upon consumption.
+
+Direct Password Registration vs. OAuth2 / SSO Social Sign-Up: Direct registration requires your application to manage password validation, memory-hard hashing, salt management, and email verification. OAuth2/SSO delegates identity verification and credential storage to an Identity Provider. When a user registers with OAuth2, the backend must verify if an account with that email already exists via direct registration, deciding whether to automatically link the identity or require the existing password to prevent account takeover.
+
+## 8. 🧠 The Memory Hook
+
+A production registration API is a **three-layer vault**:
+
+> **Shield the gate** with IP rate limits and bot challenges, **harden the secret** with Argon2id and SHA-hashed tokens at rest, and **lock the ledger** with atomic lowercase database transactions—while keeping all email side effects outside the transaction commit.
