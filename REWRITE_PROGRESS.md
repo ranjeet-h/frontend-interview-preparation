@@ -1,6 +1,6 @@
 # Study-Note Rewrite Progress
 
-Updated: 2026-08-26
+Updated: 2026-08-27
 
 Tracking overall progress across all interview study sections. Detailed page-by-page tracking is maintained in [`docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md`](docs/superpowers/plans/2026-08-25-one-topic-rewrite-tracker.md).
 
@@ -37,10 +37,16 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Collection | Total Puzzles | Accepted Pages | Remaining |
 |---|---:|---:|---:|
-| Part 1 | 40 | 5 | 35 |
-| Part 2 | 100 | 5 | 95 |
-| Part 3 | 203 | 5 | 198 |
-| **Total Output Questions** | **343** | **15** | **328** |
+| Part 1 | 40 | 8 | 32 |
+| Part 2 | 100 | 7 | 93 |
+| Part 3 | 203 | 7 | 196 |
+| **Total Output Questions** | **343** | **22** | **321** |
+
+### JavaScript Polyfills
+
+| Page | Completed | Status |
+|---|---:|---|
+| `src/javascript/polyfills.md` | 1 / 1 | **Complete — Type B coding/interview treatment** |
 
 ### Backend Sections (Pending Rewrite)
 
@@ -77,6 +83,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 ## Cross-Project Summary
 
 - **Total Completed Concept/System Pages:** **588**
-- **Total Completed Output Question Puzzles:** **15**
+- **Total Completed Output Question Puzzles:** **22**
+- **JavaScript Polyfills:** **1 / 1 complete**
 - **Database Remaining:** **0** (All 135 database pages complete!)
 - **Backend Remaining:** **360** (14 remaining backend sections)

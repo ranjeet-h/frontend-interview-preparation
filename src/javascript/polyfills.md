@@ -1,1233 +1,838 @@
 # JavaScript Polyfills
 
 > For implementation challenges beyond polyfills → [DSA Implementations](../dsa/implementations.md).
-> Canonical theory on Promises → [Core Concepts](concepts/promises.md).
+> Canonical Promise theory → [Core Concepts](concepts/promises.md).
 
----
+Polyfill questions are not really about recreating the standard library from memory. They test whether you can recover an API's contract, identify the runtime behavior hidden behind the friendly method name, and implement only what JavaScript can actually control.
 
-## How to Study This Page
+The examples below are interview-sized implementations. They remain readable, but they also respect the details that separate a convincing answer from a loop that merely works for `[1, 2, 3]`: `this`, callback arguments, sparse arrays, `SameValueZero`, one-way Promise settlement, ordering, and host-environment boundaries.
 
-Every polyfill group below follows **Format B** — the same structure an interviewer expects you to demonstrate on a whiteboard:
+## 1. Array iteration methods: one contract, several policies
 
-1. What the interviewer is *actually* testing
-2. How a senior engineer thinks before writing a single line
-3. The complete, explained solution with comments on *why*
-4. A dry-run so you can trace it yourself
-5. Edge cases and follow-up questions
+### What the Interviewer Is Really Testing
 
-Work through each group in order. The Array section teaches the shared mental model. Everything after reinforces it.
+This group tests whether you can see the shared machinery behind `map`, `filter`, `forEach`, `find`, `some`, and `every`. The shared contract is: convert the receiver to an object, snapshot its length before iterating, call the callback with `(value, index, object)`, and honor `thisArg`. `map`, `filter`, `forEach`, `some`, and `every` skip missing indices; `find` and `findIndex` are the important exception and call the predicate for every index, reading a hole as `undefined`. Each method then differs in what it does with the callback result.
 
----
+### Think Before You Code — The Senior Dev Thought Process
 
-## Part 1 — Array Method Polyfills
+I separate the invariant from the policy. The invariant is the iteration skeleton; the policy is “write a transformed value,” “keep the value,” “stop when true,” or “stop when false.” I avoid `for...of` because it is value-oriented and does not expose the same sparse-array contract. For the hole-skipping methods, `index in object` preserves the distinction between a hole and an explicit `undefined`; for `find` and `findIndex`, I deliberately omit that guard because their contract reads every index. I snapshot `length` once because native methods do not keep discovering newly appended indices during the same call.
 
-### `Array.prototype.map`
-
-#### 1. What the Interviewer Is Really Testing
-
-On the surface this looks like "do you know map?" — but what the interviewer is actually checking is whether you understand how `Array.prototype` methods work at the contract level: the `this` binding, the sparse-array `in` check, `thisArg` forwarding, and the unsigned-integer length cast. They want to see if you can implement an API to spec without relying on the native version.
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-My first instinct is to just loop and push. But before I do that, I ask: *what are the invariants of the real `map`?*
-
-- `map` is called as `arr.map(fn, ctx)`. That means inside the polyfill, `this` is the array — not a parameter.
-- The spec coerces `this` to an Object, so `null` or `undefined` must throw.
-- The callback receives three arguments: `element`, `index`, `originalArray`.
-- An optional `thisArg` sets the `this` context inside the callback.
-- The returned array must be *the same length* as the original — including holes in sparse arrays. Holes should be copied as holes, not as `undefined`.
-- The sparse-array hole check is `i in obj` — this returns `false` for holes (no own property at that index) but `true` for `undefined` values (own property exists with value `undefined`).
-- `length >>> 0` converts the length to an unsigned 32-bit integer, handling non-numeric or negative length values on array-like objects.
-
-Brute force: just loop and collect. The insight: don't forget `thisArg` and `i in obj`.
-
-#### 3. The Solution — Fully Explained Code
+### The Solution — Fully Explained Code
 
 ```javascript
+function toObject(value) {
+  if (value == null) throw new TypeError("Cannot convert null or undefined to an object");
+  return Object(value);
+}
+
+function toLength(value) {
+  // Number(1n) would silently coerce a BigInt; the relevant ECMAScript
+  // abstract operations must throw instead.
+  if (typeof value === "bigint") throw new TypeError("Cannot convert a BigInt to a number");
+  const number = Number(value);
+  if (Number.isNaN(number) || number <= 0) return 0;
+  return Math.min(Math.floor(number), Number.MAX_SAFE_INTEGER);
+}
+
+function toIntegerOrInfinity(value) {
+  if (typeof value === "bigint") throw new TypeError("Cannot convert a BigInt to a number");
+  const number = Number(value);
+  if (Number.isNaN(number) || number === 0) return 0;
+  if (number === Infinity || number === -Infinity) return number;
+  return number < 0 ? Math.ceil(number) : Math.floor(number);
+}
+
 if (!Array.prototype.myMap) {
   Array.prototype.myMap = function (callback, thisArg) {
-    // Guard. 'this' is set by how the method is called, e.g. arr.myMap(...).
-    // null/undefined 'this' means someone called it on null directly.
-    if (this == null) {
-      throw new TypeError("Array.prototype.myMap called on null or undefined");
-    }
-    if (typeof callback !== "function") {
-      throw new TypeError(callback + " is not a function");
-    }
-
-    // Coerce to Object so array-like objects (NodeList, arguments) work too.
-    const obj = Object(this);
-
-    // >>> 0 converts length to Uint32. Handles NaN, -1, "3", etc.
-    const len = obj.length >>> 0;
-
-    // Pre-allocate the result array at the same length.
-    // This means holes stay holes — we only write indices that exist.
-    const result = new Array(len);
-
-    for (let i = 0; i < len; i++) {
-      // Sparse-array check. 'i in obj' returns false for holes.
-      // This preserves the hole instead of writing undefined.
-      if (i in obj) {
-        // .call() forwards thisArg and passes (element, index, originalArray)
-        // exactly as the spec requires.
-        result[i] = callback.call(thisArg, obj[i], i, obj);
+    const object = toObject(this);
+    if (typeof callback !== "function") throw new TypeError("callback must be a function");
+    const length = toLength(object.length); // Snapshot before callbacks can mutate length.
+    const result = new Array(length);
+    for (let index = 0; index < length; index += 1) {
+      if (index in object) {
+        // Write only existing indices so holes stay holes in the result.
+        result[index] = callback.call(thisArg, object[index], index, object);
       }
     }
-
     return result;
   };
 }
-```
 
-**Time complexity:** O(n) — one pass through the array.
-**Space complexity:** O(n) — allocates a new array of the same length.
-
-#### 4. Dry Run — Walk Through a Real Example
-
-```javascript
-const arr = [1, 2, 3];
-arr.myMap((x) => x * 2);
-// obj = [1, 2, 3], len = 3, result = new Array(3) = [<3 empty>]
-
-// i = 0: 0 in obj → true. callback(1, 0, arr) = 2.  result[0] = 2
-// i = 1: 1 in obj → true. callback(2, 1, arr) = 4.  result[1] = 4
-// i = 2: 2 in obj → true. callback(3, 2, arr) = 6.  result[2] = 6
-
-// Returns: [2, 4, 6] ✓
-```
-
-Sparse array case:
-```javascript
-const sparse = [1, , 3]; // index 1 is a hole
-sparse.myMap((x) => x * 10);
-// i = 0: 0 in sparse → true.  result[0] = 10
-// i = 1: 1 in sparse → false. result[1] stays a hole (not undefined)
-// i = 2: 2 in sparse → true.  result[2] = 30
-// Returns: [10, <1 empty>, 30] ✓  (NOT [10, undefined, 30])
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**`NaN` and holes.** `[1,,3].map(fn)` must skip index 1. A naive `for` loop that always writes `result[i] = fn(arr[i])` would write `undefined` instead of leaving a hole.
-
-**`thisArg` ignored.** Forgetting `callback.call(thisArg, ...)` and writing `callback(obj[i], i, obj)` makes `this` inside the callback `undefined` (strict mode) or `window` (sloppy) — a subtle bug when methods are passed as callbacks.
-
-**Array-like objects.** Because we use `Object(this)` and a manual loop, this polyfill works on `{ 0: 'a', 1: 'b', length: 2 }` too, just like the native.
-
-**Mutation during iteration.** If the callback mutates the original array, the polyfill still uses the current value at each index when it reaches it. This matches native behaviour.
-
-#### 6. Variations and Follow-ups
-
-> *"Can you implement `filter` next?"* — Same skeleton. Difference: push to result only when `callback.call(...)` returns truthy. Don't pre-allocate at `len`; push instead.
-
-> *"What if you couldn't use `.call()`?"* — You'd need another way to set `this`. Temporarily assigning the function as a property of `thisArg` and calling it as a method is the classic trick (covered in the `call`/`apply` section below).
-
-#### 7. 🧠 The Memory Hook
-
-Every Array prototype polyfill has the same skeleton: `Object(this)`, `length >>> 0`, `i in obj` for holes, and `.call(thisArg, element, index, array)`. Learn that skeleton once and you can implement any of them.
-
----
-
-### `Array.prototype.filter`
-
-#### 1. What the Interviewer Is Really Testing
-
-Same underlying contract as `map` — but now the test is whether you understand that `filter` returns a **new, shorter array** containing only elements for which the predicate is truthy. The length of the result is unknown upfront, so you can't pre-allocate at `len`.
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-Same `Object(this)`, `length >>> 0`, `i in obj` skeleton. The difference: instead of `result[i] = transformed`, we `push` only when the predicate passes. We never pre-allocate because we don't know how many elements will pass.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
 if (!Array.prototype.myFilter) {
   Array.prototype.myFilter = function (callback, thisArg) {
-    if (this == null) throw new TypeError("called on null or undefined");
-    if (typeof callback !== "function") throw new TypeError(callback + " is not a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-    const result = []; // unknown final length — push, don't index
-
-    for (let i = 0; i < len; i++) {
-      if (i in obj) {
-        // Only push if predicate returns truthy.
-        // We push obj[i], not the return value of the callback (that's map's job).
-        if (callback.call(thisArg, obj[i], i, obj)) {
-          result.push(obj[i]);
-        }
+    const object = toObject(this);
+    if (typeof callback !== "function") throw new TypeError("callback must be a function");
+    const length = toLength(object.length);
+    const result = [];
+    for (let index = 0; index < length; index += 1) {
+      if (index in object && callback.call(thisArg, object[index], index, object)) {
+        // Filter returns the original value, not true/false from the predicate.
+        result.push(object[index]);
       }
     }
-
     return result;
   };
 }
-```
 
-**Time:** O(n). **Space:** O(k) where k is the number of passing elements.
-
-#### 4. Dry Run — Walk Through a Real Example
-
-```javascript
-[1, 2, 3, 4].myFilter((x) => x % 2 === 0);
-// i=0: callback(1) = false. skip.
-// i=1: callback(2) = true.  result = [2]
-// i=2: callback(3) = false. skip.
-// i=3: callback(4) = true.  result = [2, 4]
-// Returns: [2, 4] ✓
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**Returning the callback's return value instead of the element.** `result.push(callback(...))` would push `true`/`false`, not the original element.
-
-**Empty array** returns `[]` — the loop body never runs.
-
-#### 6. Variations and Follow-ups
-
-> *"What's the difference between `filter(Boolean)` and `filter(x => x)`?"* — Identical in behaviour. Both remove falsy values. `Boolean` is just the built-in function used as the predicate.
-
-#### 7. 🧠 The Memory Hook
-
-`filter` returns the *element*, not the callback's return value. Use `push`, not pre-allocation.
-
----
-
-### `Array.prototype.reduce`
-
-#### 1. What the Interviewer Is Really Testing
-
-`reduce` is the most complex of the Array polyfills. The extra difficulty is the `initialValue` handling: when no initial value is provided, the first *non-hole* element becomes the accumulator and iteration starts at the *next* element. Getting that wrong is the most common failure.
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-Two cases:
-1. **`initialValue` provided** (`arguments.length >= 2`): `accumulator = initialValue`, iterate from index 0.
-2. **No `initialValue`**: skip holes to find the first real element, use it as `accumulator`, start the loop one index later. If the array is entirely empty and no initial value, throw `TypeError`.
-
-The `arguments.length >= 2` check (not `initialValue !== undefined`) is critical — `reduce([1,2], (a,b)=>a+b, undefined)` provides an explicit `undefined` as the initial value, which is valid.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-if (!Array.prototype.myReduce) {
-  Array.prototype.myReduce = function (callback, initialValue) {
-    if (this == null) throw new TypeError("called on null or undefined");
-    if (typeof callback !== "function") throw new TypeError(callback + " is not a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-    let i = 0;
-    let accumulator;
-
-    if (arguments.length >= 2) {
-      // Explicit initial value provided — use it.
-      accumulator = initialValue;
-    } else {
-      // No initial value: find the first non-hole element.
-      while (i < len && !(i in obj)) {
-        i++;
-      }
-      if (i >= len) {
-        // Exhausted the array (empty or all holes) with no initial value.
-        throw new TypeError("Reduce of empty array with no initial value");
-      }
-      // First real element becomes the seed; next iteration starts after it.
-      accumulator = obj[i];
-      i++;
-    }
-
-    for (; i < len; i++) {
-      if (i in obj) {
-        // The callback's RETURN VALUE becomes the new accumulator on each step.
-        accumulator = callback(accumulator, obj[i], i, obj);
-      }
-    }
-
-    return accumulator;
-  };
-}
-```
-
-**Time:** O(n). **Space:** O(1) — just tracks the accumulator.
-
-#### 4. Dry Run — Walk Through a Real Example
-
-```javascript
-[1, 2, 3].myReduce((acc, val) => acc + val);
-// No initialValue → first real element = 1. i starts at 1.
-// i=1: acc = callback(1, 2) = 3
-// i=2: acc = callback(3, 3) = 6
-// Returns: 6 ✓
-
-[1, 2, 3].myReduce((acc, val) => acc + val, 10);
-// initialValue = 10. i starts at 0.
-// i=0: acc = callback(10, 1) = 11
-// i=1: acc = callback(11, 2) = 13
-// i=2: acc = callback(13, 3) = 16
-// Returns: 16 ✓
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**Single-element array with no initial value** — returns that element immediately without calling the callback. This matches native behaviour.
-
-**`initialValue !== undefined` vs `arguments.length >= 2`** — always use `arguments.length >= 2`. Checking `initialValue !== undefined` breaks when someone passes `undefined` as an explicit initial value.
-
-**Sparse array with no initial value** — the while-loop skips holes to find the first real seed. A naive `accumulator = obj[0]` would use `undefined` for a sparse hole.
-
-#### 6. Variations and Follow-ups
-
-> *"Implement `reduceRight`"* — Same logic but iterate from `len - 1` down to `0`. Initial value seed comes from the last real element.
-
-#### 7. 🧠 The Memory Hook
-
-`reduce` is just a loop that replaces the accumulator with the callback's return value each step. The only tricky part: no initial value means the first *real* element is the seed and the loop skips it.
-
----
-
-### `Array.prototype.forEach`
-
-#### 1. What the Interviewer Is Really Testing
-
-`forEach` is the simplest of the group. The test is: do you know that `forEach` **always returns `undefined`**, and do you know *not* to create or return a results array?
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
 if (!Array.prototype.myForEach) {
   Array.prototype.myForEach = function (callback, thisArg) {
-    if (this == null) throw new TypeError("called on null or undefined");
-    if (typeof callback !== "function") throw new TypeError(callback + " is not a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-
-    for (let i = 0; i < len; i++) {
-      if (i in obj) {
-        callback.call(thisArg, obj[i], i, obj);
-        // No return value captured. forEach always returns undefined.
-      }
+    const object = toObject(this);
+    if (typeof callback !== "function") throw new TypeError("callback must be a function");
+    const length = toLength(object.length);
+    for (let index = 0; index < length; index += 1) {
+      if (index in object) callback.call(thisArg, object[index], index, object);
     }
-    // Implicit return undefined.
+    // Deliberately no return: native forEach always returns undefined.
   };
 }
-```
 
-#### 7. 🧠 The Memory Hook
-
-`forEach` is `map` with the result array removed. Call the callback, return nothing.
-
----
-
-### `Array.prototype.flat`
-
-#### 1. What the Interviewer Is Really Testing
-
-`flat` tests whether you can write a *depth-limited recursive* algorithm. The key insight is that a default depth of `1` is not "infinite" — you must actually track the recursion depth.
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-I need a recursive helper that accepts `(arr, currentDepth)`. At each level, if an element is an array *and* `currentDepth < maxDepth`, recurse deeper. Otherwise push the element. I'll push into a shared outer `result` array rather than creating arrays at each recursion level.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-if (!Array.prototype.myFlat) {
-  Array.prototype.myFlat = function (depth) {
-    // Default depth is 1. Infinity means flatten completely.
-    const maxDepth = depth === undefined ? 1 : Math.floor(depth);
-
-    if (maxDepth < 1) {
-      // depth 0 → shallow copy, no flattening.
-      return Array.prototype.slice.call(this);
-    }
-
-    const result = [];
-
-    function flatten(arr, currentDepth) {
-      for (let i = 0; i < arr.length; i++) {
-        if (i in arr) {
-          const el = arr[i];
-          // Only recurse if the element is an array AND we haven't hit max depth.
-          if (Array.isArray(el) && currentDepth < maxDepth) {
-            flatten(el, currentDepth + 1);
-          } else {
-            result.push(el);
-          }
-        }
-      }
-    }
-
-    flatten(this, 0);
-    return result;
-  };
-}
-```
-
-#### 4. Dry Run — Walk Through a Real Example
-
-```javascript
-[[1, 2], [3, [4, 5]]].myFlat();
-// maxDepth = 1. flatten(arr, 0)
-// i=0: el=[1,2], isArray && 0 < 1 → flatten([1,2], 1)
-//   i=0: el=1, not array → push(1)
-//   i=1: el=2, not array → push(2)
-// i=1: el=[3,[4,5]], isArray && 0 < 1 → flatten([3,[4,5]], 1)
-//   i=0: el=3, not array → push(3)
-//   i=1: el=[4,5], isArray && 1 < 1? NO → push([4,5])
-// result = [1, 2, 3, [4, 5]] ✓
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**`depth = 0`** — should return a shallow copy, not the original reference.
-
-**`depth = Infinity`** — `currentDepth < Infinity` is always true, so it flattens completely. No special case needed.
-
-**Sparse arrays** — the `i in arr` guard preserves holes.
-
-#### 7. 🧠 The Memory Hook
-
-Track a `currentDepth` counter alongside `maxDepth`. Only recurse when the element is an array *and* you haven't hit the limit yet.
-
----
-
-### `Array.prototype.includes`
-
-#### 1. What the Interviewer Is Really Testing
-
-The gotcha is **`NaN`**. `[NaN].indexOf(NaN)` returns `-1` because `indexOf` uses strict equality (`===`), and `NaN !== NaN`. But `[NaN].includes(NaN)` returns `true` because `includes` uses the **SameValueZero** algorithm, which treats `NaN` as equal to itself.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-if (!Array.prototype.myIncludes) {
-  Array.prototype.myIncludes = function (searchElement, fromIndex) {
-    if (this == null) throw new TypeError("called on null or undefined");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-
-    if (len === 0) return false;
-
-    // fromIndex can be negative (search from end).
-    const n = fromIndex | 0;
-    let k = Math.max(n >= 0 ? n : len - Math.abs(n), 0);
-
-    while (k < len) {
-      const el = obj[k];
-      // SameValueZero: NaN equals NaN, -0 equals +0.
-      // The NaN check: NaN !== NaN is the only case where el !== searchElement
-      // but they should be considered equal.
-      if (
-        el === searchElement ||
-        (searchElement !== searchElement && el !== el)
-      ) {
-        return true;
-      }
-      k++;
-    }
-
-    return false;
-  };
-}
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**`NaN` search** — `el !== el` is only true when `el` is `NaN`. Combined with `searchElement !== searchElement`, both must be `NaN` for this branch to be true.
-
-**Negative `fromIndex`** — `fromIndex = -2` on a 5-element array starts searching from index `3` (5 - 2). Clamp to 0 if the result is negative.
-
-#### 7. 🧠 The Memory Hook
-
-`includes` uses SameValueZero: it finds `NaN` where `indexOf` can't. The `NaN` self-inequality trick: `x !== x` is only true when `x` is `NaN`.
-
----
-
-### `Array.prototype.find` and `Array.prototype.findIndex`
-
-These two are identical in structure — `find` returns the *element*, `findIndex` returns the *index*.
-
-```javascript
 if (!Array.prototype.myFind) {
   Array.prototype.myFind = function (predicate, thisArg) {
-    if (this == null) throw new TypeError("called on null or undefined");
+    const object = toObject(this);
     if (typeof predicate !== "function") throw new TypeError("predicate must be a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-
-    for (let i = 0; i < len; i++) {
-      if (i in obj) {
-        if (predicate.call(thisArg, obj[i], i, obj)) {
-          return obj[i]; // return the element itself
-        }
-      }
+    const length = toLength(object.length);
+    for (let index = 0; index < length; index += 1) {
+      // find is intentionally different: a hole is visited as undefined.
+      if (predicate.call(thisArg, object[index], index, object)) return object[index];
     }
-    return undefined; // not found
+    return undefined;
   };
 }
 
 if (!Array.prototype.myFindIndex) {
   Array.prototype.myFindIndex = function (predicate, thisArg) {
-    if (this == null) throw new TypeError("called on null or undefined");
+    const object = toObject(this);
     if (typeof predicate !== "function") throw new TypeError("predicate must be a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-
-    for (let i = 0; i < len; i++) {
-      if (i in obj) {
-        if (predicate.call(thisArg, obj[i], i, obj)) {
-          return i; // return the index, not the element
-        }
-      }
+    const length = toLength(object.length);
+    for (let index = 0; index < length; index += 1) {
+      // findIndex also visits holes, so predicate receives undefined for one.
+      if (predicate.call(thisArg, object[index], index, object)) return index;
     }
-    return -1; // not found → -1, unlike find which returns undefined
+    return -1;
   };
 }
-```
 
-**`find` not found → `undefined`. `findIndex` not found → `-1`.** That asymmetry is the only thing worth remembering.
-
----
-
-### `Array.prototype.some` and `Array.prototype.every`
-
-These are logical duals of each other. `some` short-circuits on the first `true`. `every` short-circuits on the first `false`.
-
-```javascript
 if (!Array.prototype.mySome) {
-  Array.prototype.mySome = function (callback, thisArg) {
-    if (this == null) throw new TypeError("called on null or undefined");
-    if (typeof callback !== "function") throw new TypeError(callback + " is not a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-
-    for (let i = 0; i < len; i++) {
-      if (i in obj) {
-        if (callback.call(thisArg, obj[i], i, obj)) {
-          return true; // short-circuit: at least one passes
-        }
-      }
+  Array.prototype.mySome = function (predicate, thisArg) {
+    const object = toObject(this);
+    if (typeof predicate !== "function") throw new TypeError("predicate must be a function");
+    const length = toLength(object.length);
+    for (let index = 0; index < length; index += 1) {
+      if (index in object && predicate.call(thisArg, object[index], index, object)) return true;
     }
     return false;
   };
 }
 
 if (!Array.prototype.myEvery) {
-  Array.prototype.myEvery = function (callback, thisArg) {
-    if (this == null) throw new TypeError("called on null or undefined");
-    if (typeof callback !== "function") throw new TypeError(callback + " is not a function");
-
-    const obj = Object(this);
-    const len = obj.length >>> 0;
-
-    for (let i = 0; i < len; i++) {
-      if (i in obj) {
-        if (!callback.call(thisArg, obj[i], i, obj)) {
-          return false; // short-circuit: at least one fails
-        }
-      }
+  Array.prototype.myEvery = function (predicate, thisArg) {
+    const object = toObject(this);
+    if (typeof predicate !== "function") throw new TypeError("predicate must be a function");
+    const length = toLength(object.length);
+    for (let index = 0; index < length; index += 1) {
+      if (index in object && !predicate.call(thisArg, object[index], index, object)) return false;
     }
     return true;
   };
 }
 ```
 
-**Empty array:** `[].some(fn)` → `false` (no element ever returned true). `[].every(fn)` → `true` (vacuous truth — no element failed).
+**Complexity:** all six methods are O(n) in the worst case. `map` uses O(n) result space; `filter` uses O(k), where `k` is retained values; the others use O(1) auxiliary space.
 
----
+### Dry Run — Walk Through a Real Example
 
-## Part 2 — Function Method Polyfills
+```javascript
+const sparse = [10, , 30];
+sparse.myMap((value, index) => value + index);
+// length = 3. Index 0 writes 10; index 1 is absent and stays a hole; index 2 writes 32.
+// => [10, <empty>, 32], not [10, undefined, 32].
 
-### `Function.prototype.bind`
+const seen = [];
+[, 2].myFind((value, index) => { seen.push([value, index]); return false; });
+// find does not skip index 0: seen is [[undefined, 0], [2, 1]].
 
-#### 1. What the Interviewer Is Really Testing
+[].mySome(() => true);   // false: nothing can satisfy the predicate.
+[].myEvery(() => false); // true: nothing violated the predicate.
+```
 
-`bind` is one of the most common polyfill questions because it tests `this`, closures, and partial application all at once. The interviewer wants to know: can you capture context and pre-supply arguments using a closure?
+### Edge Cases — The Ones That Break Naive Solutions
 
-#### 2. Think Before You Code — The Senior Dev Thought Process
+- **Using `this.length` every iteration:** a callback can change `length`; native methods use the initial snapshot.
+- **Treating a hole as `undefined`:** `1 in [ , ]` is false, while `1 in [undefined]` is true.
+- **Returning a result from `forEach`:** callback results are ignored and the method returns `undefined`.
+- **Forgetting short-circuiting:** `some`, `every`, `find`, and `findIndex` stop as soon as the answer is known.
+- **Assuming the receiver must be an Array:** `Object(this)` makes the methods generic for array-like objects too.
 
-`fn.bind(ctx, a, b)` returns a new function. When that new function is called later with `(c, d)`, it behaves as if `fn.call(ctx, a, b, c, d)` was called. Two sets of arguments: the ones given at *bind time*, and the ones given at *call time*.
+### Variations and Follow-ups
 
-The mechanism is a closure:
-1. Capture `this` (the original function) as `originalFunc`.
-2. Capture `ctx` as `boundThis`.
-3. Capture any extra bind-time arguments as `boundArgs`.
-4. Return a new function. When *that* function is called, concatenate `boundArgs` with the new call-time arguments and use `originalFunc.apply(boundThis, combined)`.
+`reduce` uses the same iteration skeleton but has a special accumulator-seeding rule, so it deserves its own challenge. `reduceRight` is the same algorithm in reverse. A generic method can be called with `Array.prototype.myMap.call(arrayLike, callback)`.
 
-#### 3. The Solution — Fully Explained Code
+### Interview Questions
+
+**Q: Do `find` and `findIndex` skip holes the way `map` does?**
+
+No. `map`, `filter`, `forEach`, `some`, and `every` perform a `HasProperty` check and skip an absent index. `find` and `findIndex` perform a `Get` for every index below the snapshotted length, so a hole is passed to the predicate as `undefined`. That is why the implementation deliberately has no `index in object` guard for those two methods. Confusing these two families is a common sign that the implementation was copied from a generic loop without checking each API’s contract.
+
+**Q: Why snapshot length but check property existence during the loop?**
+
+Length is snapshotted so an append cannot extend the current traversal. Property existence is checked at the moment an index is reached because an earlier callback can delete or create a later property. The method therefore has a fixed boundary but a live view of indices inside that boundary.
+
+### 🧠 The Memory Hook
+
+Every array iterator is “snapshot the length, visit only indices that exist, call with value/index/object.” After that, the method’s personality is transform, keep, observe, find, or short-circuit.
+
+## 2. `reduce`: the accumulator is the whole problem
+
+### What the Interviewer Is Really Testing
+
+The loop is easy. The real test is whether you understand the two starting modes: an explicit `initialValue`, or the first present element when no initial value is supplied. It also tests whether you distinguish an omitted argument from an explicitly supplied `undefined`.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+I record `arguments.length >= 2`. If true, index zero is eligible and the accumulator starts with the supplied value. If false, I scan for the first present index, use that element as the accumulator, and begin after it. An empty or all-hole array without a seed must throw; there is no honest accumulator to return.
+
+### The Solution — Fully Explained Code
+
+```javascript
+if (!Array.prototype.myReduce) {
+  Array.prototype.myReduce = function (callback, initialValue) {
+    const object = toObject(this);
+    if (typeof callback !== "function") throw new TypeError("callback must be a function");
+    const length = toLength(object.length);
+    let index = 0;
+    let accumulator;
+
+    if (arguments.length >= 2) {
+      accumulator = initialValue; // Explicit undefined is still a real seed.
+    } else {
+      while (index < length && !(index in object)) index += 1;
+      if (index >= length) throw new TypeError("Reduce of empty array with no initial value");
+      accumulator = object[index];
+      index += 1; // The seed is not passed to the callback a second time.
+    }
+
+    for (; index < length; index += 1) {
+      if (index in object) accumulator = callback(accumulator, object[index], index, object);
+    }
+    return accumulator;
+  };
+}
+```
+
+**Complexity:** O(n) time and O(1) auxiliary space.
+
+### Dry Run — Walk Through a Real Example
+
+```javascript
+[ , 2, 3].myReduce((sum, value) => sum + value);
+// Skip the hole at 0; seed with 2 at index 1; callback(2, 3) returns 5.
+
+[1, 2].myReduce((sum, value) => sum + value, undefined);
+// The seed is explicitly undefined, so callback(undefined, 1) runs.
+```
+
+### Edge Cases — The Ones That Break Naive Solutions
+
+- `[42].reduce(fn)` returns `42` without calling `fn`.
+- `[].reduce(fn)` and `[ , ].reduce(fn)` throw without an initial value.
+- Checking `initialValue !== undefined` is wrong; check `arguments.length`.
+- The callback’s return value replaces the accumulator. Forgetting to return turns the next accumulator into `undefined`.
+
+### Variations and Follow-ups
+
+`reduceRight` scans downward and seeds from the last present element. For grouping records, use an object or `Map` as an explicit accumulator so empty input still has a defined result.
+
+### Interview Questions
+
+**Q: What happens when `initialValue` is omitted?**
+
+The first present element becomes the accumulator, and the callback starts at the next index. A single-element array returns that element without calling the callback. An empty or all-hole array throws `TypeError` because there is no seed. The implementation must use `arguments.length >= 2`, not `initialValue !== undefined`, because an explicitly supplied `undefined` is still an initial value.
+
+**Q: Does `reduce` skip holes?**
+
+Yes. It searches for the first present element when seeding and ignores absent indices during later iterations. An explicit `undefined` is present and is passed to the callback; a hole is not.
+
+### 🧠 The Memory Hook
+
+`reduce` means “choose a seed, then repeatedly replace the accumulator with the callback’s return value.” The seed rule is the interview question.
+
+## 3. `flat` and `includes`: recursion versus equality
+
+### What the Interviewer Is Really Testing
+
+`flat` tests controlled recursion; `includes` tests `SameValueZero`, negative starting positions, and a different sparse-array rule. These methods punish the instinct to write a generic loop without first recovering the contract.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+For `flat`, I pass current depth into a helper and recurse only while it is below the requested maximum. For `includes`, I normalize `fromIndex`, then compare using strict equality plus the special case that `NaN` equals `NaN`. Unlike the iterator methods above, `includes` observes a hole as `undefined` for comparison.
+
+### The Solution — Fully Explained Code
+
+```javascript
+if (!Array.prototype.myFlat) {
+  Array.prototype.myFlat = function (depth = 1) {
+    const object = toObject(this);
+    const maxDepth = toIntegerOrInfinity(depth);
+    const result = [];
+
+    function flatten(source, currentDepth) {
+      for (let index = 0; index < source.length; index += 1) {
+        if (!(index in source)) continue;
+        const value = source[index];
+        if (Array.isArray(value) && currentDepth < maxDepth) flatten(value, currentDepth + 1);
+        else result.push(value);
+      }
+    }
+    flatten(object, 0);
+    return result;
+  };
+}
+
+if (!Array.prototype.myIncludes) {
+  Array.prototype.myIncludes = function (searchElement, fromIndex = 0) {
+    const object = toObject(this);
+    const length = toLength(object.length);
+    if (length === 0) return false;
+    const integer = toIntegerOrInfinity(fromIndex);
+    if (integer === Infinity) return false;
+    let index = integer >= 0 ? integer : Math.max(length + integer, 0);
+
+    while (index < length) {
+      const value = object[index]; // Reading a hole produces undefined.
+      if (value === searchElement || (Number.isNaN(value) && Number.isNaN(searchElement))) return true;
+      index += 1;
+    }
+    return false;
+  };
+}
+```
+
+**Complexity:** `flat` is O(n) over visited values with O(d) recursion stack plus output; `includes` is O(n) time and O(1) auxiliary space.
+
+### Dry Run — Walk Through a Real Example
+
+```javascript
+[[1, 2], [3, [4]]].myFlat(1);
+// Flatten the first level: 1, 2, 3 are emitted; [4] is at the depth limit.
+// => [1, 2, 3, [4]]
+
+[NaN].myIncludes(NaN); // true: SameValueZero treats NaN as equal to itself.
+[ , ].myIncludes(undefined); // true: the hole is read as undefined.
+
+[[1], [2]].myFlat(1.5); // same as depth 1: fractional depth is truncated toward zero.
+[[[1]]].myFlat(Infinity); // [1]: Infinity means keep flattening.
+```
+
+### Edge Cases — The Ones That Break Naive Solutions
+
+- `flat(0)` returns a shallow, hole-free array: `[ , 1].flat(0)` is `[1]`, not `[<empty>, 1]`. The traversal still skips absent source indices, but its depth check prevents flattening nested arrays.
+- `flat(1.5)` uses ToIntegerOrInfinity, so the effective depth is `1`, not `1.5`.
+- `flat(Infinity)` recurses until nested arrays are exhausted, subject to stack limits.
+- `indexOf(NaN)` and `includes(NaN)` differ intentionally: strict equality versus `SameValueZero`.
+- A negative `fromIndex` is added to length and clamped to zero; a starting index at or beyond length returns false.
+- `flat(1n)` and `includes(value, 1n)` throw `TypeError`; BigInt is not silently converted to a Number.
+
+### Variations and Follow-ups
+
+For unbounded nesting, an explicit stack avoids recursion-depth limits. For `indexOf`, use `===` and skip holes. Whether holes are preserved depends on the exact native method.
+
+### Interview Questions
+
+**Q: Why does `includes(NaN)` return true when `indexOf(NaN)` does not?**
+
+`indexOf` uses strict equality, and `NaN === NaN` is false. `includes` uses `SameValueZero`, which is strict equality plus the rule that `NaN` matches `NaN`; it also treats `-0` and `+0` as equal. The `Number.isNaN` branch is the readable way to express that exception.
+
+**Q: What does `flat(1.5)` mean, and what does `flat(Infinity)` mean?**
+
+The depth goes through `ToIntegerOrInfinity`: `1.5` becomes `1` by truncating toward zero, while `Infinity` remains `Infinity` and allows recursive flattening until no nested arrays remain. A BigInt depth is not converted to a Number; it throws `TypeError`.
+
+**Q: Why can’t `flat(0)` simply return `slice()`?**
+
+Because `flat` removes holes even when it does not flatten nested arrays. At depth zero, the algorithm must still walk the top level, skip absent indices, and emit present values—including nested arrays as intact values. `slice()` preserves the hole, so the same flattening loop is required for correct shallow semantics.
+
+### 🧠 The Memory Hook
+
+`flat` carries a depth counter down the tree. `includes` carries a different rule: strict equality, except `NaN` finally counts as itself.
+
+## 4. `bind`, `call`, and `apply`: controlling `this`
+
+### What the Interviewer Is Really Testing
+
+This tests invocation semantics and closures. `bind` returns a new reusable function and optionally pre-fills arguments. `call` and `apply` invoke immediately with a chosen receiver. The important boundary is that `call` and `apply` themselves are engine primitives, so JavaScript can only simulate them.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+For `bind`, I capture the original function, receiver, and bound arguments. Each invocation concatenates new arguments after the bound ones. For `call` and `apply`, I delegate to `Reflect.apply`: that is the engine-level operation that gives us the exact receiver behavior, including strict functions and primitive `this` values. A temporary-property trick is useful history, but it is only an approximation.
+
+### The Solution — Fully Explained Code
 
 ```javascript
 if (!Function.prototype.myBind) {
-  Function.prototype.myBind = function (thisArg) {
-    const originalFunc = this;
-
-    if (typeof originalFunc !== "function") {
-      throw new TypeError("myBind must be called on a function");
-    }
-
-    // Arguments provided at bind-time (after thisArg).
-    const boundArgs = Array.prototype.slice.call(arguments, 1);
-
-    const boundFunction = function () {
-      // Arguments provided at call-time.
-      const callArgs = Array.prototype.slice.call(arguments);
-
-      // Merge: bind-time args come first, then call-time args.
-      return originalFunc.apply(thisArg, boundArgs.concat(callArgs));
+  Function.prototype.myBind = function (thisArg, ...boundArgs) {
+    const original = this;
+    if (typeof original !== "function") throw new TypeError("myBind must be called on a function");
+    function bound(...callArgs) {
+      const allArgs = [...boundArgs, ...callArgs];
+      if (new.target) {
+        // Native bind ignores thisArg under `new`. Use original as the newTarget
+        // when the wrapper itself was constructed so its prototype is preserved.
+        const newTarget = new.target === bound ? original : new.target;
+        return Reflect.construct(original, allArgs, newTarget);
+      }
+      return Reflect.apply(original, thisArg, allArgs);
     };
+    // Native bound functions do not need an own prototype; Reflect.construct uses
+    // the original prototype through the substituted newTarget above.
+    delete bound.prototype;
+    Object.defineProperty(bound, Symbol.hasInstance, {
+      value(instance) {
+        // Keep `instanceof bound` meaningful even though bound has no prototype.
+        return instance instanceof original;
+      },
+    });
+    return bound;
+  };
+}
 
-    // Preserve the prototype chain so the bound function
-    // can be used with `new` (simplified version).
-    if (originalFunc.prototype) {
-      boundFunction.prototype = Object.create(originalFunc.prototype);
+// These are exact invocation helpers, not replacements for the engine primitive
+// Function.prototype.call/apply. Reflect.apply supplies the real semantics.
+function myCall(fn, thisArg, ...args) {
+  if (typeof fn !== "function") throw new TypeError("target must be a function");
+  return Reflect.apply(fn, thisArg, args);
+}
+
+function myApply(fn, thisArg, args) {
+  if (typeof fn !== "function") throw new TypeError("target must be a function");
+  return Reflect.apply(fn, thisArg, args == null ? [] : Array.from(args));
+}
+```
+
+**Complexity:** creating a bound function is O(1); invoking it takes O(b + c) to assemble bound and call-time arguments. The simulations use O(a) temporary argument space.
+
+### Dry Run — Walk Through a Real Example
+
+```javascript
+function greet(greeting, punctuation) { return `${greeting}, ${this.name}${punctuation}`; }
+const sayHi = greet.myBind({ name: "Ada" }, "Hi");
+sayHi("!");
+// The closure stores Ada and Hi; the call adds !; greet receives ["Hi", "!"] => "Hi, Ada!".
+
+myCall(greet, { name: "Grace" }, "Hello", "."); // "Hello, Grace."
+
+function Person(name) { this.name = name; }
+Person.prototype.kind = "person";
+const BoundPerson = Person.myBind({ name: "ignored" }, "Ada");
+const ada = new BoundPerson();
+// new ignores the bound receiver: ada.name is "Ada", and ada instanceof Person is true.
+```
+
+### Edge Cases — The Ones That Break Naive Solutions
+
+- Arrow functions have lexical `this`; `call`, `apply`, and `bind` cannot replace it.
+- With `new`, a real bound function ignores its bound receiver and uses the new instance. Full support needs `Reflect.construct` and prototype handling.
+- Use a `Symbol`, not a string temporary property, to avoid collisions.
+- `myCall` and `myApply` are exact invocation helpers because they delegate to `Reflect.apply`; they are not replacements for the engine’s own `Function.prototype.call/apply` methods.
+
+### Variations and Follow-ups
+
+Implement constructor support with `new.target`, `Reflect.construct`, and a prototype relationship. Compare bind with partial application: partial application pre-fills arguments; bind also fixes `this` for ordinary calls.
+
+### Interview Questions
+
+**Q: Can `call` and `apply` be polyfilled exactly in JavaScript?**
+
+Not as replacements for the engine methods. `Reflect.apply` is the primitive that already performs the exact invocation semantics, including strict-mode `this` and primitive receivers. A temporary-property trick is only an approximation: it changes the receiver into an object and cannot reproduce strict-mode behavior reliably. The `myCall` and `myApply` helpers below delegate to `Reflect.apply` on purpose; they demonstrate the contract without pretending to reimplement the engine.
+
+**Q: What changes when a bound function is called with `new`?**
+
+The bound `thisArg` is ignored. JavaScript creates the new instance, passes it as `this`, and uses the original function’s prototype relationship. A practical implementation checks `new.target`, uses `Reflect.construct`, and substitutes the original function as the new target when the bound wrapper itself is constructed. Ordinary calls still use the captured receiver.
+
+### 🧠 The Memory Hook
+
+`bind` puts a function, receiver, and arguments in a closure for later. `call` opens that box now with separate arguments; `apply` opens it now with one argument list.
+
+## 5. Promise core and combinators
+
+### What the Interviewer Is Really Testing
+
+This is a state-machine and ordering question. A Promise settles once, callbacks run asynchronously, `then` returns a new Promise, and combinators normalize ordinary values as well as thenables. For `all` and `any`, completion order must not silently replace input order.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+I model `pending → fulfilled` or `pending → rejected`, with no reverse transition. Every `then` gets its own Promise so its callback can transform a value, recover from an error, or create another asynchronous link. Combinators preserve input indices, count completions, and rely on the returned Promise’s settlement guard so only the winning outcome matters.
+
+### The Solution — Fully Explained Code
+
+```javascript
+class MyPromise {
+  constructor(executor) {
+    this.state = "pending";
+    this.value = undefined;
+    this.handlers = [];
+
+    const fulfill = (value) => {
+      if (this.state !== "pending") return;
+      this.state = "fulfilled";
+      this.value = value;
+      const handlers = this.handlers.splice(0);
+      queueMicrotask(() => handlers.forEach((handler) => this.run(handler)));
+    };
+    const reject = (reason) => {
+      if (this.state !== "pending") return;
+      this.state = "rejected";
+      this.value = reason;
+      const handlers = this.handlers.splice(0);
+      queueMicrotask(() => handlers.forEach((handler) => this.run(handler)));
+    };
+    const resolve = (value) => {
+      if (this.state !== "pending") return;
+      if (value === this) return reject(new TypeError("A promise cannot resolve itself"));
+      if (value && (typeof value === "object" || typeof value === "function")) {
+        let then;
+        try { then = value.then; } catch (error) { return reject(error); }
+        if (typeof then === "function") {
+          let called = false;
+          try {
+            then.call(value,
+              (next) => { if (!called) { called = true; resolve(next); } },
+              (error) => { if (!called) { called = true; reject(error); } });
+          } catch (error) { if (!called) reject(error); }
+          return;
+        }
+      }
+      fulfill(value);
+    };
+    try { executor(resolve, reject); } catch (error) { reject(error); }
+  }
+
+  run(handler) {
+    const callback = this.state === "fulfilled" ? handler.onFulfilled : handler.onRejected;
+    if (typeof callback !== "function") {
+      (this.state === "fulfilled" ? handler.resolve : handler.reject)(this.value);
+      return;
     }
-
-    return boundFunction;
-  };
-}
-```
-
-**Time/Space:** O(1) to create the bound function. O(n+m) when invoked, where n is bound args and m is call args.
-
-#### 4. Dry Run — Walk Through a Real Example
-
-```javascript
-function greet(greeting, punctuation) {
-  return `${greeting}, ${this.name}${punctuation}`;
-}
-
-const sayHi = greet.myBind({ name: "Alice" }, "Hi");
-// originalFunc = greet, thisArg = {name:"Alice"}, boundArgs = ["Hi"]
-
-sayHi("!"); // callArgs = ["!"], full args = ["Hi", "!"]
-// greet.apply({name:"Alice"}, ["Hi", "!"]) → "Hi, Alice!" ✓
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**Partial application:** `bind` can be called with no extra args (`fn.bind(ctx)`) — `boundArgs` is empty, all args come at call time.
-
-**`new` with bound functions:** In the real spec, when a bound function is used with `new`, `thisArg` is ignored and `new` gets its own object. Full spec compliance for this requires an `instanceof` check inside `boundFunction`.
-
-#### 6. Variations and Follow-ups
-
-> *"What's the difference between `bind` and partial application?"* — `bind` does both: it fixes `this` and can pre-fill arguments. Partial application libraries usually only pre-fill arguments and don't touch `this`.
-
-#### 7. 🧠 The Memory Hook
-
-`bind` = "save this context and these arguments in a box; hand the box back as a function. When the box is opened (called), add any new arguments and call the original."
-
----
-
-### `Function.prototype.call` and `Function.prototype.apply`
-
-#### 1. What the Interviewer Is Really Testing
-
-**Important nuance:** A true polyfill for `call` and `apply` is not possible in JavaScript — they are fundamental engine operations. Implementing them would require using them, creating a circular dependency. Interviewers know this. What they're actually testing: *do you understand the `this` mechanism well enough to simulate the behaviour?*
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-How does JavaScript set `this` when you call `obj.method()`? It sets `this` to `obj`. So if I temporarily attach my target function *as a property of the context object*, calling it as a method will set `this` correctly. Then delete the temporary property to clean up.
-
-The difference between `call` and `apply` is only the argument format:
-- `call(ctx, a, b, c)` — individual args
-- `apply(ctx, [a, b, c])` — array of args
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-// Demonstration — not a true polyfill (would need call/apply internally anyway).
-if (!Function.prototype.myCall) {
-  Function.prototype.myCall = function (thisArg, ...args) {
-    // Handle null/undefined thisArg → in sloppy mode, defaults to global object.
-    const context = thisArg == null ? globalThis : Object(thisArg);
-
-    // Temporarily attach the function to the context object.
-    // Using Symbol prevents property name collisions.
-    const tempKey = Symbol("temp");
-    context[tempKey] = this;
-
-    // Calling it as a method sets 'this' to context inside the function.
-    const result = context[tempKey](...args);
-
-    // Clean up: remove the temporary property.
-    delete context[tempKey];
-
-    return result;
-  };
-}
-
-if (!Function.prototype.myApply) {
-  Function.prototype.myApply = function (thisArg, argsArray) {
-    const context = thisArg == null ? globalThis : Object(thisArg);
-    const tempKey = Symbol("temp");
-    context[tempKey] = this;
-
-    // The only difference from myCall: args come as an array.
-    const result = argsArray
-      ? context[tempKey](...argsArray)
-      : context[tempKey]();
-
-    delete context[tempKey];
-    return result;
-  };
-}
-```
-
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**`null` or `undefined` as context:** In sloppy mode, `fn.call(null)` sets `this` to the global object. In strict mode, `this` stays `null`. Use `globalThis` as the fallback for a simplified sloppy-mode simulation.
-
-**Non-object `thisArg`:** `Object(thisArg)` wraps primitives in their wrapper objects (numbers, strings, etc.), matching spec behaviour.
-
-#### 7. 🧠 The Memory Hook
-
-`call` and `apply` work by temporarily attaching your function to the target object so that calling it as a property sets `this` correctly. The difference is individual args vs an array.
-
----
-
-## Part 3 — Promise and Async Polyfills
-
-### `Promise` (Simplified Core)
-
-#### 1. What the Interviewer Is Really Testing
-
-This is a senior-level question. The interviewer wants to know if you understand Promise internals: **three states** (pending, fulfilled, rejected), **state transitions are one-way**, and the **subscriber queue** pattern — callbacks registered before the promise settles get queued and run when it does, while callbacks registered after get run immediately (asynchronously).
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-A Promise is a state machine with a subscriber list.
-
-- **State:** `pending` → `fulfilled` or `rejected` (one-way, one-time).
-- **Value/reason:** stored once when state transitions.
-- **Subscriber queues:** `.then(onFulfilled, onRejected)` registers callbacks. If already settled, schedule them asynchronously via `setTimeout(..., 0)` (simulating microtask behaviour). If still pending, push to the queue and fire when it settles.
-- **Executor:** called immediately with `resolve` and `reject` functions.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-function MyPromise(executor) {
-  this.state = "pending";
-  this.value = undefined;
-  this.reason = undefined;
-  this.onFulfilledCallbacks = [];
-  this.onRejectedCallbacks = [];
-
-  const resolve = (value) => {
-    if (this.state !== "pending") return; // one-way state machine
-    this.state = "fulfilled";
-    this.value = value;
-    // Drain the queue: run all registered onFulfilled callbacks.
-    this.onFulfilledCallbacks.forEach((fn) => fn(this.value));
-  };
-
-  const reject = (reason) => {
-    if (this.state !== "pending") return;
-    this.state = "rejected";
-    this.reason = reason;
-    this.onRejectedCallbacks.forEach((fn) => fn(this.reason));
-  };
-
-  try {
-    // The executor runs synchronously. If it throws, the promise rejects.
-    executor(resolve, reject);
-  } catch (err) {
-    reject(err);
+    try { handler.resolve(callback(this.value)); } catch (error) { handler.reject(error); }
   }
-}
 
-MyPromise.prototype.then = function (onFulfilled, onRejected) {
-  if (this.state === "fulfilled") {
-    // Already settled — schedule callback asynchronously.
-    setTimeout(() => onFulfilled(this.value), 0);
-  } else if (this.state === "rejected") {
-    setTimeout(() => onRejected(this.reason), 0);
-  } else {
-    // Still pending — queue the callbacks.
-    if (typeof onFulfilled === "function") this.onFulfilledCallbacks.push(onFulfilled);
-    if (typeof onRejected === "function") this.onRejectedCallbacks.push(onRejected);
+  then(onFulfilled, onRejected) {
+    const next = new MyPromise((resolve, reject) => {
+      const handler = { onFulfilled, onRejected, resolve, reject };
+      if (this.state === "pending") this.handlers.push(handler);
+      else queueMicrotask(() => this.run(handler));
+    });
+    return next;
   }
-  // Note: a full Promises/A+ implementation returns a new promise for chaining.
-};
-```
 
-#### 5. Edge Cases — The Ones That Break Naive Solutions
-
-**Calling `resolve` multiple times:** The `if (this.state !== 'pending') return` guard prevents any state change after the first settlement.
-
-**Executor throwing synchronously:** The `try/catch` around `executor(resolve, reject)` ensures a thrown error rejects the promise rather than propagating as an uncaught exception.
-
-**`.then` returning a new promise (chaining):** Omitted above for clarity. A production-grade polyfill must return a new `MyPromise` from `.then` whose `resolve`/`reject` are connected to `onFulfilled`/`onRejected`.
-
-#### 7. 🧠 The Memory Hook
-
-A Promise is just a state machine (`pending → settled`) with a subscriber list. If you call `.then` before it settles, your callback goes in the queue. If you call it after, it fires immediately (async).
-
----
-
-### `Promise.all`
-
-#### 1. What the Interviewer Is Really Testing
-
-Can you write a fan-out/fan-in pattern: dispatch N promises in parallel, collect all results *in order*, resolve only when all succeed, but reject immediately on the first failure?
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-if (!Promise.myAll) {
-  Promise.myAll = function (promises) {
-    return new Promise((resolve, reject) => {
-      const results = [];
+  catch(onRejected) { return this.then(undefined, onRejected); }
+  static resolve(value) { return value instanceof MyPromise ? value : new MyPromise((resolve) => resolve(value)); }
+  static reject(reason) { return new MyPromise((_, reject) => reject(reason)); }
+  static all(iterable) {
+    return new MyPromise((resolve, reject) => {
+      const values = Array.from(iterable);
+      if (values.length === 0) return resolve([]);
+      const results = new Array(values.length);
       let completed = 0;
-      const total = promises.length;
+      values.forEach((value, index) => MyPromise.resolve(value).then((result) => {
+        results[index] = result; // Input order, not completion order.
+        completed += 1;
+        if (completed === values.length) resolve(results);
+      }, reject));
+    });
+  }
+}
 
-      if (total === 0) {
-        resolve(results); // edge case: empty array resolves immediately
-        return;
-      }
+function myRace(iterable) {
+  return new MyPromise((resolve, reject) => {
+    for (const value of iterable) MyPromise.resolve(value).then(resolve, reject);
+  });
+}
 
-      promises.forEach((p, index) => {
-        // Wrap in Promise.resolve() to handle non-promise values.
-        Promise.resolve(p)
-          .then((value) => {
-            // Store at the ORIGINAL index, not in push order.
-            // This preserves order even though promises settle at different times.
-            results[index] = value;
-            completed++;
-            if (completed === total) {
-              resolve(results); // all done
-            }
-          })
-          .catch(reject); // first rejection → fail fast
+function myAllSettled(iterable) {
+  const wrapped = Array.from(iterable, (value) => MyPromise.resolve(value).then(
+    (result) => ({ status: "fulfilled", value: result }),
+    (reason) => ({ status: "rejected", reason }),
+  ));
+  return MyPromise.all(wrapped);
+}
+
+function myAny(iterable) {
+  return new MyPromise((resolve, reject) => {
+    const values = Array.from(iterable);
+    if (values.length === 0) return reject(new AggregateError([], "All promises were rejected"));
+    const errors = new Array(values.length);
+    let rejected = 0;
+    values.forEach((value, index) => MyPromise.resolve(value).then(resolve, (reason) => {
+      errors[index] = reason;
+      rejected += 1;
+      if (rejected === values.length) reject(new AggregateError(errors, "All promises were rejected"));
+    }));
+  });
+}
+```
+
+**Complexity:** each combinator is O(n); result/error arrays use O(n) space. Each `then` creates one new Promise and queued handlers stay retained until settlement.
+
+### Dry Run — Walk Through a Real Example
+
+```javascript
+MyPromise.all([
+  new MyPromise((resolve) => setTimeout(() => resolve("slow"), 20)),
+  MyPromise.resolve("fast"),
+]).then(console.log);
+// "fast" settles first and is stored at results[1]. "slow" reaches results[0].
+// The counter reaches 2, so the output is ["slow", "fast"].
+```
+
+### Edge Cases — The Ones That Break Naive Solutions
+
+- Calling `resolve` twice, or a hostile thenable calling both callbacks, must honor only the first settlement.
+- Returning the same Promise from a callback must reject instead of waiting forever.
+- Missing handlers pass fulfillment through or propagate rejection.
+- `all([])` resolves to `[]`; `any([])` rejects with `AggregateError`.
+- `race` takes the first settlement; `allSettled` records all; `any` waits for the first fulfillment.
+- A real implementation also handles iterator closing, species, unhandled rejection reporting, and exact host microtask behavior; this is a teaching implementation, not a drop-in replacement.
+
+### Variations and Follow-ups
+
+Explain why `Promise.all` stores by index, why `Promise.any` stores errors by index, and why `fetch` does not reject for HTTP 500. If asked to build a production Promise, discuss tests for thenables, chaining, thrown callbacks, and asynchronous handler execution before adding features.
+
+### Interview Questions
+
+**Q: What important Promise behavior is simplified here?**
+
+The implementation covers the useful interview core: one-way settlement, thenable assimilation, asynchronous handlers, pass-through handlers, chaining, and input-order results for `all`. A production Promise also has exact iterator-closing behavior, species constructors, unhandled-rejection tracking, precise host scheduling, and more edge cases around subclassing. The right answer is to name those boundaries, not to call a small teaching implementation a drop-in replacement.
+
+**Q: Why does `Promise.all` return input order when promises finish in a different order?**
+
+Each input gets its original index. When it fulfills, the result is assigned to `results[index]`; a separate counter tracks how many have completed. Completion order controls when the counter reaches the total, but it never controls result order. `race` is the combinator where completion order is the result.
+
+### 🧠 The Memory Hook
+
+A Promise is a one-way state machine with a queue. `all` waits for every lane, `race` takes the first finish, `allSettled` records every finish, and `any` waits for the first success.
+
+## 6. `fetch`: a useful browser adapter, not a perfect replacement
+
+### What the Interviewer Is Really Testing
+
+This tests whether you can wrap an older callback API in a Promise and preserve the important Fetch contract. It also tests whether you know that `fetch` is a browser host API, not an ECMAScript feature.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+I use XHR for transport, resolve when status is available, and expose `text()` and `json()` as Promise-returning body readers. Network failures reject, but 404 and 500 resolve with `ok: false`. I state the boundary: redirects, streams, abort signals, credentials, CORS, and response types make a full Fetch implementation much larger.
+
+### The Solution — Fully Explained Code
+
+```javascript
+function fetchFallback(url, options = {}) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(options.method || "GET", url, true);
+    Object.entries(options.headers || {}).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+    xhr.onload = () => {
+      const responseText = xhr.responseText;
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        statusText: xhr.statusText,
+        text: () => Promise.resolve(responseText),
+        json: () => Promise.resolve().then(() => JSON.parse(responseText)),
       });
-    });
-  };
+    };
+    xhr.onerror = () => reject(new TypeError("Failed to fetch"));
+    xhr.onabort = () => reject(new DOMException("The operation was aborted", "AbortError"));
+    xhr.send(options.body ?? null);
+  });
 }
 ```
 
-**Key insight:** `results[index] = value` (not `results.push(value)`) preserves order regardless of which promise settles first.
+**Complexity:** O(1) orchestration space before the response body is captured; storing the response text costs O(response size). Header setup is O(h), where `h` is the number of supplied headers.
 
-#### 7. 🧠 The Memory Hook
-
-`Promise.all` is fan-out/fan-in with a counter. Track results *by index* (not push order) and resolve when `completed === total`. First rejection short-circuits everything.
-
----
-
-### `Promise.race`, `Promise.allSettled`, `Promise.any`
+### Dry Run — Walk Through a Real Example
 
 ```javascript
-// race — first to settle (fulfill OR reject) wins.
-if (!Promise.myRace) {
-  Promise.myRace = function (promises) {
-    return new Promise((resolve, reject) => {
-      // Whichever settles first calls resolve or reject.
-      // Because a promise can only settle once, subsequent calls are no-ops.
-      promises.forEach((p) => Promise.resolve(p).then(resolve, reject));
-    });
-  };
-}
-
-// allSettled — wait for everyone, never reject, report status of each.
-if (!Promise.myAllSettled) {
-  Promise.myAllSettled = function (promises) {
-    // Map each promise to a "safe" promise that always fulfills with a status object.
-    const wrapped = promises.map((p) =>
-      Promise.resolve(p)
-        .then((value) => ({ status: "fulfilled", value }))
-        .catch((reason) => ({ status: "rejected", reason }))
-    );
-    // Since none of the wrapped promises can reject, Promise.all never rejects here.
-    return Promise.all(wrapped);
-  };
-}
-
-// any — first to FULFILL wins. Rejects only if ALL reject (AggregateError).
-if (!Promise.myAny) {
-  Promise.myAny = function (promises) {
-    return new Promise((resolve, reject) => {
-      const errors = [];
-      let rejectedCount = 0;
-      const total = promises.length;
-
-      if (total === 0) {
-        reject(new AggregateError([], "All promises were rejected"));
-        return;
-      }
-
-      promises.forEach((p, index) => {
-        Promise.resolve(p).then(resolve).catch((err) => {
-          errors[index] = err;
-          rejectedCount++;
-          if (rejectedCount === total) {
-            reject(new AggregateError(errors, "All promises were rejected"));
-          }
-        });
-      });
-    });
-  };
-}
-```
-
-**The cheat-sheet:**
-
-| Method | Resolves when | Rejects when |
-|---|---|---|
-| `Promise.all` | All fulfill | Any one rejects |
-| `Promise.race` | Any one settles first | Any one rejects first |
-| `Promise.allSettled` | All settle (never rejects) | Never |
-| `Promise.any` | Any one fulfills | All reject (AggregateError) |
-
----
-
-### `fetch` (via `XMLHttpRequest`)
-
-#### 1. What the Interviewer Is Really Testing
-
-`fetch` is a browser host API, not an ECMAScript feature. Writing a polyfill shows you understand both the modern Promise-based API and the older XHR-based one, and can bridge between them.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-if (!window.fetch) {
-  window.fetch = function (url, options) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const method = (options && options.method) || "GET";
-
-      xhr.open(method, url, true); // true = asynchronous
-
-      xhr.onload = function () {
-        // Build a response object that mirrors the Fetch API's Response.
-        const response = {
-          ok: xhr.status >= 200 && xhr.status < 300,
-          status: xhr.status,
-          statusText: xhr.statusText,
-          // Fetch Response methods are also async (return Promises).
-          json: () => Promise.resolve(JSON.parse(xhr.responseText)),
-          text: () => Promise.resolve(xhr.responseText),
-        };
-        resolve(response);
-      };
-
-      xhr.onerror = function () {
-        // Real fetch rejects with TypeError on network failure, not HTTP errors.
-        reject(new TypeError("Network request failed"));
-      };
-
-      if (options && options.headers) {
-        Object.keys(options.headers).forEach((key) => {
-          xhr.setRequestHeader(key, options.headers[key]);
-        });
-      }
-
-      xhr.send(options ? options.body : null);
-    });
-  };
-}
-```
-
-**Important:** Real `fetch` does not reject on HTTP error status codes (404, 500). It only rejects on network failures. The `ok` property is how you check for HTTP-level success. This polyfill mirrors that behaviour.
-
-#### 7. 🧠 The Memory Hook
-
-`fetch` is just XHR wrapped in a Promise. `onload` → resolve. `onerror` → reject with TypeError. HTTP errors (4xx, 5xx) don't reject — they resolve with `ok: false`.
-
----
-
-### `async/await` — Transpilation via Generators
-
-#### 1. What the Interviewer Is Really Testing
-
-This is a trick question. `async/await` is **syntax**, not a runtime feature you can polyfill. It's implemented by **transpilation** — Babel transforms `async` functions into generator-based code at build time. The question tests whether you understand how that transformation works under the hood.
-
-#### 2. Think Before You Code — The Senior Dev Thought Process
-
-An `async` function is a generator function where `yield` plays the role of `await`. A "runner" function drives the generator: it calls `generator.next()`, gets back a `{ value: Promise, done: boolean }` pair, waits for the Promise to settle, then sends the result back into the generator with the next `generator.next(result)`.
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-// asyncToGenerator: the runner Babel produces when it transpiles async/await.
-function asyncToGenerator(generatorFn) {
-  return function () {
-    const gen = generatorFn.apply(this, arguments);
-
-    return new Promise((resolve, reject) => {
-      function step(fn) {
-        let result;
-        try {
-          result = fn();
-        } catch (err) {
-          return reject(err);
-        }
-
-        const { value, done } = result;
-
-        if (done) {
-          return resolve(value); // generator returned — the async fn is done
-        }
-
-        // value is (presumably) a promise. Wait for it, then resume.
-        Promise.resolve(value).then(
-          (resolved) => step(() => gen.next(resolved)),   // send result back in
-          (err) => step(() => gen.throw(err))             // throw error back in
-        );
-      }
-
-      step(() => gen.next(undefined)); // kick off the first step
-    });
-  };
-}
-
-// How Babel conceptually transforms async code:
-
-// Original:
-// async function fetchUser(id) {
-//   const user = await getUser(id);
-//   const posts = await getPosts(user.id);
-//   return posts;
-// }
-
-// Transpiled:
-const fetchUser = asyncToGenerator(function* (id) {
-  const user = yield getUser(id);   // 'yield' becomes 'await'
-  const posts = yield getPosts(user.id);
-  return posts;
+fetchFallback("/api/orders").then((response) => {
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
 });
+// A network-successful 500 fulfills the outer Promise with ok=false; the caller chooses to throw.
 ```
 
-#### 7. 🧠 The Memory Hook
+### Edge Cases — The Ones That Break Naive Solutions
 
-`async/await` is a generator with a driver loop. `await` = `yield`. The driver calls `.next()`, waits for the yielded Promise, then sends the resolved value back into the generator with the next `.next(value)`.
+- JSON parsing belongs in `json()` and can reject for invalid JSON.
+- Network failure rejects; HTTP failure resolves with `ok: false`.
+- A real `Response` body is stream-based and consumable; this simplified adapter reuses captured text.
+- XHR may not exist in Node.js, workers, or restricted environments.
 
----
+### Variations and Follow-ups
 
-### `setTimeout` and `setInterval` — Why You Cannot Polyfill Them
+Add `AbortController`, response headers, credentials, timeout handling, and streaming only when equivalent primitives exist. In modern applications, prefer native `fetch` or a maintained client.
 
-An interviewer who asks this is testing whether you'll confidently say "it's not possible and here's why" rather than bluffing.
+### Interview Questions
 
-`setTimeout` and `setInterval` are **host objects** — provided by the browser (or Node.js) environment, not by the JavaScript language spec. They are directly wired into the environment's event loop scheduler. You cannot access or replicate the event loop from within JavaScript.
+**Q: Should a Fetch polyfill reject when the server returns 404 or 500?**
 
-Any "polyfill" attempt would either:
-1. **Call the original `setTimeout`** → circular, not a polyfill.
-2. **Use a busy-wait loop** (`while (Date.now() < deadline)`) → blocks the entire main thread for the duration. This is the opposite of what timers do.
+No. A successful network exchange with an HTTP error status still fulfills the Fetch Promise. The caller checks `response.ok` or `response.status` and can throw an application-level error. Network failure, abort, or an invalid body operation is what rejects.
 
-**The correct interview answer:** *"setTimeout and setInterval are host environment features, not ECMAScript features. They can't be polyfilled from within JavaScript because they depend on the environment's own event loop machinery. Any attempt is either circular or blocks the thread."*
+**Q: Why is this not a complete Fetch polyfill?**
 
----
+Because XHR does not automatically reproduce Fetch’s streams, body-consumption rules, redirect behavior, credentials, CORS semantics, abort integration, and response types. This is a useful adapter that demonstrates the central Promise/status contract; production code should use native `fetch` or a maintained client.
 
-## Part 4 — Other Common Polyfills
+### 🧠 The Memory Hook
 
-### `Object.create`
+XHR is the transport, the Promise is the bridge, and HTTP status is data—not rejection. Network failure rejects; 404/500 normally resolve.
 
-#### 1. What the Interviewer Is Really Testing
+## 7. `Object.create`: constructing a prototype relationship
 
-This tests whether you understand JavaScript's prototypal inheritance at the pre-ES5 level. `Object.create(proto)` creates a new object whose `[[Prototype]]` is set to `proto`. The classic trick for doing this before `Object.create` existed was a temporary constructor function.
+### What the Interviewer Is Really Testing
 
-#### 3. The Solution — Fully Explained Code
+This tests whether you understand that `Object.create(proto)` sets the new object’s internal `[[Prototype]]`; it does not copy properties. The new object starts empty and looks up missing properties through `proto`.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+The classic pre-ES5 trick is a temporary constructor: assign `proto` to its `.prototype`, instantiate it, and define optional descriptors. I validate that `proto` is an object, function, or `null`.
+
+### The Solution — Fully Explained Code
 
 ```javascript
-if (typeof Object.create !== "function") {
-  Object.create = function (proto, propertiesObject) {
-    if (typeof proto !== "object" && typeof proto !== "function") {
-      throw new TypeError("Object prototype may only be an Object or null: " + proto);
-    }
+function myCreate(proto, propertiesObject) {
+  if (proto !== null && (typeof proto !== "object" && typeof proto !== "function")) {
+    throw new TypeError("Object prototype may only be an Object or null");
+  }
+  if (proto === null && typeof Object.create === "function") {
+    const object = Object.create(null);
+    if (propertiesObject !== undefined) Object.defineProperties(object, propertiesObject);
+    return object;
+  }
+  if (proto === null && typeof Object.setPrototypeOf !== "function") {
+    throw new TypeError("This environment cannot create a null prototype");
+  }
+  function TemporaryConstructor() {}
+  TemporaryConstructor.prototype = proto;
+  const object = new TemporaryConstructor();
+  if (proto === null) Object.setPrototypeOf(object, null);
+  if (propertiesObject !== undefined) Object.defineProperties(object, propertiesObject);
+  return object;
+}
+```
 
-    // The classic trick: create a temporary constructor,
-    // set its prototype, and instantiate it.
-    // 'new F()' creates an object whose __proto__ is F.prototype.
-    function F() {}
-    F.prototype = proto;
-    const obj = new F();
+**Complexity:** O(1) object creation plus O(p) for `p` property descriptors. It does not copy properties from the prototype, so prototype size does not add to creation cost.
 
-    // Handle the second argument (property descriptors), if provided.
-    if (propertiesObject !== undefined) {
-      Object.defineProperties(obj, propertiesObject);
-    }
+### Dry Run — Walk Through a Real Example
 
-    return obj;
+```javascript
+const animal = { breathe: () => "breathing" };
+const dog = myCreate(animal);
+dog.name = "Milo";
+// name is own; breathe is found by walking dog → animal.
+Object.hasOwn(dog, "breathe"); // false
+dog.breathe(); // "breathing"
+```
+
+### Edge Cases — The Ones That Break Naive Solutions
+
+- Properties are not copied; descendants observe prototype lookup and later prototype mutations.
+- `myCreate(null)` makes a dictionary-like object with no `Object.prototype` methods.
+- The second argument contains descriptors, not ordinary values.
+
+### Variations and Follow-ups
+
+Contrast it with `new Constructor()`: `new` runs constructor code and uses `Constructor.prototype`; `Object.create` runs no constructor.
+
+### Interview Questions
+
+**Q: Does `Object.create(proto)` copy the prototype’s properties?**
+
+No. It creates an object with an internal `[[Prototype]]` link to `proto`. Property lookup can find inherited values later, and mutations on `proto` can become visible, but the new object has no copied own properties.
+
+**Q: What is special about `Object.create(null)`?**
+
+The result has a genuinely null prototype, so it does not inherit `toString`, `hasOwnProperty`, or other `Object.prototype` members. The implementation uses native `Object.create` when available and falls back to `Object.setPrototypeOf`; if neither capability exists, a faithful null-prototype object cannot be manufactured by the old temporary-constructor trick alone.
+
+### 🧠 The Memory Hook
+
+`Object.create` copies nothing. It makes an empty object and points its prototype link at `proto`.
+
+## 8. Browser APIs: fallback versus true polyfill
+
+### What the Interviewer Is Really Testing
+
+These questions test engineering honesty. A fallback can approximate behavior when a host API is absent; it cannot recreate the browser’s rendering scheduler, storage security model, or event loop from ordinary JavaScript.
+
+### Think Before You Code — The Senior Dev Thought Process
+
+I classify the target first. `requestAnimationFrame`, `localStorage`, and `setTimeout` are host capabilities. I can write an adapter or degraded fallback, but I must state which guarantees are lost. A busy wait is not a timer polyfill because it blocks input and rendering; cookies are not localStorage because they are sent with requests and have different quota and security rules.
+
+### The Solution — Fully Explained Code
+
+```javascript
+// Scheduling approximation only: native rAF is synchronized with paint; this is not.
+const requestFrame = globalThis.requestAnimationFrame || function (callback) {
+  return setTimeout(() => callback(performance.now()), 1000 / 60);
+};
+const cancelFrame = globalThis.cancelAnimationFrame || clearTimeout;
+
+function cookieStorage(documentObject) {
+  return {
+    setItem(key, value) {
+      documentObject.cookie = `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}; path=/`;
+    },
+    getItem(key) {
+      const wanted = `${encodeURIComponent(key)}=`;
+      const entry = documentObject.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(wanted));
+      return entry ? decodeURIComponent(entry.slice(wanted.length)) : null;
+    },
+    removeItem(key) {
+      documentObject.cookie = `${encodeURIComponent(key)}=; Max-Age=0; path=/`;
+    },
   };
 }
 ```
 
-#### 4. Dry Run — Walk Through a Real Example
+**Complexity:** scheduling or cancelling a frame is O(1) in the fallback. Cookie `setItem`, `getItem`, and `removeItem` are O(c), where `c` is the number of cookie entries scanned; stored data costs O(v) for value size.
+
+### Dry Run — Walk Through a Real Example
 
 ```javascript
-const animal = { breathe() { return "breathing"; } };
-const dog = Object.create(animal);
-dog.bark = function() { return "woof"; };
-
-dog.bark();    // "woof"      — own property
-dog.breathe(); // "breathing" — inherited via prototype chain ✓
+const id = requestFrame((timestamp) => console.log(timestamp));
+cancelFrame(id);
+// Native rAF aligns with a paint opportunity; the fallback merely approximates ~60fps.
 ```
 
-#### 7. 🧠 The Memory Hook
+### Edge Cases — The Ones That Break Naive Solutions
 
-`Object.create(proto)` = create an empty constructor, set its `.prototype` to `proto`, return `new Constructor()`. The new instance's `__proto__` points to `proto`.
+- **`setTimeout`/`setInterval`:** host event-loop features; JavaScript cannot faithfully recreate them. A busy wait freezes the thread.
+- **`requestAnimationFrame`:** a timer fallback does not pause in hidden tabs, align with refresh rate, or provide native throttling.
+- **Cookie storage:** roughly 4 KB per cookie, sent with matching requests, affected by path/domain/SameSite rules, and unsuitable as a general localStorage replacement.
+- **Security:** storage choices change the XSS and token threat model; do not put sensitive bearer tokens in browser storage by default.
 
----
+### Variations and Follow-ups
 
-### `requestAnimationFrame`
+For timers, use the host scheduler. For animation, prefer native rAF and cancel work on teardown. For persistence, choose cookies, IndexedDB, Cache Storage, or localStorage based on size, request participation, transactions, and security.
 
-#### 1. What the Interviewer Is Really Testing
+### Interview Questions
 
-`rAF` is a browser API for scheduling animation callbacks. The test: do you know *why* it's better than `setTimeout(fn, 16)` for animations, and can you fall back to `setTimeout` when `rAF` doesn't exist?
+**Q: Can `setTimeout` or `requestAnimationFrame` be truly polyfilled in JavaScript?**
 
-**`rAF` advantages over `setTimeout(fn, 16)`:**
-- Synchronized with the browser's display refresh (typically 60Hz or 120Hz).
-- Automatically pauses when the tab is hidden (battery savings).
-- No drift accumulation — each callback is tied to an actual paint frame.
+No. They depend on host scheduling and, for rAF, the browser’s rendering pipeline. A timer fallback can schedule approximately 16 milliseconds later, but it cannot recreate paint synchronization, background throttling, or event-loop integration. `setTimeout` itself must come from the host; a busy wait blocks the very thread the timer is supposed to leave available.
 
-#### 3. The Solution — Fully Explained Code
+**Q: Is cookie-backed storage equivalent to localStorage?**
 
-```javascript
-(function () {
-  // Check vendor-prefixed versions first (older Chrome/Firefox/IE).
-  const vendors = ["ms", "moz", "webkit", "o"];
-  for (let i = 0; i < vendors.length && !window.requestAnimationFrame; i++) {
-    window.requestAnimationFrame = window[vendors[i] + "RequestAnimationFrame"];
-    window.cancelAnimationFrame =
-      window[vendors[i] + "CancelAnimationFrame"] ||
-      window[vendors[i] + "CancelRequestAnimationFrame"];
-  }
+No. Cookies are small, attached to matching HTTP requests, governed by domain/path/SameSite rules, and exposed to server traffic. localStorage is origin-scoped client storage with a different quota and access model. The adapter can mimic method names, not the security, quota, or network semantics.
 
-  // If still missing, fall back to setTimeout targeting ~60fps.
-  if (!window.requestAnimationFrame) {
-    let lastFrameTime = 0;
+### 🧠 The Memory Hook
 
-    window.requestAnimationFrame = function (callback) {
-      const now = Date.now();
-      // Aim for 16.7ms between frames (60fps). Clamp to at least 0.
-      const delay = Math.max(0, 16 - (now - lastFrameTime));
+A fallback keeps an application moving; a polyfill preserves a contract. Browser scheduling, networking, and storage guarantees cannot be manufactured by a JavaScript snippet.
 
-      const id = window.setTimeout(function () {
-        callback(lastFrameTime + delay); // pass DOMHighResTimeStamp approximation
-      }, delay);
+## Interview checklist
 
-      lastFrameTime = now + delay;
-      return id;
-    };
-  }
+Before coding, say the contract out loud:
 
-  if (!window.cancelAnimationFrame) {
-    window.cancelAnimationFrame = function (id) {
-      clearTimeout(id);
-    };
-  }
-})();
-```
+1. What is the receiver and how should `this` behave?
+2. What are the callback arguments and return value?
+3. What happens with holes, mutation, empty input, and invalid input?
+4. Does order mean input order or completion order?
+5. Can this actually be polyfilled, or am I writing only a fallback?
+6. What is the time/space cost, and which production guarantees did I intentionally leave out?
 
-#### 7. 🧠 The Memory Hook
-
-`rAF` polyfill = vendor prefix check → `setTimeout` targeting 16ms (60fps). Real `rAF` is always better for animations; the `setTimeout` version just keeps things working in old browsers.
-
----
-
-### `localStorage` (via Cookies)
-
-#### 1. What the Interviewer Is Really Testing
-
-More architectural awareness than implementation skill. The question is: do you know the limitations of cookies as a storage fallback (4KB limit, sent with every HTTP request, no native key-value API) and can you build a compatible API on top of them?
-
-#### 3. The Solution — Fully Explained Code
-
-```javascript
-(function () {
-  // First, check if localStorage actually works (private browsing can break it).
-  try {
-    const testKey = "__storage_test__";
-    window.localStorage.setItem(testKey, "1");
-    window.localStorage.removeItem(testKey);
-    return; // localStorage works fine, no polyfill needed.
-  } catch (e) {
-    // Fall through to polyfill.
-  }
-
-  const CookieStorage = {
-    setItem(key, value) {
-      // Cookies expire far in the future to mimic localStorage persistence.
-      document.cookie =
-        encodeURIComponent(key) +
-        "=" +
-        encodeURIComponent(String(value)) +
-        "; expires=Fri, 31 Dec 2099 23:59:59 GMT; path=/";
-    },
-
-    getItem(key) {
-      const name = encodeURIComponent(key) + "=";
-      const cookies = document.cookie.split(";");
-      for (let i = 0; i < cookies.length; i++) {
-        const c = cookies[i].trim();
-        if (c.startsWith(name)) {
-          return decodeURIComponent(c.substring(name.length));
-        }
-      }
-      return null; // localStorage returns null for missing keys, not undefined.
-    },
-
-    removeItem(key) {
-      // To delete a cookie, set its expiry to the past.
-      document.cookie =
-        encodeURIComponent(key) +
-        "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
-    },
-
-    clear() {
-      document.cookie.split(";").forEach((c) => {
-        const key = c.split("=")[0].trim();
-        this.removeItem(decodeURIComponent(key));
-      });
-    },
-  };
-
-  window.localStorage = CookieStorage;
-})();
-```
-
-**Limitations of this polyfill (worth mentioning in an interview):**
-- Cookies are capped at ~4KB per cookie. `localStorage` supports ~5–10MB.
-- Cookie values are sent with every HTTP request — `localStorage` values are not.
-- Cookie keys cannot contain certain characters without URL-encoding.
-
-#### 7. 🧠 The Memory Hook
-
-`localStorage` polyfill = cookie-based key-value store. Same API surface (`setItem`, `getItem`, `removeItem`, `clear`) but limited by cookie size and HTTP transmission overhead.
-
----
-
-## Summary Table — All Polyfills at a Glance
-
-| Polyfill | Type | Key Contract |
-|---|---|---|
-| `Array.map` | Array | Transform each element; return same-length array; preserve holes |
-| `Array.filter` | Array | Keep elements where predicate is truthy; push, don't pre-allocate |
-| `Array.reduce` | Array | Accumulate; handle missing `initialValue` with a skip-hole scan |
-| `Array.forEach` | Array | Side-effects only; always returns `undefined` |
-| `Array.flat` | Array | Recursive depth-limited flattening; track `currentDepth` |
-| `Array.includes` | Array | SameValueZero — finds `NaN`; `indexOf` cannot |
-| `Array.find` | Array | Returns element or `undefined` |
-| `Array.findIndex` | Array | Returns index or `-1` |
-| `Array.some` | Array | Short-circuit on first `true` |
-| `Array.every` | Array | Short-circuit on first `false`; empty → `true` |
-| `Function.bind` | Function | Closure over context + partial args |
-| `Function.call` | Function | Temp property trick to set `this` (not a true polyfill) |
-| `Function.apply` | Function | Same as `call` but takes arg array |
-| `Promise` (core) | Async | State machine + subscriber queues |
-| `Promise.all` | Async | Fan-out, track by index, fail-fast |
-| `Promise.race` | Async | First to settle wins |
-| `Promise.allSettled` | Async | Never rejects; status objects for each |
-| `Promise.any` | Async | First to fulfill wins; AggregateError if all reject |
-| `fetch` | Browser | XHR wrapped in Promise; HTTP errors don't reject |
-| `async/await` | Transpile | Generator + runner loop (not a runtime polyfill) |
-| `setTimeout/Interval` | Impossible | Host objects — cannot be polyfilled |
-| `Object.create` | Object | Temp constructor → `new` → prototype set |
-| `requestAnimationFrame` | Browser | Vendor prefix fallback → `setTimeout(fn, ~16ms)` |
-| `localStorage` | Browser | Cookie-based storage; 4KB limit, HTTP overhead |
+That reasoning is the answer. The code is evidence that you can turn it into behavior.
