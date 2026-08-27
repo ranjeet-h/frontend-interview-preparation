@@ -2,65 +2,59 @@
 
 ## 1. What the Interviewer Is Really Testing
 
-When an interviewer asks you to write a query using `HAVING`, they are rarely checking if you know the spelling of a SQL keyword. They are testing whether you understand the database engine's logical query processing pipeline.
+This looks like a syntax question — do you know the word HAVING — but it is really a test of whether you understand when the database does what.
 
-Specifically, the interviewer evaluates:
-- **Lifecycle timing:** Do you understand that `WHERE` filters individual rows *before* aggregation occurs, while `HAVING` filters materialized group summaries *after* aggregation occurs?
-- **Index pruning versus full grouping:** Do you know the catastrophic performance cost of putting row-level predicates into a `HAVING` clause instead of a `WHERE` clause?
-- **Correct SQL grammar constraints:** Do you know why aggregate functions like `SUM()` and `COUNT()` are illegal in `WHERE` clauses?
-- **Multi-clause composition:** Can you seamlessly combine row-level indexing (`WHERE`), category bucketing (`GROUP BY`), metric thresholding (`HAVING`), and final sorting (`ORDER BY`) into an optimal, production-grade query?
+An interviewer asks for HAVING to see if you know the logical order a query runs in. WHERE filters single rows before any grouping happens. HAVING filters whole groups after the GROUP BY has done its work. If you mix those up, you either get a syntax error (putting an aggregate in WHERE) or a query that technically runs but scans millions of rows and builds giant hash tables for no reason.
+
+They are also checking whether you can combine four clauses cleanly in one production-grade query — WHERE for index-friendly row pruning, GROUP BY for bucketing, HAVING for metric thresholds like COUNT(*) > 1 or SUM() > 1000, and ORDER BY for the final sort — and whether you know why aggregates are illegal in WHERE in the first place.
 
 ## 2. Think Before You Code — The Senior Dev Thought Process
 
-Here is the exact practical problem presented:
+The prompt we will solve is concrete:
 
-> *"Write an SQL query to identify VIP power customers who have placed more than 5 completed orders totaling over $1,000 in the current year (2024), sorted by their lifetime value descending."*
+> "Find VIP customers who placed more than 5 completed orders totaling over $1,000 in 2024, sorted by lifetime value descending."
 
-When approaching this problem, trace the physical data path through the database engine before typing any SQL.
-
-First, consider the naive instinct: Why can't we just filter everything in a `WHERE` clause like this?
+My first instinct is to write one WHERE with everything, because that is how we filter every day:
 
 ```sql
--- WRONG: Syntax error in standard SQL
+-- WRONG: standard SQL throws "aggregate functions are not allowed in WHERE"
 SELECT customer_id, COUNT(id), SUM(total_amount)
 FROM Orders
 WHERE order_date >= '2024-01-01'
   AND status = 'COMPLETED'
   AND COUNT(id) > 5
-  AND SUM(total_amount) > 1000.00
+  AND SUM(total_amount) > 1000
 GROUP BY customer_id;
 ```
 
-This immediately fails with a syntax error (`aggregate functions are not allowed in WHERE`). In the SQL execution lifecycle, the database processes clauses in this strict order:
+This fails immediately. The database runs clauses in a fixed logical order, not the order we type them:
 
-1. `FROM`: Identify and join source tables.
-2. `WHERE`: Filter individual base rows.
-3. `GROUP BY`: Bucket surviving rows into groups.
-4. `HAVING`: Filter grouped summary buckets.
-5. `SELECT`: Evaluate projections, expressions, and aliases.
-6. `ORDER BY`: Sort the final result set.
-7. `LIMIT` / `OFFSET`: Truncate output rows.
+1. FROM — pick the source table and joins
+2. WHERE — throw away individual rows that do not qualify
+3. GROUP BY — bucket the surviving rows into groups
+4. HAVING — throw away whole groups that do not qualify
+5. SELECT — compute the final columns and aliases
+6. ORDER BY — sort what is left
+7. LIMIT / OFFSET — trim the result
 
-When step 2 (`WHERE`) runs, the rows have not yet been grouped. The concept of `COUNT(id)` or `SUM(total_amount)` for a customer does not exist yet because grouping happens in step 3.
+When WHERE runs in step 2, there are no groups yet. COUNT() and SUM() do not exist yet, so the engine has nothing to compare.
 
-Second, consider the opposite mistake: What happens if we dump all filters into `HAVING`?
+The opposite mistake is just as common — putting everything in HAVING so it at least compiles:
 
 ```sql
--- DANGEROUS: Compiles, but destroys database performance
+-- DANGEROUS: compiles in some dialects, but kills performance
 SELECT customer_id, COUNT(id), SUM(total_amount)
 FROM Orders
 GROUP BY customer_id
-HAVING order_date >= '2024-01-01'
-   AND status = 'COMPLETED'
+HAVING status = 'COMPLETED'
+   AND order_date >= '2024-01-01'
    AND COUNT(id) > 5
-   AND SUM(total_amount) > 1000.00;
+   AND SUM(total_amount) > 1000;
 ```
 
-In engines that allow non-aggregated columns in `HAVING` or if rewritten with aggregate wrappers, this is an architectural disaster. Filtering `order_date` in `WHERE` allows the optimizer to use a B-Tree index on `(status, order_date)` to discard 90% or more of historical records from disk immediately. Moving `order_date` and `status` to `HAVING` forces the engine to load millions of historical, cancelled, and pending orders into memory, allocate hash table buckets for every customer in company history, calculate sums, and only then discard the groups.
+If you do this, the optimizer cannot use an index on (status, order_date) to skip old or cancelled rows. Instead it reads every row in the table, builds a hash bucket for every customer who ever ordered, computes sums for all of them, and only then discards 90 percent of the work. On a table with 50 million rows that spills to disk.
 
-The optimal strategy separates row-level filters from group-level filters:
-- Row-level predicates (`order_date >= '2024-01-01'` and `status = 'COMPLETED'`) belong in `WHERE` to prune the scan volume early.
-- Group aggregations (`COUNT(id) > 5` and `SUM(total_amount) > 1000.00`) belong in `HAVING` to prune the aggregated customer buckets.
+The senior split is obvious once you see the pipeline: row-level predicates go in WHERE so the scan stays small, group-level predicates go in HAVING so only meaningful buckets survive. That is the whole decision — WHERE prunes rows before the blender, HAVING prunes smoothies after.
 
 ## 3. The Solution — Fully Explained Code
 
@@ -74,30 +68,30 @@ WHERE order_date >= '2024-01-01'
   AND status = 'COMPLETED'
 GROUP BY customer_id
 HAVING COUNT(id) > 5
-   AND SUM(total_amount) > 1000.00
+   AND SUM(total_amount) > 1000
 ORDER BY lifetime_value DESC;
 ```
 
-**Why this query is structured this way:**
+Why each piece sits where it does:
 
-- `FROM Orders`: Specifies the source table.
-- `WHERE order_date >= '2024-01-01' AND status = 'COMPLETED'`: Evaluates first at the row level. If an index on `(status, order_date, customer_id, total_amount)` exists, the engine performs an index range scan, discarding uncompleted orders and older transactions before allocating grouping memory.
-- `GROUP BY customer_id`: Gathers all pre-filtered rows into distinct memory buckets per customer.
-- `COUNT(id) AS completed_orders` & `SUM(total_amount) AS lifetime_value`: Computes aggregate metrics across each customer's qualifying 2024 completed orders. `COUNT(id)` counts non-null order IDs; `SUM(total_amount)` accumulates their dollar totals.
-- `HAVING COUNT(id) > 5 AND SUM(total_amount) > 1000.00`: Filters out aggregated customer buckets that fail either threshold.
-- `ORDER BY lifetime_value DESC`: Sorts the surviving VIP customers so the highest spenders appear first.
+FROM Orders tells the engine which table to scan. WHERE order_date >= '2024-01-01' AND status = 'COMPLETED' runs first on every raw row. With an index on (status, order_date) — or better, a covering index on (status, order_date, customer_id, total_amount) — this becomes an index range scan that discards years of history and every pending or cancelled order before any memory is allocated for grouping.
 
-**Complexity and Resource Cost:**
+GROUP BY customer_id then gathers the surviving rows into one bucket per customer. COUNT(id) counts non-null order ids in each bucket, SUM(total_amount) adds their amounts. Using COUNT(*) would count every row in the bucket including rows where id is null (rare for a primary key but the semantic difference matters). For duplicate detection the classic pattern is HAVING COUNT(*) > 1, which says "only keep groups where the same key appeared more than once."
 
-- **Time Complexity:** O(N) index scan or table scan to filter N total rows down to R candidate rows, followed by O(R) hash aggregation (or O(R log R) sort aggregation) to build M customer groups, and O(M log M) to sort the qualifying groups in `ORDER BY`. With proper indexing on `(status, order_date)`, R << N, making the query run in milliseconds even on tables with tens of millions of rows.
-- **Space Complexity:** O(M) working memory (`work_mem` in PostgreSQL or tempdb/sort buffer in MySQL) to maintain the hash map of M unique `customer_id` groups and their running `COUNT` and `SUM` accumulators during aggregation.
+HAVING COUNT(id) > 5 AND SUM(total_amount) > 1000 runs after the buckets are built and throws away customers who did not order often enough or spend enough. ORDER BY lifetime_value DESC sorts the survivors so the biggest spenders come first.
+
+This query runs in any modern database. In SQLite you can paste it as-is with a TEXT date. In PostgreSQL and MySQL the same syntax applies, only the index type and work_mem tuning differ.
+
+Time complexity: O(N) to scan N rows down to R survivors via the WHERE index, then O(R) hash aggregation to build M groups, then O(M log M) to sort the qualifiers. With a selective WHERE, R is much smaller than N, so the query stays fast even at tens of millions of rows.
+
+Space complexity: O(M) working memory to hold the hash table of M customer_id groups and their running COUNT and SUM. If M exceeds work_mem (PostgreSQL) or the sort buffer (MySQL), the engine spills partitions to disk.
 
 ## 4. Dry Run — Walk Through a Real Example
 
-Consider the following `Orders` table data:
+Take this Orders data:
 
-| id | customer_id | order_date | status | total_amount |
-| :--- | :--- | :--- | :--- | :--- |
+| id | customer_id | order_date | status    | total_amount |
+|---:|---:|---|---:|---:|
 | 1 | 101 | 2024-01-15 | COMPLETED | 250.00 |
 | 2 | 101 | 2024-02-10 | COMPLETED | 300.00 |
 | 3 | 101 | 2024-03-05 | COMPLETED | 150.00 |
@@ -116,138 +110,139 @@ Consider the following `Orders` table data:
 | 16 | 104 | 2024-05-05 | COMPLETED | 50.00 |
 | 17 | 104 | 2024-06-18 | COMPLETED | 100.00 |
 
-**Stage 1: `WHERE` Clause Filter (Row Pruning)**
+Stage 1 — WHERE filters rows before grouping. The engine checks order_date >= '2024-01-01' AND status = 'COMPLETED' on each row. Row 4 is dropped because it is CANCELLED. Row 8 is dropped because its date is in 2023. The other 15 rows pass. This is the crucial difference: these two rows never reach the GROUP BY at all, so they never cost aggregation memory.
 
-The engine evaluates `order_date >= '2024-01-01' AND status = 'COMPLETED'` on every row:
-- Row 4 (Customer 101, CANCELLED): Dropped.
-- Row 8 (Customer 102, from 2023): Dropped.
-- All other 15 rows pass.
+Stage 2 — GROUP BY buckets the survivors and computes aggregates:
 
-**Stage 2: `GROUP BY customer_id` (Aggregate Accumulation)**
+| customer_id | row ids included | COUNT(id) | SUM(total_amount) |
+|---:|---|---:|---:|
+| 101 | 1, 2, 3, 5, 6, 7 | 6 | 1450.00 |
+| 102 | 9 | 1 | 100.00 |
+| 103 | 10, 11 | 2 | 4300.00 |
+| 104 | 12, 13, 14, 15, 16, 17 | 6 | 450.00 |
 
-The surviving rows are aggregated into customer buckets:
+Stage 3 — HAVING filters groups after aggregation. COUNT(id) > 5 AND SUM(total_amount) > 1000 is checked per bucket. Customer 101 has 6 and 1450 — passes. Customer 102 has 1 and 100 — fails. Customer 103 has 2 and 4300 — fails the count even though spend is huge. Customer 104 has 6 but only 450 — fails the sum. Only 101 survives.
 
-| customer_id | Rows Included (id) | `COUNT(id)` | `SUM(total_amount)` |
-| :--- | :--- | :--- | :--- |
-| **101** | 1, 2, 3, 5, 6, 7 | 6 | $1,450.00 |
-| **102** | 9 | 1 | $100.00 |
-| **103** | 10, 11 | 2 | $4,300.00 |
-| **104** | 12, 13, 14, 15, 16, 17 | 6 | $450.00 |
-
-**Stage 3: `HAVING` Clause Filter (Group Pruning)**
-
-The engine checks `COUNT(id) > 5 AND SUM(total_amount) > 1000.00` on each bucket:
-- **Customer 101:** `COUNT` = 6 (> 5: TRUE), `SUM` = $1,450.00 (> 1000.00: TRUE) -> **PASSES**
-- **Customer 102:** `COUNT` = 1 (FALSE), `SUM` = $100.00 (FALSE) -> **DROPPED**
-- **Customer 103:** `COUNT` = 2 (FALSE: does not have > 5 orders, despite high spending) -> **DROPPED**
-- **Customer 104:** `COUNT` = 6 (TRUE), `SUM` = $450.00 (FALSE: under $1,000 threshold) -> **DROPPED**
-
-**Stage 4: `SELECT` Projection & `ORDER BY`**
-
-Only Customer 101 survives. The engine formats the output:
+Stage 4 — SELECT and ORDER BY project the final columns and sort. With one row left, the result is:
 
 | customer_id | completed_orders | lifetime_value |
-| :--- | :--- | :--- |
+|---:|---:|---:|
 | 101 | 6 | 1450.00 |
+
+If we had swapped the filters and put the date in HAVING, stage 1 would have been empty, stage 2 would have built buckets for all four customers including the 2023 row and the cancelled row, and stage 3 would have had to discard them later after paying the full grouping cost. Same answer, much more work.
+
+You can verify the runnable version in SQLite:
+
+```sql
+CREATE TABLE Orders(id INTEGER PRIMARY KEY, customer_id INT, order_date TEXT, status TEXT, total_amount REAL);
+INSERT INTO Orders VALUES
+ (1,101,'2024-01-15','COMPLETED',250),(2,101,'2024-02-10','COMPLETED',300),
+ (3,101,'2024-03-05','COMPLETED',150),(4,101,'2024-04-12','CANCELLED',500),
+ (5,101,'2024-05-18','COMPLETED',200),(6,101,'2024-06-20','COMPLETED',150),
+ (7,101,'2024-07-22','COMPLETED',400),(8,102,'2023-11-05','COMPLETED',1200),
+ (9,102,'2024-02-01','COMPLETED',100),(10,103,'2024-01-20','COMPLETED',3500),
+ (11,103,'2024-03-15','COMPLETED',800),(12,104,'2024-01-10','COMPLETED',80),
+ (13,104,'2024-02-14','COMPLETED',70),(14,104,'2024-03-01','COMPLETED',60),
+ (15,104,'2024-04-10','COMPLETED',90),(16,104,'2024-05-05','COMPLETED',50),
+ (17,104,'2024-06-18','COMPLETED',100);
+
+SELECT customer_id, COUNT(id) AS completed_orders, SUM(total_amount) AS lifetime_value
+FROM Orders
+WHERE order_date >= '2024-01-01' AND status = 'COMPLETED'
+GROUP BY customer_id
+HAVING COUNT(id) > 5 AND SUM(total_amount) > 1000
+ORDER BY lifetime_value DESC;
+-- returns 101 | 6 | 1450.0
+```
 
 ## 5. Edge Cases — The Ones That Break Naive Solutions
 
-- **NULL values inside aggregated columns:** `COUNT(id)` counts non-null IDs, whereas `COUNT(*)` counts all rows in the group regardless of nulls. If `total_amount` is `NULL` for an unbilled order, `SUM(total_amount)` ignores that null row. If all rows for a group have `NULL` amounts, `SUM()` evaluates to `NULL`. In SQL three-valued logic, `NULL > 1000.00` evaluates to `UNKNOWN`, which is treated as false by `HAVING` and safely discards the group.
-- **Using column aliases in `HAVING`:** Standard ANSI SQL (supported strictly by PostgreSQL, Oracle, and SQL Server) processes `HAVING` before `SELECT`. Referring to aliases like `HAVING completed_orders > 5` will throw `column "completed_orders" does not exist`. You must repeat the aggregate expression `HAVING COUNT(id) > 5`. MySQL supports aliases in `HAVING` as a non-standard extension, but writing standard aggregate expressions ensures database portability.
-- **Zero matching rows from `WHERE`:** When `WHERE` filters out every row in the table, `GROUP BY customer_id` produces 0 rows (an empty result set). This differs from an ungrouped query (`SELECT COUNT(*) FROM Orders WHERE 1=0`), which returns 1 row containing `0`.
-- **Strict inequality vs inclusive boundaries:** The prompt specifies "more than 5" (`> 5`) and "over $1,000" (`> 1000.00`). Using `>= 5` or `>= 1000.00` accidentally includes edge customers sitting exactly on the threshold boundary.
-- **Memory exhaustion from missing `WHERE`:** If you omit `WHERE` and place all conditions in `HAVING`, an e-commerce table with 50 million orders will force the database to build hash table entries for millions of inactive or historical customers. When this exceeds `work_mem`, the database engine spills temporary partitions to disk, causing high I/O latency and query timeouts.
+HAVING without GROUP BY treats the whole result as one group. SELECT COUNT(*) FROM Orders HAVING COUNT(*) > 5 is valid SQL. Without a GROUP BY the engine aggregates all rows that passed WHERE into a single bucket, then HAVING decides whether to return one summary row or zero rows. Beginners expect an error, but the query runs and returns either one row or an empty set, not one row per input.
+
+Using column aliases in HAVING breaks in strict SQL. The logical order is FROM -> WHERE -> GROUP BY -> HAVING -> SELECT, so when HAVING runs the SELECT aliases do not exist yet. PostgreSQL, Oracle, and SQL Server enforce this and throw "column completed_orders does not exist" if you write HAVING completed_orders > 5. You must repeat the expression HAVING COUNT(id) > 5. MySQL allows the alias as a non-standard extension, but writing the full aggregate keeps the query portable.
+
+NULL values silently change aggregates. COUNT(id) skips null ids, COUNT(*) counts every row regardless of nulls — important when hunting duplicates with HAVING COUNT(*) > 1 versus HAVING COUNT(email) > 1. SUM(total_amount) ignores null amounts. If every row in a group has a null amount, SUM returns NULL, and NULL > 1000 evaluates to UNKNOWN which HAVING treats as false, so the group is dropped without an error.
+
+Empty input after WHERE yields an empty set, not a zero row. When WHERE filters out every row, GROUP BY produces zero groups and the query returns zero rows. This is different from an ungrouped aggregate like SELECT COUNT(*) FROM Orders WHERE 1=0, which always returns one row containing 0. Forgetting this distinction causes off-by-one bugs in dashboards that expect a row.
+
+Inclusive versus exclusive thresholds. The prompt says more than 5 and over $1,000, which is > 5 and > 1000. Writing >= 5 or >= 1000 silently includes customers sitting exactly on the boundary. In an interview, state the operator out loud and ask whether the boundary is inclusive.
+
+Memory spill from missing WHERE. If you omit WHERE and filter dates in HAVING, a 50-million-row Orders table forces the engine to build hash entries for every customer in history. When that exceeds work_mem or the sort buffer, the database spills partitions to disk, the query goes from milliseconds to seconds, and concurrent queries suffer.
 
 ## 6. Variations and Follow-ups
 
-**Variation 1: Joining Customer Profile Details Without Cartesian Duplication**
-
-In production, the business usually wants the customer's `name` and `email` alongside their metrics. Joining the `Customers` table directly before `GROUP BY` requires grouping by all customer columns or primary keys:
+Duplicate detection with HAVING COUNT(*) > 1. The most common follow-up is "find emails that appear more than once." The pattern is identical, just a different grouping key:
 
 ```sql
-SELECT
-    c.id AS customer_id,
-    c.name,
-    c.email,
-    COUNT(o.id) AS completed_orders,
-    SUM(o.total_amount) AS lifetime_value
+SELECT email, COUNT(*) AS occurrences
+FROM Customers
+GROUP BY email
+HAVING COUNT(*) > 1
+ORDER BY occurrences DESC;
+```
+
+This shows you recognized the template: group by the thing you want to deduplicate, filter groups by count.
+
+Joining customer details without bloating the group. If the business wants name and email alongside the metrics, you can join before grouping but then you must group by the customer columns:
+
+```sql
+SELECT c.id, c.name, c.email, COUNT(o.id) AS completed_orders, SUM(o.total_amount) AS lifetime_value
 FROM Customers c
 JOIN Orders o ON c.id = o.customer_id
-WHERE o.order_date >= '2024-01-01'
-  AND o.status = 'COMPLETED'
+WHERE o.order_date >= '2024-01-01' AND o.status = 'COMPLETED'
 GROUP BY c.id, c.name, c.email
-HAVING COUNT(o.id) > 5
-   AND SUM(o.total_amount) > 1000.00
+HAVING COUNT(o.id) > 5 AND SUM(o.total_amount) > 1000
 ORDER BY lifetime_value DESC;
 ```
 
-A senior follow-up optimization: If the `Orders` table has millions of rows, aggregate first in a CTE or subquery to keep the aggregation hash table compact, then join `Customers` once for only the surviving VIP rows:
+At scale it is cheaper to aggregate first and join only the survivors, keeping the hash table small:
 
 ```sql
 WITH VipCustomers AS (
-    SELECT
-        customer_id,
-        COUNT(id) AS completed_orders,
-        SUM(total_amount) AS lifetime_value
+    SELECT customer_id, COUNT(id) AS completed_orders, SUM(total_amount) AS lifetime_value
     FROM Orders
-    WHERE order_date >= '2024-01-01'
-      AND status = 'COMPLETED'
+    WHERE order_date >= '2024-01-01' AND status = 'COMPLETED'
     GROUP BY customer_id
-    HAVING COUNT(id) > 5
-       AND SUM(total_amount) > 1000.00
+    HAVING COUNT(id) > 5 AND SUM(total_amount) > 1000
 )
-SELECT
-    c.id AS customer_id,
-    c.name,
-    c.email,
-    v.completed_orders,
-    v.lifetime_value
+SELECT c.id, c.name, c.email, v.completed_orders, v.lifetime_value
 FROM VipCustomers v
 JOIN Customers c ON v.customer_id = c.id
 ORDER BY v.lifetime_value DESC;
 ```
 
-**Variation 2: Dynamic Multi-Year Grouping**
-
-If asked to calculate VIP status per customer per year without hardcoding a date filter:
+Yearly VIP per customer with a dynamic grouping key. If the interviewer removes the hardcoded date and asks for VIP status per year:
 
 ```sql
-SELECT
-    customer_id,
-    EXTRACT(YEAR FROM order_date) AS order_year,
-    COUNT(id) AS completed_orders,
-    SUM(total_amount) AS yearly_value
+SELECT customer_id, EXTRACT(YEAR FROM order_date) AS order_year,
+       COUNT(id) AS completed_orders, SUM(total_amount) AS yearly_value
 FROM Orders
 WHERE status = 'COMPLETED'
 GROUP BY customer_id, EXTRACT(YEAR FROM order_date)
-HAVING COUNT(id) > 5
-   AND SUM(total_amount) > 1000.00
+HAVING COUNT(id) > 5 AND SUM(total_amount) > 1000
 ORDER BY order_year DESC, yearly_value DESC;
+-- SQLite variant: use strftime('%Y', order_date) instead of EXTRACT
 ```
 
-**Variation 3: Retaining Individual Order Rows (Window Functions vs `HAVING`)**
+The same two-stage filter remains — WHERE prunes by status, HAVING prunes by the per-year aggregates.
 
-If the frontend needs to render every individual order line item on screen while flagging whether the customer is a VIP, `GROUP BY` + `HAVING` cannot be used because it collapses individual rows into a single summary row. You use window functions instead:
+Keeping individual rows with window functions instead of HAVING. When the frontend needs every order line item on screen but only for VIP customers, GROUP BY + HAVING collapses rows and destroys detail. Use a window to compute the per-customer totals alongside each row, then filter rows:
 
 ```sql
 WITH RankedOrders AS (
-    SELECT
-        id,
-        customer_id,
-        order_date,
-        total_amount,
-        COUNT(id) OVER(PARTITION BY customer_id) AS total_customer_orders,
-        SUM(total_amount) OVER(PARTITION BY customer_id) AS total_customer_spend
+    SELECT id, customer_id, order_date, total_amount,
+           COUNT(id) OVER (PARTITION BY customer_id) AS total_customer_orders,
+           SUM(total_amount) OVER (PARTITION BY customer_id) AS total_customer_spend
     FROM Orders
-    WHERE order_date >= '2024-01-01'
-      AND status = 'COMPLETED'
+    WHERE order_date >= '2024-01-01' AND status = 'COMPLETED'
 )
 SELECT id, customer_id, order_date, total_amount
 FROM RankedOrders
-WHERE total_customer_orders > 5
-  AND total_customer_spend > 1000.00;
+WHERE total_customer_orders > 5 AND total_customer_spend > 1000;
 ```
+
+HAVING cannot do this because HAVING must collapse to one row per group. Windows keep the granularity and still let you threshold on the aggregate. An interviewer who asks "what if you need the rows, not the summary" is testing exactly this distinction.
 
 ## 7. 🧠 The Memory Hook
 
-`WHERE` filters the raw ingredients before they go into the blender; `HAVING` filters the smoothies after they are poured. If a filter does not require measuring the whole smoothie, put it in `WHERE` so the blender does 90% less work.
+WHERE filters ingredients before they go into the blender, HAVING filters smoothies after they are poured. If you can discard a row without measuring the whole group, put that test in WHERE so the blender does a fraction of the work.
