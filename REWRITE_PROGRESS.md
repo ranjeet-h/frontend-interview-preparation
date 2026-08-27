@@ -39,10 +39,10 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Collection | Total Puzzles | Accepted Pages | Remaining |
 |---|---:|---:|---:|
-| Part 1 | 40 | 5 | 35 |
-| Part 2 | 100 | 5 | 95 |
-| Part 3 | 203 | 5 | 198 |
-| **Total Output Questions** | **343** | **15** | **328** |
+| Part 1 | 40 | 20 | 20 |
+| Part 2 | 100 | 15 | 85 |
+| Part 3 | 203 | 15 | 188 |
+| **Total Output Questions** | **343** | **50** | **293** |
 
 ### JavaScript Polyfills
 
