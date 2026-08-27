@@ -1,6 +1,6 @@
 # InnoDB Storage Engine in MySQL: Clustered Indexes, Buffer Pool, MVCC, and ACID Guarantees
 
-## 1. Why This Exists — The Problem First
+## 1. The Real-World Problem — When You Actually Hit This
 
 Imagine running an e-commerce flash sale on an early MySQL database powered by the MyISAM storage engine. Two thousand shoppers hit "Place Order" at the exact same millisecond. The first checkout query fires an `UPDATE` on the `inventory` table. Because the engine only supports table-level locking, the entire `inventory` table freezes solid. Every other customer's checkout query gets stuck waiting in an OS thread queue. Latency spikes from 15 milliseconds to 30 seconds.
 
@@ -10,7 +10,7 @@ When the database restarts, disaster strikes. The OS only managed to write the f
 
 InnoDB was built to eliminate this exact class of catastrophic failures. It transforms MySQL from a naive file-storage query tool into an enterprise-grade ACID transactional database. It ensures that reads never block writes, writes never block reads, crashes are cleanly and automatically recovered in seconds, and millions of concurrent row updates execute without locking entire tables.
 
-## 2. The Analogy — Make It Obvious
+## 2. The Analogy — Make the Mechanic Obvious
 
 Think of InnoDB as a high-security central bank handling millions of dollars in transfers every minute:
 
@@ -21,7 +21,7 @@ Think of InnoDB as a high-security central bank handling millions of dollars in 
 - **The Staging Scratchpad (The Doublewrite Buffer):** Before the teller writes a 16-page official ledger block into the permanent vault binders, they first copy the entire 16-page block sequentially into a staging scratchpad. If the teller drops and tears the binder page halfway through writing it into the vault, the vault copy is corrupted, but the staging scratchpad has the full, pristine 16-page copy ready for an instant repair.
 - **The Alphabetized Filing Cabinet (The Clustered Index):** The bank does not throw customer records into a giant unstructured pile with index cards pointing to shelf coordinates. The physical filing cabinet is organized strictly by Account Number (Primary Key). Opening the folder for Account #1042 immediately presents the customer's full profile, balance, and transaction history stored directly inside that exact folder.
 
-## 3. How It Actually Works — The Full Explanation
+## 3. The Full Explanation — How It Actually Works
 
 InnoDB manages every aspect of table storage, memory caching, transaction isolation, and crash recovery through tightly integrated in-memory structures and on-disk files.
 
@@ -134,6 +134,8 @@ SECONDARY INDEX (INDEX: email)
 - **Double Lookup (Bookmark Lookup):** When executing `SELECT name, balance FROM users WHERE email = 'bob@ex.com'`, InnoDB first traverses the `idx_email` secondary B+Tree to find the leaf containing `"bob@ex.com"`, which yields `PK id = 100`. It then performs a second traversal down the Clustered Index B+Tree using `id = 100` to retrieve `name` and `balance`.
 - **Covering Index:** If a query requests only columns that exist inside the secondary index (e.g. `SELECT id, email FROM users WHERE email = 'bob@ex.com'`), InnoDB answers the query directly from the secondary index leaf node, skipping the Clustered Index lookup entirely. In `EXPLAIN` plans, this appears as `Using index`.
 
+**Foreign Keys and Referential Integrity:** Only InnoDB actually enforces foreign keys. When you write `FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE`, InnoDB checks the parent row exists on every insert or update, and on delete it either blocks, cascades, or sets null depending on the rule. If you do not define an index on the child column, InnoDB creates one for you automatically so it can lock efficiently. MyISAM parses the same `FOREIGN KEY` syntax but silently ignores it — you can insert orphan rows that point to nowhere and MySQL will not complain. That is why any table that needs correctness across two tables must be InnoDB, and you cannot create a foreign key between an InnoDB table and a MyISAM table.
+
 ---
 
 **Multi-Version Concurrency Control (MVCC) and Row-Level Locking**
@@ -172,7 +174,7 @@ For write operations, InnoDB enforces row-level locking using three distinct loc
 - **Gap Lock:** Locks the empty gap between index records (or before the first / after the last) to prevent concurrent transactions from inserting new rows into that space.
 - **Next-Key Lock:** Combines a Record Lock with a Gap Lock on the gap preceding the record. InnoDB uses Next-Key Locking in `REPEATABLE READ` mode to prevent **phantom reads** (where a concurrent transaction inserts a new row that matches a range search).
 
-## 4. Real Code — See It Working
+## 4. See It In Practice — Real Code or Queries
 
 Here is how you configure, inspect, and verify InnoDB mechanics in production.
 
@@ -292,7 +294,7 @@ FROM performance_schema.data_locks;
 -- Shows: LOCK_MODE = 'X' (Exclusive), 'X,GAP' (Gap lock), or 'X,REC_NOT_GAP'
 ```
 
-## 5. The Interview Questions — All of Them, Done Properly
+## 5. Interview Questions — All of Them, Done Properly
 
 **Q: Why does InnoDB use a Clustered Index where the primary key holds the entire row, and what are the performance implications for secondary index lookups and primary key selection?**
 
@@ -365,7 +367,19 @@ InnoDB solves this with a **split LRU list**:
 3. A page in the Old Sublist is only promoted to the Young Sublist if it is accessed again after a mandatory waiting time defined by `innodb_old_blocks_time` (default 1000 milliseconds).
 4. During a full-table scan or backup, pages are read into the Old Sublist once, scanned sequentially in less than 1 second, and never accessed again. As new cold pages stream in, old cold pages are pushed out from the tail of the Old Sublist without disturbing the hot pages in the Young Sublist.
 
-## 6. The Traps — What Goes Wrong
+---
+
+**Q: Why is InnoDB the default storage engine in MySQL and when would you not use it?**
+
+InnoDB has been the default since MySQL 5.5 because it is the only engine that gives you row-level locking, full ACID transactions with redo and undo logs, automatic crash recovery via the redo log and doublewrite buffer, MVCC so readers never block writers, clustered primary keys, and real foreign key enforcement. MyISAM gives you none of that — a single writer locks the whole table, a crash can corrupt the table, and foreign keys are silently ignored. Since MySQL 8.0 even the internal system tables use InnoDB. The one-line rule is: if the table will ever be written to concurrently, needs transactions, needs to survive a crash cleanly, or needs foreign keys, use InnoDB — which is almost every table. You would only consider MyISAM for a truly read-only legacy archive or for a quick experiment where you never care about crash safety, and even then InnoDB with a read-only replica is usually better.
+
+---
+
+**Q: Does InnoDB support foreign keys and what do they cost?**
+
+Yes, only InnoDB enforces foreign keys. When you declare `FOREIGN KEY (customer_id) REFERENCES customers(id)`, InnoDB requires an index on the child column, checks the parent exists on every insert or update, and on delete or update it applies `RESTRICT`, `CASCADE`, `SET NULL`, or `NO ACTION`. Under the hood that check takes a shared lock on the parent row, so a hot parent can become a lock contention point, and cascading deletes can fire many row locks in one statement. That is the tradeoff for correctness. MyISAM lets you write the same `FOREIGN KEY` clause but never checks it, so orphan rows slip in silently. You also cannot mix engines in a foreign key — both parent and child must be InnoDB.
+
+## 6. The Traps — What Goes Wrong in Production
 
 **Trap 1: Using Random UUIDs (v4) as Primary Keys**
 
@@ -418,6 +432,8 @@ InnoDB solves this with a **split LRU list**:
 - **Redo Log (Physical / Durability):** An InnoDB-specific circular log on disk. Its sole purpose is **crash recovery** and durability. It records physical byte changes to pages so that unwritten dirty buffer pool pages can be recovered after a power loss.
 - **Undo Log (Logical / Isolation & Rollback):** An InnoDB-specific storage structure. Its purpose is **transaction rollback** (undoing uncommitted changes on `ROLLBACK`) and **MVCC** (providing past historical snapshots to concurrent readers without locking).
 - **Binary Log (Binlog - Logical / Replication):** A MySQL server-level log (above storage engines). It records logical SQL statements or row-based image changes. Its sole purpose is **master-replica replication** and **point-in-time backup restoration**.
+
+**One-line rule — InnoDB vs MyISAM:** If the table will ever see concurrent writes, needs transactions, must survive a crash without `REPAIR TABLE`, or needs foreign keys, use InnoDB. MyISAM is a single table lock where one write blocks everyone and a crash can corrupt data; InnoDB is per-row locks with snapshots, a write-ahead log, and enforced keys. That is why InnoDB is the default and MyISAM remains only for read-only legacy archives.
 
 ## 8. 🧠 The Memory Hook
 
