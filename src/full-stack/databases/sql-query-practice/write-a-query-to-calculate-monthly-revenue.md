@@ -2,155 +2,152 @@
 
 ## 1. What the Interviewer Is Really Testing
 
-On the surface, calculating monthly revenue looks like a simple `GROUP BY` aggregation query. In reality, interviewers use this question as an immediate filter to separate candidates who only know textbook SQL syntax from engineers who have run queries on real-world production databases.
+Your PM says "show me revenue per month for the last two years." You write a quick `GROUP BY MONTH(order_date)` and the numbers look great in dev. Then you ship it and finance notices January 2023 and January 2024 are merged into one bucket, February is missing entirely because there were no sales, and refunds are counted as revenue.
 
-The interviewer is evaluating four core competencies:
+This question looks like a basic `SUM` plus `GROUP BY`, but interviewers use it to filter for people who have actually shipped reporting queries. They are listening for four things:
 
-1. **Temporal Grouping & The Cross-Year Aggregation Bug:** Junior candidates frequently write `GROUP BY MONTH(order_date)`. This disastrously merges January 2023 with January 2024 into a single bucket. You must demonstrate how to group by compound year-month units or truncate timestamps (`DATE_FORMAT(order_date, '%Y-%m')` in MySQL, `TO_CHAR(order_date, 'YYYY-MM')` or `DATE_TRUNC('month', order_date)` in PostgreSQL).
-2. **The Zero-Revenue Gap Problem:** If your store records zero completed orders in February, a standard `GROUP BY` completely omits February from the output rows. Downstream consumers like analytics dashboards or financial reports will have broken time series. Can you generate a continuous date dimension using a recursive CTE or calendar table and `LEFT JOIN` the transactional data?
-3. **Transaction State Filtering:** Revenue cannot be calculated by blindly summing all rows. You must filter strictly on successful, settled states (`status = 'COMPLETED'`) to avoid counting failed payments, pending orders, or refunds.
-4. **Performance & Indexing Strategy:** When querying tens of millions of rows, wrapping columns in functions inside the `WHERE` or `GROUP BY` clause can prevent standard B-tree index lookups. You must understand composite covering indexes like `INDEX(status, order_date, amount)` to enable lightning-fast index-only scans.
+1. **Do you group by year AND month, not just month?** Using `MONTH(order_date)` or `EXTRACT(MONTH FROM order_date)` collapses every January across all years into one row. You need a year-month key.
+2. **Do you handle months with zero revenue?** A plain `GROUP BY` only returns months that have rows. Dashboards and finance reports need a continuous calendar — twelve rows for twelve months, with 0 for quiet months.
+3. **Do you filter to real revenue?** You must only sum settled orders like `status = 'COMPLETED'`. Counting `PENDING`, `FAILED`, or `REFUNDED` rows inflates revenue.
+4. **Do you know what kills performance?** Wrapping the date column in a function in `WHERE` can prevent index use. You need range filters and a sensible composite index.
 
 ## 2. Think Before You Code — The Senior Dev Thought Process
 
-When approaching this problem, the first step is clarifying the schema and business definitions. Assume an `orders` table with columns: `id` (BIGINT), `order_date` (DATETIME / TIMESTAMP), `status` (VARCHAR), and `amount` (DECIMAL).
+The first thing I notice is the schema. Assume an `orders` table with `id`, `order_date` (TIMESTAMP or DATETIME), `status`, and `amount` (DECIMAL). Some teams store `amount` per order, others store line items — but the prompt here is simple: one amount per order.
 
-The naive instinct is to write a single-pass aggregation:
+My brute-force instinct is:
+
 ```sql
-SELECT MONTH(order_date), SUM(amount) 
-FROM orders 
-WHERE status = 'COMPLETED' 
-GROUP BY MONTH(order_date);
+SELECT MONTH(order_date), SUM(amount)
+FROM orders WHERE status = 'COMPLETED' GROUP BY MONTH(order_date);
 ```
 
-This immediately fails across multi-year data. `MONTH('2023-01-10')` and `MONTH('2024-01-15')` both return `1`, causing two completely different years to add together into a single corrupted sum. To preserve unique monthly buckets, we must format the date to `'YYYY-MM'` or truncate the date to the first of each month.
+This is O(N) to scan and O(K log K) to sort K month groups, so it feels cheap. But it is wrong in three ways. First, `MONTH()` drops the year, so 2023-01 and 2024-01 collide. I need `YEAR + MONTH` together. Second, it skips months with no orders — February will not appear at all if there were zero completed orders. Third, it does not say which dialect's date function I am using, and each dialect does this slightly differently.
 
-The next consideration is calendar gaps. If no sales occurred in a given month, a plain `GROUP BY` skips that month entirely. If the business requests a report for the full calendar year 2024, the output must contain all 12 rows from `2024-01` to `2024-12`, with missing months displaying `$0.00` rather than disappearing. We achieve this by building a Recursive Common Table Expression (CTE) to generate all target months, then `LEFT JOIN` our aggregated sales.
+How do I recognize the right pattern? Any time the question says "per month" and the data spans more than a year, the signal is year-month truncation. PostgreSQL gives you `DATE_TRUNC('month', order_date)`, MySQL gives you `DATE_FORMAT(order_date, '%Y-%m')` or `EXTRACT(YEAR_MONTH)`, SQLite gives you `strftime('%Y-%m', order_date)`. All three do the same thing: snap a timestamp down to the first day of its month so every day in January 2024 maps to `2024-01-01` or the string `2024-01`.
 
-Finally, if the interviewer asks for Month-over-Month (MoM) growth trajectory, we use the `LAG()` window function to retrieve the previous month's revenue and compute percentage growth.
+For the missing-months problem, the pattern is calendar table plus `LEFT JOIN`. I can generate the months I want first, then left join the aggregated sales. That way a month with no sales still appears with `COALESCE(revenue, 0)`. The optimal plan at a high level is: filter completed orders in a date range, truncate each order_date to year-month, group and sum, and optionally left join against a generated month series for continuity. If the interviewer then asks for trends, I can layer a window function like `LAG()` on top without touching the base grouping.
 
 ## 3. The Solution — Fully Explained Code
 
-**Solution 1: Direct Grouping by Year-Month (Standard MySQL / PostgreSQL)**
+**Solution 1: Basic monthly revenue — pick your dialect**
 
-This query groups all completed orders into distinct year-month buckets and sorts chronologically.
+All three do the same thing: bucket by year-month, sum only completed orders.
 
 ```sql
--- Solution 1: Direct grouping by Year-Month (MySQL dialect)
-SELECT 
+-- Solution 1a: PostgreSQL — DATE_TRUNC snaps to first of month
+-- WHY DATE_TRUNC: returns a real timestamp (2024-01-01 00:00:00) so sorting is chronological without string tricks
+SELECT
+    DATE_TRUNC('month', order_date) AS month,  -- truncation keeps year + month together
+    SUM(amount) AS total_revenue
+FROM orders
+WHERE status = 'COMPLETED'
+  -- WHY range filter: sargable — lets B-tree on order_date do an index range scan
+  AND order_date >= '2024-01-01' AND order_date < '2025-01-01'
+GROUP BY DATE_TRUNC('month', order_date)
+ORDER BY month ASC;
+```
+
+```sql
+-- Solution 1b: MySQL — DATE_FORMAT to year-month string
+-- WHY DATE_FORMAT: MySQL has no DATE_TRUNC; formatting to '%Y-%m' keeps year and month together
+SELECT
     DATE_FORMAT(order_date, '%Y-%m') AS month,
     SUM(amount) AS total_revenue
-FROM 
-    orders
-WHERE 
-    status = 'COMPLETED'
-GROUP BY 
-    DATE_FORMAT(order_date, '%Y-%m')
-ORDER BY 
-    month ASC;
+FROM orders
+WHERE status = 'COMPLETED'
+  AND order_date >= '2024-01-01' AND order_date < '2025-01-01'
+GROUP BY DATE_FORMAT(order_date, '%Y-%m')
+ORDER BY month ASC;
 ```
 
 ```sql
--- Solution 1: PostgreSQL equivalent using TO_CHAR
-SELECT 
-    TO_CHAR(order_date, 'YYYY-MM') AS month,
+-- Solution 1c: SQLite — strftime (runnable in sqlite3 :memory:)
+-- WHY strftime: SQLite stores dates as text; strftime extracts year-month reliably
+SELECT
+    strftime('%Y-%m', order_date) AS month,  -- keeps year + month together
     SUM(amount) AS total_revenue
-FROM 
-    orders
-WHERE 
-    status = 'COMPLETED'
-GROUP BY 
-    TO_CHAR(order_date, 'YYYY-MM')
-ORDER BY 
-    month ASC;
+FROM orders
+WHERE status = 'COMPLETED'
+GROUP BY strftime('%Y-%m', order_date)
+ORDER BY month ASC;
 ```
 
-**Solution 2: Continuous Month Calendar with Zero-Filled Gaps (Production-Grade CTE)**
+```sql
+-- Solution 1d: Portable YEAR() + MONTH() variant (MySQL / SQL Server style)
+-- WHY YEAR/MONTH pair: explicit, avoids formatting, same bucket logic
+SELECT
+    YEAR(order_date) AS yr,
+    MONTH(order_date) AS mon,
+    SUM(amount) AS total_revenue
+FROM orders
+WHERE status = 'COMPLETED'
+GROUP BY YEAR(order_date), MONTH(order_date)
+ORDER BY yr ASC, mon ASC;
+```
 
-This query generates every calendar month in a target range using a Recursive CTE, ensuring months with zero sales return `$0.00` instead of dropping out.
+Time complexity: O(N) to scan the filtered rows plus O(K log K) to sort K month buckets, where N is matching orders and K is distinct months. Space complexity: O(K) for the aggregation hash table — one entry per month.
+
+Index tip: on a large table (millions of rows) create `CREATE INDEX idx_orders_status_date_amount ON orders(status, order_date, amount)`. Filtering on `status` and a range on `order_date` can then be an index-only scan — the engine never touches the heap.
+
+**Solution 2: Continuous calendar with zero-filled gaps (production grade)**
+
+This is the version you ship when finance says "I need every month, even the quiet ones, with 0 instead of a missing row."
 
 ```sql
--- Solution 2: Guaranteed continuous months using a Recursive CTE (MySQL 8.0+ / PostgreSQL)
+-- Solution 2: Recursive CTE calendar + LEFT JOIN (MySQL 8.0+ / PostgreSQL)
 WITH RECURSIVE month_series AS (
-    -- Anchor query: First month of the target reporting period
+    -- anchor: first month we want in the report
     SELECT CAST('2024-01-01' AS DATE) AS month_date
     UNION ALL
-    -- Recursive step: Advance by 1 month until reaching the end of the year
+    -- step: add one month until we reach December
     SELECT DATE_ADD(month_date, INTERVAL 1 MONTH)
     FROM month_series
     WHERE month_date < '2024-12-01'
 ),
 monthly_sales AS (
-    -- Pre-aggregate sales to ensure 1 row per month before joining
-    SELECT 
+    -- pre-aggregate so we have exactly one row per month before joining
+    SELECT
         DATE_FORMAT(order_date, '%Y-%m') AS order_month,
         SUM(amount) AS revenue
-    FROM 
-        orders
-    WHERE 
-        status = 'COMPLETED'
-        AND order_date >= '2024-01-01'
-        AND order_date < '2025-01-01'
-    GROUP BY 
-        DATE_FORMAT(order_date, '%Y-%m')
+    FROM orders
+    WHERE status = 'COMPLETED'
+      AND order_date >= '2024-01-01' AND order_date < '2025-01-01'
+    GROUP BY DATE_FORMAT(order_date, '%Y-%m')
 )
-SELECT 
+SELECT
     DATE_FORMAT(ms.month_date, '%Y-%m') AS month,
-    -- COALESCE replaces NULL with 0.00 for months without transactions
-    COALESCE(s.revenue, 0.00) AS total_revenue
-FROM 
-    month_series ms
-LEFT JOIN 
-    monthly_sales s ON DATE_FORMAT(ms.month_date, '%Y-%m') = s.order_month
-ORDER BY 
-    month ASC;
+    COALESCE(s.revenue, 0.00) AS total_revenue  -- WHY COALESCE: LEFT JOIN gives NULL for months with no sales
+FROM month_series ms
+LEFT JOIN monthly_sales s ON DATE_FORMAT(ms.month_date, '%Y-%m') = s.order_month
+ORDER BY month ASC;
 ```
 
-**Solution 3: Month-over-Month (MoM) Growth Percentage with Window Functions**
+PostgreSQL variant of the same idea uses `DATE_TRUNC('month', order_date)` and `generate_series('2024-01-01'::date, '2024-12-01'::date, '1 month')` instead of the recursive CTE. SQLite variant uses `date(month_date, '+1 month')` and `strftime`. The shape stays identical: build calendar, left join sales.
 
-This query computes both total revenue and the percentage change compared to the previous month using the `LAG()` window function.
+**Solution 3: With month-over-month growth**
 
 ```sql
--- Solution 3: Monthly revenue with Month-over-Month (MoM) Growth %
+-- Solution 3: MoM growth using LAG()
 WITH monthly_revenue AS (
-    SELECT 
-        DATE_FORMAT(order_date, '%Y-%m') AS month,
-        SUM(amount) AS total_revenue
-    FROM 
-        orders
-    WHERE 
-        status = 'COMPLETED'
-    GROUP BY 
-        DATE_FORMAT(order_date, '%Y-%m')
+    SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, SUM(amount) AS total_revenue
+    FROM orders WHERE status = 'COMPLETED' GROUP BY DATE_FORMAT(order_date, '%Y-%m')
 )
-SELECT 
+SELECT
     month,
     total_revenue,
-    -- Fetch the previous month's revenue
-    LAG(total_revenue, 1) OVER (ORDER BY month ASC) AS previous_month_revenue,
-    -- Calculate MoM Growth %, handling division by zero/null using NULLIF
+    LAG(total_revenue, 1) OVER (ORDER BY month ASC) AS previous_month_revenue,  -- WHY LAG: peek at prior row in sorted month order
     ROUND(
-        (total_revenue - LAG(total_revenue, 1) OVER (ORDER BY month ASC)) 
-        / NULLIF(LAG(total_revenue, 1) OVER (ORDER BY month ASC), 0) * 100.0, 
-        2
+        (total_revenue - LAG(total_revenue, 1) OVER (ORDER BY month ASC))
+        / NULLIF(LAG(total_revenue, 1) OVER (ORDER BY month ASC), 0) * 100.0, 2  -- WHY NULLIF: avoid division by zero when prior month was 0
     ) AS mom_growth_percentage
-FROM 
-    monthly_revenue
-ORDER BY 
-    month ASC;
+FROM monthly_revenue
+ORDER BY month ASC;
 ```
-
-**Complexity and Index Optimization:**
-
-- **Time Complexity:** O(N log K), where N is the number of matching completed orders and K is the number of distinct months in the result. Filtering and scanning records takes O(N), grouping via hash table or sort takes O(N), and sorting the final K aggregated month rows takes O(K log K).
-- **Space Complexity:** O(K) temporary space, where K is the number of distinct monthly summary buckets stored in the aggregation hash table.
-- **Index Optimization:** On high-volume tables (e.g., 50 million orders), a composite covering index on `(status, order_date, amount)` enables an Index-Only Scan. The database engine filters on `status = 'COMPLETED'`, reads the timestamp range `order_date`, and accumulates `amount` directly from B-tree index leaf pages without performing random disk reads on the primary table data heap.
 
 ## 4. Dry Run — Walk Through a Real Example
 
-Let us trace the complete execution of Solution 2 and Solution 3 using a representative dataset for the first quarter of 2024.
-
-**Input `orders` Table:**
+Take the first quarter of 2024. Input `orders`:
 
 | id | order_date | status | amount |
 | :--- | :--- | :--- | :--- |
@@ -161,34 +158,17 @@ Let us trace the complete execution of Solution 2 and Solution 3 using a represe
 | 5 | 2024-03-05 08:00:00 | COMPLETED | 400.00 |
 | 6 | 2024-03-22 16:45:00 | COMPLETED | 100.00 |
 
-**Step 1: Recursive CTE generates calendar month series**
-- Iteration 0 (Anchor): `2024-01-01`
-- Iteration 1: `2024-02-01`
-- Iteration 2: `2024-03-01`
-- Result `month_series`: `['2024-01-01', '2024-02-01', '2024-03-01']`
+Trace Solution 2 plus the LAG logic:
 
-**Step 2: Filter and aggregate `monthly_sales` CTE**
-- Row 1: `status = 'COMPLETED'`, month `2024-01`, amount `150.00` -> Included
-- Row 2: `status = 'COMPLETED'`, month `2024-01`, amount `250.00` -> Included
-- Row 3: `status = 'CANCELLED'` -> Filtered out
-- Row 4: `status = 'PENDING'` -> Filtered out
-- Row 5: `status = 'COMPLETED'`, month `2024-03`, amount `400.00` -> Included
-- Row 6: `status = 'COMPLETED'`, month `2024-03`, amount `100.00` -> Included
-- Grouped `monthly_sales`:
-  - `2024-01`: `150.00 + 250.00 = 400.00`
-  - `2024-03`: `400.00 + 100.00 = 500.00` (Note: `2024-02` has zero matching rows)
+**Step 1: Calendar CTE builds the months we want.** Anchor `2024-01-01`, then add one month each iteration: `2024-02-01`, `2024-03-01`. Result month_series is three rows: 2024-01, 2024-02, 2024-03.
 
-**Step 3: `LEFT JOIN` calendar series with sales aggregation**
-- `2024-01` joins with sales -> `revenue = 400.00`
-- `2024-02` finds no sales row (NULL) -> `COALESCE(NULL, 0.00) = 0.00`
-- `2024-03` joins with sales -> `revenue = 500.00`
+**Step 2: Filter and group into monthly_sales.** Row 1 and 2 both truncate to `2024-01` and are COMPLETED, so they stay. Row 3 is CANCELLED — dropped. Row 4 is PENDING — dropped. Rows 5 and 6 truncate to `2024-03` and are COMPLETED — they stay. Grouped sums: `2024-01` = 150 + 250 = 400.00. `2024-03` = 400 + 100 = 500.00. There is no row for `2024-02` at all.
 
-**Step 4: Window Function Evaluation (`LAG()` & Growth %)**
-- Month `2024-01`: `total_revenue = 400.00`, `LAG = NULL`, `growth = NULL`
-- Month `2024-02`: `total_revenue = 0.00`, `LAG = 400.00`, `growth = ((0.00 - 400.00) / 400.00) * 100 = -100.00%`
-- Month `2024-03`: `total_revenue = 500.00`, `LAG = 0.00`, `NULLIF(0.00, 0)` produces NULL -> `growth = NULL` (prevents runtime division-by-zero exception)
+**Step 3: LEFT JOIN calendar to sales.** `2024-01` finds 400.00. `2024-02` finds no match, so `s.revenue` is NULL and `COALESCE(NULL, 0.00)` becomes 0.00. `2024-03` finds 500.00. This is why finance sees a proper 0 for February instead of a missing row.
 
-**Final Result Set:**
+**Step 4: Window evaluation for MoM.** Order by month. For `2024-01`: LAG is NULL, growth is NULL (no prior month). For `2024-02`: revenue 0.00, LAG is 400.00, growth = (0 - 400)/400 * 100 = -100.00%. For `2024-03`: revenue 500.00, LAG is 0.00, `NULLIF(0,0)` returns NULL so the division yields NULL — we avoid a division-by-zero error and return NULL for growth instead of crashing.
+
+Final result:
 
 | month | total_revenue | previous_month_revenue | mom_growth_percentage |
 | :--- | :--- | :--- | :--- |
@@ -198,89 +178,95 @@ Let us trace the complete execution of Solution 2 and Solution 3 using a represe
 
 ## 5. Edge Cases — The Ones That Break Naive Solutions
 
-**1. Multi-Year Merging Trap**
-Using `GROUP BY MONTH(order_date)` or `EXTRACT(MONTH FROM order_date)` combines all historical January data into one bucket.
-*Fix:* Always pair the year and month together using `DATE_FORMAT(order_date, '%Y-%m')`, `TO_CHAR(order_date, 'YYYY-MM')`, or `DATE_TRUNC('month', order_date)`.
+**Multi-year merging.** Using `GROUP BY MONTH(order_date)` puts every January from 2022, 2023, and 2024 into one bucket. Real reporting must keep year and month together. Fix by truncating: `DATE_TRUNC('month', order_date)` in PostgreSQL, `DATE_FORMAT(order_date, '%Y-%m')` in MySQL, `strftime('%Y-%m', order_date)` in SQLite, or grouping by `YEAR(order_date), MONTH(order_date)`.
 
-**2. Missing Inactive Months**
-A standard `GROUP BY` only returns groups that exist in the underlying table. If a business was closed for a month or launched in a quiet season, the month will simply vanish from the query result.
-*Fix:* Generate a full date sequence using a Recursive CTE or a dedicated database calendar dimension table (`dim_calendar`), then `LEFT JOIN` the sales data with `COALESCE(SUM(amount), 0)`.
+**Months with no orders.** A plain GROUP BY never invents rows. If February had zero completed orders, February simply disappears. Dashboards then show a broken timeline. Fix by building the month list first with a recursive CTE or a calendar table and LEFT JOINing the aggregated sales, then `COALESCE(SUM(amount), 0)`.
 
-**3. Time Zone Discrepancies**
-If timestamps are stored in UTC (`2024-01-31 23:30:00 UTC`), an order placed in New York (EST, UTC-5) actually occurred at `2024-01-31 18:30:00` (January), but an order placed in Tokyo (JST, UTC+9) occurred at `2024-02-01 08:30:00` (February).
-*Fix:* Convert timestamps to the reporting boundary time zone before grouping, using `CONVERT_TZ(order_date, '+00:00', 'America/New_York')` in MySQL or `order_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York'` in PostgreSQL.
+**Timezone shifts.** If you store UTC, an order at `2024-01-31 23:30:00 UTC` is still January in UTC but `2024-02-01 08:30:00` in Tokyo. Grouping on raw UTC puts it in the wrong month for the business. Fix by converting before truncating: MySQL `CONVERT_TZ(order_date, '+00:00', 'America/New_York')`, PostgreSQL `order_date AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York'`, then truncate.
 
-**4. Division by Zero in MoM Growth**
-When calculating Month-over-Month percentage changes, a previous month with `$0.00` revenue will cause a fatal database error (`ERROR: division by zero`).
-*Fix:* Wrap the denominator with `NULLIF(LAG(total_revenue, 1) OVER (...), 0)`. If the previous month is `0`, the denominator becomes `NULL`, cleanly returning `NULL` for the growth rate.
+**Partial current month.** If you run the report on March 15, March is only half done. Comparing a half-month of March against a full February looks like revenue collapsed. Fix by either excluding the in-progress month with `WHERE order_date < DATE_TRUNC('month', NOW())`, or explicitly flagging it as partial so readers know it is incomplete, or filtering to `order_date < start_of_next_month`.
 
-**5. Non-Sargable Date Functions on Large Tables**
-Writing `WHERE DATE_FORMAT(order_date, '%Y') = '2024'` forces the engine to execute the format function on every single row in the table, ignoring any standard index on `order_date`.
-*Fix:* Filter using explicit range boundaries: `WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01'`. This preserves B-tree index range scan capability (Sargability).
+**NULL amounts and refunds.** `SUM()` ignores NULL, so a few NULL amounts silently undercount revenue without an error. Refunds sometimes appear as negative amounts or as separate `REFUNDED` rows. Fix by deciding the business rule up front: either filter refunds out with `status = 'COMPLETED'` or handle them explicitly with `SUM(CASE WHEN status = 'COMPLETED' THEN amount WHEN status = 'REFUNDED' THEN -amount ELSE 0 END)`, and add a `CHECK(amount IS NOT NULL)` or `COALESCE(amount, 0)` if your schema allows NULLs.
+
+**Non-sargable filters.** Writing `WHERE DATE_FORMAT(order_date, '%Y-%m') = '2024-01'` forces the engine to run the function on every row and skips any index on `order_date`. On a 50-million-row table that is a full scan. Fix by using range predicates: `WHERE order_date >= '2024-01-01' AND order_date < '2024-02-01'` or `WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01'` for a full year.
 
 ## 6. Variations and Follow-ups
 
-**Variation 1: Rolling 3-Month Moving Average Revenue**
-Instead of just single-month totals, business analysts frequently request a smoothed 3-month trailing average to identify underlying growth trends.
-*Solution:* Apply the `AVG()` window function over a rolling frame:
+**Rolling 3-month average.** "Show a smoothed trend, not just spikes." Use `AVG()` over a window frame. This averages the current month and the two before it, which flattens one-off spikes.
+
 ```sql
-SELECT 
-    month,
-    total_revenue,
-    ROUND(
-        AVG(total_revenue) OVER (
-            ORDER BY month ASC 
-            ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
-        ), 
-        2
-    ) AS rolling_3mo_avg_revenue
-FROM 
-    monthly_revenue;
+WITH monthly_revenue AS (
+    SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, SUM(amount) AS total_revenue
+    FROM orders WHERE status = 'COMPLETED' GROUP BY DATE_FORMAT(order_date, '%Y-%m')
+)
+SELECT month, total_revenue,
+       ROUND(AVG(total_revenue) OVER (ORDER BY month ASC ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS rolling_3mo_avg
+FROM monthly_revenue ORDER BY month ASC;
 ```
 
-**Variation 2: Cumulative Year-to-Date (YTD) Revenue**
-Calculate running total revenue that resets at the beginning of each calendar year.
-*Solution:* Partition the running sum window by calendar year:
+If a month is missing from the base CTE, the window will average fewer than three points. That is why you usually build this on top of the zero-filled calendar query, not the bare GROUP BY.
+
+**Year-over-year (YoY) same month last year.** "How did January 2024 do versus January 2023?" Two common ways. With contiguous months you can use `LAG(total_revenue, 12)`. More robustly, self-join on the same month number:
+
 ```sql
-SELECT 
-    month,
-    total_revenue,
-    SUM(total_revenue) OVER (
-        PARTITION BY LEFT(month, 4) 
-        ORDER BY month ASC
-    ) AS ytd_cumulative_revenue
-FROM 
-    monthly_revenue;
+-- YoY using LAG when the calendar is continuous (12 rows per year)
+WITH monthly_revenue AS (
+    SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, SUM(amount) AS total_revenue
+    FROM orders WHERE status = 'COMPLETED' GROUP BY DATE_FORMAT(order_date, '%Y-%m')
+)
+SELECT month, total_revenue,
+       LAG(total_revenue, 12) OVER (ORDER BY month ASC) AS same_month_last_year,
+       ROUND((total_revenue - LAG(total_revenue, 12) OVER (ORDER BY month ASC)) * 100.0
+             / NULLIF(LAG(total_revenue, 12) OVER (ORDER BY month ASC), 0), 2) AS yoy_growth_pct
+FROM monthly_revenue ORDER BY month ASC;
+
+-- YoY via self-join on month number (works even with gaps)
+WITH monthly_revenue AS (
+    SELECT DATE_FORMAT(order_date, '%Y-%m') AS month,
+           EXTRACT(MONTH FROM order_date) AS mon,
+           EXTRACT(YEAR FROM order_date) AS yr,
+           SUM(amount) AS total_revenue
+    FROM orders WHERE status = 'COMPLETED' GROUP BY yr, mon, month
+)
+SELECT cur.month, cur.total_revenue, prev.total_revenue AS same_month_last_year,
+       ROUND((cur.total_revenue - prev.total_revenue) * 100.0 / NULLIF(prev.total_revenue, 0), 2) AS yoy_pct
+FROM monthly_revenue cur LEFT JOIN monthly_revenue prev
+  ON prev.mon = cur.mon AND prev.yr = cur.yr - 1
+ORDER BY cur.month ASC;
 ```
 
-**Variation 3: Breakdown by Product Category per Month**
-Calculate monthly revenue split across different product departments.
-*Solution:* Add the secondary dimension `category_id` to both the `SELECT` and `GROUP BY` clauses:
+**Fiscal year variant.** "Our fiscal year starts in April, not January." The business wants buckets like FY2023-2024 (Apr 2023 to Mar 2024). Shift the month before grouping:
+
 ```sql
-SELECT 
-    DATE_FORMAT(o.order_date, '%Y-%m') AS month,
-    p.category_name,
-    SUM(oi.quantity * oi.unit_price) AS category_revenue
-FROM 
-    orders o
-JOIN 
-    order_items oi ON o.id = oi.order_id
-JOIN 
-    products p ON oi.product_id = p.id
-WHERE 
-    o.status = 'COMPLETED'
-GROUP BY 
-    DATE_FORMAT(o.order_date, '%Y-%m'),
-    p.category_name
-ORDER BY 
-    month ASC, 
-    category_revenue DESC;
+-- MySQL: fiscal year starting April 1
+SELECT
+    CASE WHEN MONTH(order_date) >= 4
+         THEN CONCAT(YEAR(order_date), '-', YEAR(order_date)+1)
+         ELSE CONCAT(YEAR(order_date)-1, '-', YEAR(order_date))
+    END AS fiscal_year,
+    DATE_FORMAT(order_date, '%Y-%m') AS month,
+    SUM(amount) AS total_revenue
+FROM orders WHERE status = 'COMPLETED'
+GROUP BY fiscal_year, month
+ORDER BY month ASC;
+
+-- PostgreSQL: same logic with DATE_TRUNC
+SELECT
+    CASE WHEN EXTRACT(MONTH FROM order_date) >= 4
+         THEN EXTRACT(YEAR FROM order_date)::text || '-' || (EXTRACT(YEAR FROM order_date)+1)::text
+         ELSE (EXTRACT(YEAR FROM order_date)-1)::text || '-' || EXTRACT(YEAR FROM order_date)::text
+    END AS fiscal_year,
+    DATE_TRUNC('month', order_date) AS month,
+    SUM(amount) AS total_revenue
+FROM orders WHERE status = 'COMPLETED'
+GROUP BY fiscal_year, month
+ORDER BY month ASC;
 ```
 
-**Variation 4: High-Scale Materialization Strategy**
-When the `orders` table scales into hundreds of millions of rows, running live aggregate queries over historical raw transactions becomes too slow for user-facing dashboards.
-*Solution:* Maintain an automated daily/monthly rollup table (`monthly_revenue_summary`) populated via scheduled ETL/ELT pipelines, or use a database-native Materialized View refreshed concurrently.
+Change the `>= 4` to `>= 7` for a July-start fiscal year. The trick is the same: decide the fiscal year label before grouping.
+
+**Other follow-ups interviewers like.** Cumulative year-to-date that resets each January: `SUM(total_revenue) OVER (PARTITION BY LEFT(month,4) ORDER BY month)`. Breakdown by product category: add `category_id` to both SELECT and GROUP BY and join through `order_items`. High-scale dashboard: pre-aggregate into a `monthly_revenue_summary` table or a materialized view refreshed nightly so the dashboard never scans raw orders.
 
 ## 7. 🧠 The Memory Hook
 
-Time in SQL has two coordinates: Year and Month. If you only group by month, you collapse all of history into twelve buckets. When reporting over a timeline, always build the calendar first and left join your orders—otherwise the quiet months will silently vanish from your data.
+Month has two parts: year and month. If you group by only one, you collapse history. Build the calendar first, then left join your orders — that way the quiet months show 0 instead of vanishing, and every dialect is just a different spelling of "snap to first of month": `DATE_TRUNC` in Postgres, `DATE_FORMAT` in MySQL, `strftime` in SQLite.
