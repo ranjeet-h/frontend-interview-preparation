@@ -139,62 +139,55 @@ WHERE N - 1 = (
 
 ## 4. Dry Run — Walk Through a Real Example
 
-Let's trace how the algorithms execute using a sample `Employee` table with salary ties.
+Take the exact case the interviewer loves to test: salaries `[5000, 4000, 4000, 3000]` with `N = 2`. The answer must be `4000` — the second distinct salary, not the second row.
 
 **Sample Data (`Employee` Table):**
 
 | id | name | salary |
 | :--- | :--- | :--- |
-| 1 | Alice | 500 |
-| 2 | Bob | 500 |
-| 3 | Charlie | 400 |
-| 4 | David | 300 |
-| 5 | Emma | 300 |
-| 6 | Frank | 100 |
+| 1 | Alice | 5000 |
+| 2 | Bob | 4000 |
+| 3 | Charlie | 4000 |
+| 4 | David | 3000 |
 
-Distinct salaries in descending order: `[500, 400, 300, 100]`
+Distinct salaries in descending order: `[5000, 4000, 3000]`
 
----
+**Trace 1: `DENSE_RANK()` path — `N = 2` => `4000`**
 
-**Trace 1: Find the 2nd Highest Salary ($N = 2$) using Window Functions**
+`DENSE_RANK() OVER (ORDER BY salary DESC)` assigns ranks without gaps:
 
-1. **Window Function Execution:** `DENSE_RANK() OVER (ORDER BY salary DESC)` evaluates each row:
-
-| id | salary | `ROW_NUMBER()` | `RANK()` | `DENSE_RANK()` (Selected) |
+| id | salary | `ROW_NUMBER()` | `RANK()` | `DENSE_RANK()` |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | 500 | 1 | 1 | **1** |
-| 2 | 500 | 2 | 1 | **1** |
-| 3 | 400 | 3 | 3 | **2** |
-| 4 | 300 | 4 | 4 | **3** |
-| 5 | 300 | 5 | 4 | **3** |
-| 6 | 100 | 6 | 6 | **4** |
+| 1 | 5000 | 1 | 1 | **1** |
+| 2 | 4000 | 2 | 2 | **2** |
+| 3 | 4000 | 3 | 2 | **2** |
+| 4 | 3000 | 4 | 4 | **3** |
 
-2. **Filter Phase:** The query filters for `ranking = 2`.
-3. **Candidate Match:** Row 3 (`salary = 400`, `ranking = 2`) matches.
-4. **Deduplication & Output:** `DISTINCT salary` returns `400`.
+Step by step: the window is sorted descending, so 5000 gets rank 1. Both 4000 rows tie, so both get rank 2 — dense means the next distinct value 3000 gets rank 3, not 4. Filtering `WHERE ranking = 2` returns the two rows with salary 4000, then `SELECT DISTINCT salary` collapses them to a single `4000`. If we had used `ROW_NUMBER()` instead, the second 4000 would have gotten row number 3 and a naive `WHERE row_number = 2` would return only one of the tied rows but still look correct here; where it truly breaks is with `[5000, 5000, 4000]` where `ROW_NUMBER` gives the duplicate 5000 rank 2 and returns 5000 again instead of 4000. `RANK()` gives `1, 2, 2, 4` for our data (skipping 3), so `WHERE rank = 2` also returns 4000 here but `WHERE rank = 3` would miss entirely.
 
----
+Result: `4000`.
 
-**Trace 2: Find the 2nd Highest Salary ($N = 2$) using Correlated Subquery**
+**Trace 2: `DISTINCT + LIMIT/OFFSET` path — same input**
 
-We evaluate `WHERE 1 = (SELECT COUNT(DISTINCT e2.salary) WHERE e2.salary > e1.salary)` for each salary:
+Distinct set after `SELECT DISTINCT salary` is `[5000, 4000, 3000]` sorted descending. With `N = 2`, `M = N - 1 = 1`, so `LIMIT 1 OFFSET 1` skips 5000 and returns 4000. Without `DISTINCT`, the raw ordered list is `[5000, 4000, 4000, 3000]` and `OFFSET 1` lands on the second 4000 — coincidentally still 4000 here, but with `[5000, 5000, 4000]` it would land on the second 5000 and return the wrong answer.
 
-- For `salary = 500`: Higher distinct salaries = `{}`. Count = `0`. Condition `1 = 0` is **FALSE**.
-- For `salary = 400`: Higher distinct salaries = `{500}`. Count = `1`. Condition `1 = 1` is **TRUE** $\rightarrow$ **Included (400)**.
-- For `salary = 300`: Higher distinct salaries = `{500, 400}`. Count = `2`. Condition `1 = 2` is **FALSE**.
-- For `salary = 100`: Higher distinct salaries = `{500, 400, 300}`. Count = `3`. Condition `1 = 3` is **FALSE**.
+Result: `4000`.
 
-Result: `400`.
+**Trace 3: Correlated subquery path — counting distinct greater values**
 
----
+We evaluate `WHERE N - 1 = (SELECT COUNT(DISTINCT e2.salary) WHERE e2.salary > e1.salary)` with `N - 1 = 1`:
 
-**Trace 3: Find the 5th Highest Salary ($N = 5$) — Out of Bounds**
+- For `salary = 5000`: distinct greater salaries = `{}`. Count = `0`. `1 = 0` is FALSE.
+- For `salary = 4000`: distinct greater salaries = `{5000}`. Count = `1`. `1 = 1` is TRUE — both 4000 rows match, then `DISTINCT e1.salary` collapses them to one `4000`.
+- For `salary = 3000`: distinct greater salaries = `{5000, 4000}`. Count = `2`. `1 = 2` is FALSE.
 
-There are only 4 distinct salaries (`500, 400, 300, 100`).
+Result: `4000`.
 
-- In **Approach A**: No row in `RankedSalaries` has `ranking = 5`. The inner query produces zero rows. The outer `SELECT (...)` scalar wrapper converts the empty result into `NULL`.
-- In **Approach B**: `M = 5 - 1 = 4`. The query attempts `LIMIT 1 OFFSET 4` on a distinct list of 4 items (indices 0, 1, 2, 3). No row exists at offset 4. The function returns `NULL`.
-- Output: `NULL`.
+**Trace 4: Out of bounds — `N = 5` on the same data**
+
+There are only 3 distinct salaries, so rank 5 does not exist. In Approach A, no row satisfies `ranking = 5`, the inner `SELECT DISTINCT salary ... WHERE ranking = 5` produces zero rows, and the outer scalar wrapper `SELECT (SELECT ...) AS getNthHighestSalary` converts that empty set into a single `NULL` row. In Approach B, `M = 4`, so `LIMIT 1 OFFSET 4` on a 3-element distinct list returns no row and `RETURN(...)` yields `NULL`.
+
+Result: `NULL`.
 
 ---
 
