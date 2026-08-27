@@ -6,7 +6,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 ---
 
-## Completed Sections Summary (641 pages complete)
+## Completed Sections Summary (648 pages complete)
 
 | Section | Completed Pages | Status |
 |---|---:|---|
@@ -20,6 +20,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **Express Core Concepts** (`src/full-stack/backend/express/`) | 30 / 30 | Complete |
 | **FastAPI Core Concepts** (`src/full-stack/backend/fastapi/`) | 50 / 50 | Complete |
 | **Python Backend Core Concepts** (`src/full-stack/backend/python/`) | 30 / 30 | Complete |
+| **API Design** (`src/full-stack/backend/api-design/`) | 30 / 30 | Complete |
 | **MERN Full-Stack Patterns** (`src/full-stack/backend/mern/`) | 30 / 30 | Complete |
 | **MongoDB Core Concepts** (`src/full-stack/databases/mongodb/`) | 35 / 35 | Complete |
 | **Mongoose Core Concepts** (`src/full-stack/backend/mongoose/`) | 30 / 30 | Complete |
@@ -28,7 +29,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | **PostgreSQL Core Concepts** (`src/full-stack/databases/postgresql/`) | 35 / 35 | Complete |
 | **MySQL Core Concepts** (`src/full-stack/databases/mysql/`) | 30 / 30 | Complete |
 | **SQL Query Practice** (`src/full-stack/databases/sql-query-practice/`) | 30 / 30 | Complete |
-| **Total Completed Concept & Practice Pages** | **641** | **100% Done** |
+| **Total Completed Concept & Practice Pages** | **648** | **100% Done** |
 
 ---
 
@@ -38,10 +39,10 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Collection | Total Puzzles | Accepted Pages | Remaining |
 |---|---:|---:|---:|
-| Part 1 | 40 | 20 | 20 |
-| Part 2 | 100 | 15 | 85 |
-| Part 3 | 203 | 15 | 188 |
-| **Total Output Questions** | **343** | **50** | **293** |
+| Part 1 | 40 | 5 | 35 |
+| Part 2 | 100 | 5 | 95 |
+| Part 3 | 203 | 5 | 198 |
+| **Total Output Questions** | **343** | **15** | **328** |
 
 ### JavaScript Polyfills
 
@@ -53,7 +54,6 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 
 | Section | Total Pages | Completed | In-Flight / Assigned | Not Started |
 |---|---:|---:|---:|---:|
-| **API design** (in rewrite now) | **30** | **23** | **0** | **7** |
 | Authentication | 30 | 0 | 0 | 30 |
 | Coding practice | 30 | 0 | 0 | 30 |
 | Deployment | 25 | 0 | 0 | 25 |
@@ -66,7 +66,7 @@ Tracking overall progress across all interview study sections. Detailed page-by-
 | Senior scenarios | 25 | 0 | 0 | 25 |
 | Testing | 20 | 0 | 0 | 20 |
 | WebSockets | 20 | 0 | 0 | 20 |
-| **Total Backend** | **330** | **23** | **0** | **307** |
+| **Total Backend** | **300** | **0** | **0** | **300** |
 
 ### Database Sections Status (135/135 Complete)
 
