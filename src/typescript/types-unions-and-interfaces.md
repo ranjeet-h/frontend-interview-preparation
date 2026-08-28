@@ -229,6 +229,18 @@ The last trap is making an intersection when the real relationship is an alterna
 
 ## 7. Compare With Related Concepts
 
+`type` and `interface` overlap for object contracts, so the choice is about the shape and evolution of the model rather than runtime behavior. Both disappear from emitted JavaScript and both use structural assignability.
+
+| Decision point | `type` alias | `interface` | Practical rule |
+|---|---|---|---|
+| What it can name | Any type expression: primitives, literals, tuples, unions, intersections, and objects. | An object-shaped contract, with inheritance through `extends`. | Use `type` when the model itself is a union, tuple, or composition. |
+| Composing contracts | Build intersections directly, such as `type StaffOrder = Order & Audited`. | Extend compatible object contracts, such as `interface StaffOrder extends Order, Audited {}`. | Use the form that makes the relationship easiest to read. |
+| Alternatives | Name a union directly, such as `type Payment = Card | BankTransfer`. | Cannot be declared as a union; an interface describes one object contract. | Use `type` for “one of these shapes.” |
+| Reopening | A second alias with the same name is a duplicate-identifier error. | Same-name declarations merge when their members are compatible. | Use an interface when intentional declaration merging is part of the extension point. |
+| Team or library convention | Useful for local composition and domain unions. | Common for public object-facing contracts and ambient-library augmentation. | Follow the surrounding API's convention when both are technically suitable. |
+
+Neither is universally superior. An interface can still participate in a type alias intersection, and a type alias can describe an object perfectly well; the meaningful differences are the operations above, not a blanket performance or runtime claim.
+
 | Concept | What it means | When to use it |
 |---|---|---|
 | `type` alias | A fixed name for any type expression, including unions, tuples, primitives, and intersections. | Prefer it when the named model is not only an object contract or when composing types is central. |
