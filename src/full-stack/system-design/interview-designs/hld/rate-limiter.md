@@ -72,7 +72,7 @@ BucketState(
 )
 ```
 
-`RateLimitPolicy` belongs in a durable configuration store and is distributed to gateway policy caches. `BucketState` belongs in the partitioned low-latency store and is disposable after its expiry. A canonical key can be `rl:{region}:{tenantId}:{subjectType}:{subjectId}:{routeGroup}`. The policy evaluator decides whether to apply tenant, user, IP, and route buckets together; a request passes only if every required bucket can atomically pay its cost.
+`RateLimitPolicy` belongs in a durable configuration store and is distributed to gateway policy caches. `BucketState` belongs in the partitioned low-latency store and is disposable after its expiry. First derive an admission scope: normally the tenant ID, or for anonymous traffic the protected public route scope. A canonical Redis Cluster key is `rl:{admissionScopeId}:tenant`, `rl:{admissionScopeId}:principal:{principalId}`, `rl:{admissionScopeId}:ip:{sourceIp}`, or `rl:{admissionScopeId}:route:{routeGroup}`. The braces contain the decision's admission-scope tag, not a region, so every required key for one decision shares one hash slot while independent admission scopes distribute across shards. The policy evaluator decides whether to apply tenant, user, IP, and route buckets together; a request passes only if every required bucket can atomically pay its cost.
 
 ## 5. Draw the high-level architecture
 
@@ -94,7 +94,7 @@ Gateway nodes are stateless and may be scaled independently. The policy path is 
 
 1. The gateway authenticates the request when possible, determines the source IP, normalizes the route into a policy group, and derives the applicable keys.
 2. It reads the current policy from its versioned local cache. A cache miss fetches the policy service; an unknown policy takes the endpoint's conservative default.
-3. The gateway sends the bucket keys, policy parameters, request cost, and a trusted time value to one atomic Redis Lua script (or an equivalent compare-and-set retry loop).
+3. The gateway derives keys with the same admission-scope hash tag, then sends those keys, policy parameters, request cost, and a trusted time value to one atomic Redis Lua script (or an equivalent compare-and-set retry loop).
 4. The operation refills each bucket from elapsed time, checks whether all have enough tokens, and decrements all required buckets only when the request is allowed.
 5. It returns one decision and remaining/reset metadata. The gateway adds rate-limit headers and forwards an allowed request, or stops a rejected request with `429` and `Retry-After`.
 6. The gateway emits an asynchronous allow/deny metric without making the client wait for telemetry.
@@ -109,7 +109,7 @@ The state store is deliberately on the critical path, so overload or latency the
 
 ## 8. Scale each component
 
-Scale gateways horizontally behind regional load balancers. Partition bucket state by a stable hash of the canonical bucket key; use hash tags only when a single atomic operation must evaluate related keys on one shard.
+Scale gateways horizontally behind regional load balancers. Partition bucket state by a stable hash of the canonical bucket key. The admission-scope hash tag deliberately collocates only the tenant- or public-scope keys required for an atomic multi-policy decision; it is not a region-wide tag, so unrelated scopes spread across Redis Cluster shards.
 
 For a hot tenant, add a tenant-wide bucket plus bounded, independently enforced sub-buckets by user or API key. This prevents one tenant from taking regional capacity while avoiding an unbounded fan-in to a single global counter. If the product requires one exact tenant-wide limit, route that tenant's key consistently to its owning partition and size that partition deliberately; do not pretend that eventually merged local counters are an exact global quota.
 
@@ -125,13 +125,13 @@ Do not cache `BucketState` as an authoritative gateway-local copy. It changes on
 
 Use a durable relational or configuration-oriented store for policies, audit history, tenant plans, and operator changes. It can favor durable writes and read replicas because a policy is not mutated per request. A versioned change stream carries those changes to gateways.
 
-Use a partitioned in-memory key-value store for bucket state. Strong atomicity is required per bucket operation, not across every bucket in every region. A single Redis Lua script gives serial execution for its keys; an equivalent compare-and-set design must retry on version conflict and must not return allow until its conditional write succeeds. Cross-region replication is asynchronous unless the product accepts global synchronous latency, so quotas should ordinarily be regional or explicitly allocated by region.
+Use a partitioned in-memory key-value store for bucket state. Strong atomicity is required for every bucket set used by one admission decision, not across every bucket in every region. All keys supplied to the Redis Lua script carry that decision's admission-scope hash tag and therefore land on one Redis Cluster shard; the script serially checks and decrements them together. An equivalent compare-and-set design needs a single shard-local decision record or transaction, must retry on version conflict, and must not return allow until its conditional write succeeds. Cross-region replication is asynchronous unless the product accepts global synchronous latency, so quotas should ordinarily be regional or explicitly allocated by region.
 
 ## 11. Handle concurrency
 
 Token bucket is the main algorithm: it stores `tokens` and `lastRefillAt`, adds `elapsed * refillRate` up to `capacity`, then consumes the request cost if enough tokens remain. Refill happens during the atomic decision; no per-bucket background timer is needed.
 
-The atomic operation must use a monotonic or store-authoritative time source, clamp negative elapsed time to zero, and refresh the bucket expiry. Passing an untrusted client timestamp would let callers manufacture tokens. For multi-key policies, the script checks all keys before decrementing any, so a rejected request does not partially consume one dimension.
+The atomic operation must use a monotonic or store-authoritative time source, clamp negative elapsed time to zero, and refresh the bucket expiry. Passing an untrusted client timestamp would let callers manufacture tokens. For multi-key policies, the script receives only same-slot admission-scope keys, checks all keys before decrementing any, and therefore rejects without partially consuming one dimension.
 
 Fairness is a policy choice, not an accident: evaluate tenant and principal buckets together, avoid allowing a single noisy user to consume all tenant capacity, and apply weighted costs or reserved capacity only when the product can explain them. Per-IP limits need care because shared NATs can group legitimate users; combine IP with authenticated identity rather than treating IP as a universal identity.
 
