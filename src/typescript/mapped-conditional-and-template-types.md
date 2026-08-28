@@ -39,7 +39,7 @@ Two property modifiers are especially important:
 - readonly controls whether a property can be assigned after creation.
 - ? controls whether a property may be omitted.
 
-With no prefix, readonly and ? add a modifier. A - removes it, and a + explicitly adds it. For example, -readonly [Key in keyof T] makes every visited property writable, while [Key in keyof T]-? makes every property required. These modifiers affect the static contract, not whether an object is frozen or copied at runtime.
+In a homomorphic mapped type, omitting a modifier preserves the corresponding modifier from the source. An explicit +readonly or +? adds a modifier, while -readonly or -? removes one. For example, -readonly [Key in keyof T] makes every visited property writable, while [Key in keyof T]-? makes every property required. These modifiers affect the static contract, not whether an object is frozen or copied at runtime.
 
 ### Key remapping: change or filter the keys
 
@@ -104,7 +104,7 @@ type ElementOf<T> = T extends readonly (infer Item)[] ? Item : never;
 type ExtractedElement = ElementOf<readonly ["draft", "published"]>;
 ~~~
 
-Here Item is inferred as the element type, so Element is "draft" | "published". infer does not inspect a value at runtime. It asks the compiler to capture the matching piece so the rest of the type expression can reuse it. This is the idea behind built-in utilities such as ReturnType.
+Here Item is inferred as the element type, so ExtractedElement is "draft" | "published". infer does not inspect a value at runtime. It asks the compiler to capture the matching piece so the rest of the type expression can reuse it. This is the idea behind built-in utilities such as ReturnType.
 
 ### Template literal types: derive string protocols
 
@@ -271,7 +271,7 @@ infer declares a temporary type variable inside the successful branch of a condi
 
 **Q: How do you remap keys?**
 
-Put an as clause in the mapped type: { [K in keyof T as NewKey<K>]: T[K] }. NewKey<K> can be a template literal such as `get\${Capitalize<string & K>}`. If the expression evaluates to never, that key is removed. Remapping is a good fit for a small, meaningful projection such as getters or event handlers; a complicated chain is usually better expressed as an explicit named type.
+Put an as clause in the mapped type: { [K in keyof T as NewKey<K>]: T[K] }. NewKey<K> can be a template literal such as `get${Capitalize<string & K>}`. If the expression evaluates to never, that key is removed. Remapping is a good fit for a small, meaningful projection such as getters or event handlers; a complicated chain is usually better expressed as an explicit named type.
 
 **Q: When are template literal types useful?**
 
