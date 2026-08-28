@@ -22,7 +22,7 @@ An annotation is a receiving form that says, “this entire delivery must fit th
 
 ## 3. How It Actually Works — The Full Explanation
 
-### Literal types and widening
+**Literal types and widening.**
 
 A literal type is one exact value: `"success"`, `42`, or `true`. A union of literals is a finite vocabulary:
 
@@ -48,7 +48,7 @@ The important nuance is that `const` protects the variable binding, not the insi
 
 Context also matters. An expression assigned to an explicitly broad target is checked in that context, so the target can determine how much detail remains. `as const` opts into the narrowest literal interpretation for a literal expression instead of relying on the normal widening rules.
 
-### What `as const` produces
+**What `as const` produces.**
 
 For a literal expression, `as const` has three practical effects:
 
@@ -69,7 +69,26 @@ const point = [10, 20] as const;
 // typeof point is readonly [10, 20]
 ```
 
-The readonly part is shallow. It prevents writes through the inferred readonly type, but it does not recursively freeze every object reachable from the value. It also does not make JavaScript immutable at runtime. `as const` is erased during compilation; it emits no `Object.freeze` call and adds no runtime guard.
+The readonly behavior follows the expression being asserted. Nested object and array literals inside that expression receive readonly static types, but a pre-existing object or array referenced by the expression keeps its original type. The assertion does not walk through that reference and rewrite its type. Nothing here makes JavaScript immutable at runtime: `as const` is erased during compilation, emits no `Object.freeze` call, and adds no runtime guard.
+
+```ts
+const mutableTags = ["draft"];
+
+const settings = {
+  nested: { mode: "dark" },
+  tags: ["typescript", "frontend"],
+  linkedTags: mutableTags,
+} as const;
+
+// @ts-expect-error The nested object literal is readonly in the asserted type.
+settings.nested.mode = "light";
+// @ts-expect-error The nested array literal is a readonly tuple.
+settings.tags.push("interview");
+
+// This is a reference to a pre-existing mutable array, so its original type remains string[].
+settings.linkedTags.push("interview");
+mutableTags.push("published"); // Both names reach the same ordinary runtime array.
+```
 
 `as const` can be useful for deriving a union from data:
 
@@ -80,7 +99,7 @@ type Role = (typeof roles)[number]; // "admin" | "editor" | "viewer"
 
 This is a type-level relationship. The array is still an ordinary JavaScript array at runtime, though this particular reference is readonly to TypeScript.
 
-### Annotation, assertion, and `satisfies`
+**Annotation, assertion, and `satisfies`.**
 
 These three forms answer different questions:
 
@@ -108,7 +127,7 @@ An annotation says the variable has `RequestOptions`; the assigned expression mu
 
 An assertion and `satisfies` are not interchangeable. `as RequestOptions` changes the static view at the expression; `satisfies RequestOptions` validates that view without replacing the expression's more specific information. Neither performs runtime validation.
 
-### Why `satisfies` matters for configuration maps
+**Why `satisfies` matters for configuration maps.**
 
 Suppose every color entry must be either a string or an RGB tuple, and every color key must be present:
 
@@ -145,7 +164,7 @@ type FeatureKey = keyof typeof featureEnabled; // "search" | "export" | "billing
 
 Because the target has a finite key union, the object literal must include those keys and cannot add an unknown key. `keyof typeof featureEnabled` derives the keys from the value after the check. If keys are allowed to be open-ended, use `Record<string, Value>` instead; it checks value compatibility but cannot require a particular finite key set.
 
-### The external-data boundary
+**The external-data boundary.**
 
 None of these features validates JSON received from a server, local storage, a URL, or a user. TypeScript checks source code and values already typed within that source code. This is not safe validation:
 
@@ -164,7 +183,7 @@ Official references: [literal inference and type assertions in the TypeScript Ha
 
 The following examples are intentionally small enough to compile with `tsc --strict`. The `@ts-expect-error` comments document errors that are supposed to exist; compilation fails if TypeScript unexpectedly accepts them.
 
-### Widening versus exact literals
+**Widening versus exact literals.**
 
 ```ts
 let current = "idle"; // string
@@ -178,7 +197,7 @@ const tags = ["typescript", "frontend"]; // string[]
 tags.push("interview"); // allowed: this array is mutable
 ```
 
-### Readonly tuple and object inference
+**Readonly tuple and object inference.**
 
 ```ts
 const coordinateOrigin = [0, 0] as const;
@@ -194,7 +213,7 @@ action.retryable = true;
 type ActionType = typeof action.type; // "user/created"
 ```
 
-### Annotation can lose property-specific information
+**Annotation can lose property-specific information.**
 
 ```ts
 type Mode = "dark" | "light";
@@ -210,7 +229,7 @@ const annotatedTheme: Theme = {
 annotatedTheme.dark.toUpperCase();
 ```
 
-### `satisfies` checks the shape and keeps inference
+**`satisfies` checks the shape and keeps inference.**
 
 ```ts
 type Mode = "dark" | "light";
@@ -232,7 +251,7 @@ const invalidTheme = {
 } satisfies Theme;
 ```
 
-### Exact keys and a safe runtime boundary
+**Exact keys and a safe runtime boundary.**
 
 ```ts
 type ScreenName = "home" | "settings";
@@ -322,27 +341,37 @@ Use `as const` when the central goal is to preserve literals and expose a readon
 
 ## 6. The Traps — What Goes Wrong
 
-### “`const` means every nested value is constant”
+**“`const` means every nested value is constant.”**
 
 This confuses a JavaScript binding with a TypeScript readonly type. `const user = { name: "A" }` prevents `user = otherUser`, but `user.name = "B"` is still a normal mutation. If code needs an immutable static table, use `as const` or an explicit readonly type. If the application needs runtime protection, add runtime freezing or avoid mutation by design.
 
-### Treating `as const` as a validator
+**Treating `as const` as a validator.**
 
-`as const` narrows what TypeScript believes about code you wrote; it does not verify that a server response contains those values. `JSON.parse(input) as const` is not a valid replacement for runtime validation, and a cast of parsed data to a domain type is only a claim. Keep the external value `unknown` until a runtime check proves its shape.
+`as const` narrows what TypeScript believes about code you wrote; it does not verify that a server response contains those values. `JSON.parse(input) as const` is rejected by TypeScript because const assertions can only be applied to literal expressions, not to the result of a function call. The tempting alternative, `JSON.parse(input) as User`, is valid syntax but unsafe: it is only a claim about unchecked data. Keep the external value `unknown` until a runtime check proves its shape.
 
-### Annotating a whole map with a broad union too early
+```ts
+type User = { id: number; name: string };
+const input = '{"id": 1}';
+
+// @ts-expect-error Const assertions apply to literal expressions, not call results.
+const impossible = JSON.parse(input) as const;
+
+const unsafeUser = JSON.parse(input) as User; // Compiles; name is missing at runtime.
+```
+
+**Annotating a whole map with a broad union too early.**
 
 `const palette: Record<Color, string | RGB>` is a valid contract, but every lookup is read as `string | RGB`, even when the source literal clearly used one form for a specific property. That can force unnecessary narrowing at every use. If the object is code-owned and you want both validation and precise property inference, use `satisfies`.
 
-### Assuming `satisfies` changes mutability or narrows everything to literals
+**Assuming `satisfies` changes mutability or narrows everything to literals.**
 
 `satisfies` preserves the expression's inferred type; it does not automatically add `readonly` and does not behave like `as const`. A mutable object checked with `satisfies` remains mutable if its inferred properties are mutable. If exact literals and readonly properties are needed, use `as const` deliberately, perhaps on the expression being checked.
 
-### Using `Record<string, Value>` when the keys are actually closed
+**Using `Record<string, Value>` when the keys are actually closed.**
 
 `Record<string, string>` describes an open dictionary. It is appropriate when arbitrary string keys are valid, but it cannot require `home`, `settings`, and `help` all to exist. For a closed set, use `Record<"home" | "settings" | "help", string>` so omissions and typos are caught.
 
-### Expecting readonly values to pass to mutable APIs
+**Expecting readonly values to pass to mutable APIs.**
 
 A `readonly [number, number]` is not assignable to a function requiring `[number, number]`, because that function could mutate the tuple. Accept `readonly` in APIs that only read:
 
