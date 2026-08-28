@@ -161,6 +161,25 @@
 
 ---
 
+# TypeScript
+
+- [TypeScript](typescript/index.md)
+  - [Mental Model and Type Inference](typescript/mental-model-and-inference.md)
+  - [Types, Unions, and Interfaces](typescript/types-unions-and-interfaces.md)
+  - [Narrowing and Type Guards](typescript/narrowing-and-type-guards.md)
+  - [Functions and Call Signatures](typescript/functions-and-call-signatures.md)
+  - [Generics and Type Relationships](typescript/generics-and-type-relationships.md)
+  - [Utility Types](typescript/utility-types.md)
+  - [Mapped, Conditional, and Template Types](typescript/mapped-conditional-and-template-types.md)
+  - [Literal Types, `as const`, and `satisfies`](typescript/literal-types-as-const-and-satisfies.md)
+  - [Classes, Modules, and Declarations](typescript/classes-modules-and-declarations.md)
+  - [`tsconfig` and Strictness](typescript/tsconfig-and-strictness.md)
+  - [Runtime Validation and API Boundaries](typescript/runtime-validation-and-api-boundaries.md)
+  - [Practical Interview Patterns](typescript/practical-interview-patterns.md)
+  - [Interview Question Bank](typescript/interview-question-bank.md)
+
+---
+
 # Data Structures & Algorithms
 
 - [DSA & Algorithm Practice](dsa/index.md)
