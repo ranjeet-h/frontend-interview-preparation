@@ -18,6 +18,7 @@ The 100-question system design guide is organized so you can study foundations f
 - Start with **Foundations** — every later answer assumes this vocabulary.
 - Use **Easy → Medium → Hard** in order unless you're refreshing one family (e.g. only messaging systems).
 - For several classics (URL shortener, auth, notifications, file upload), a **deeper Type D page** also exists under [Backend System Design](../backend/system-design/index.md). The chapter banks here stay compact; the backend pages go full whiteboard depth.
+- For focused interview practice, use [HLD & LLD Interview Designs](interview-designs/index.md) alongside the 100-question track.
 
 ## Diagrams
 
