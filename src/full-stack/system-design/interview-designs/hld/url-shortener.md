@@ -51,7 +51,7 @@ Content-Type: application/json
 }
 ```
 
-`GET /r/{code}` returns a redirect with a `Location` header, `404 Not Found` for an absent, expired, or deleted link, and may return `410 Gone` when the product wants to reveal an intentionally retired link. `DELETE /short-links/{code}` is optional and requires the owning user or an administrator; it makes the code permanently unavailable.
+`GET /r/{code}` returns a redirect with a `Location` header. A revocable link (one that can expire, be owner-deleted, or be taken down) returns `302 Found` with `Cache-Control: no-store`, so a later request reaches the service and can enforce the current state. It returns `404 Not Found` for an absent, expired, or deleted link, and may return `410 Gone` when the product wants to reveal an intentionally retired link. `DELETE /short-links/{code}` is optional and requires the owning user or an administrator; it makes the code permanently unavailable.
 
 ## 4. Define the data model
 
@@ -68,7 +68,7 @@ ShortLink(
 )
 ```
 
-`code` is the primary lookup key and has a unique index. `expiresAt` is nullable for non-expiring links. `redirectType` is normally `permanent` or `temporary`, which maps to the chosen HTTP behavior. A separate append-only click-event stream holds code, timestamp, referrer class, and privacy-reviewed client metadata; it is not joined into the redirect response.
+`code` is the primary lookup key and has a unique index. `expiresAt` is nullable for non-expiring links. `redirectType` is normally `temporary`; it maps to a revocable `302` response. A `permanent` type is allowed only for a product-guaranteed irrevocable mapping with no expiry and no owner deletion or takedown path; it maps to `301`. A separate append-only click-event stream holds code, timestamp, referrer class, and privacy-reviewed client metadata; it is not joined into the redirect response.
 
 ## 5. Draw the high-level architecture
 
@@ -82,7 +82,7 @@ Redirect: Client -> edge/CDN -> redirect service -> cache -> mapping store
                                       \-> click-event queue -> analytics workers -> analytics store
 ```
 
-An edge cache absorbs globally popular redirects. The stateless redirect service owns validation of the code and expiry decision. A distributed cache stores `code -> redirectable mapping`; the durable mapping store is the source of truth. The click-event queue accepts best-effort asynchronous events, and analytics workers batch them into an analytics-oriented store.
+An edge cache may absorb globally popular **irrevocable** redirects. Revocable links always reach the redirect service, whose internal distributed cache still provides a cache-first mapping lookup while preserving expiry, deletion, and takedown checks. The durable mapping store is the source of truth. The click-event queue accepts best-effort asynchronous events, and analytics workers batch them into an analytics-oriented store.
 
 ## 6. Walk through the main request flow
 
@@ -90,13 +90,13 @@ An edge cache absorbs globally popular redirects. The stateless redirect service
 
 **Redirect flow:**
 
-1. A client calls `GET /r/{code}`; an edge may answer directly if it has a valid cached redirect.
+1. A client calls `GET /r/{code}`. An edge may answer directly only for a non-expiring, irrevocable `301` link; a revocable link reaches the redirect service.
 2. Otherwise the redirect service checks the distributed cache.
-3. On a hit, it checks expiry metadata and immediately sends the configured redirect.
+3. On a hit, it checks expiry and revocation metadata and sends `302 Found` with `Cache-Control: no-store` for a revocable link.
 4. On a miss, it reads the durable mapping store, rejects absent or expired records, and fills the cache before or alongside the response.
 5. It publishes a small click event without waiting for an acknowledgement, then returns the redirect.
 
-For a permanent, stable mapping, `301 Moved Permanently` allows browsers and intermediaries to cache aggressively. `302 Found` is the safer default when a destination might need operational flexibility, when analytics visibility matters, or when product policy does not want clients to cache indefinitely. The service can also use a method-preserving temporary status when that semantic is required; the interview decision is to make redirect caching behavior explicit.
+`302 Found` with `Cache-Control: no-store` is the default because the chapter supports expiry, owner deletion, and abuse takedowns; browsers and intermediaries must not retain a redirect that the service may later revoke. `301 Moved Permanently` is permitted only when the product contract makes a mapping non-expiring and irrevocable, including no owner-delete or takedown path, because browser and intermediary caching can otherwise bypass enforcement. The service can use a method-preserving temporary status when that semantic is required; the interview decision is to make redirect caching behavior explicit.
 
 ## 7. Identify bottlenecks
 
@@ -116,7 +116,7 @@ Partition the click-event stream and scale independent analytics consumers. If a
 
 Use cache-aside for `code -> {destination, expiresAt, redirectType}`. A cache hit avoids the durable store. A cache miss loads the durable mapping, returns the redirect, and repopulates the cache with a TTL no later than the link expiry.
 
-For hot viral links, use CDN/edge caching plus regional cache replication. Protect the mapping store with request coalescing (one in-flight refill per code), short-lived negative caching for truly absent codes, TTL jitter, and stale-while-revalidate where the expiry rule remains correct. Do not serve stale data beyond a known expiry or after an owner-authorized deletion.
+For hot viral irrevocable links, use CDN/edge caching plus regional cache replication. For hot revocable links, scale the redirect service and its internal mapping cache instead of response-caching the redirect at clients or intermediaries. Protect the mapping store with request coalescing (one in-flight refill per code), short-lived negative caching for truly absent codes, TTL jitter, and stale-while-revalidate where the expiry and revocation rules remain correct. Do not serve stale data beyond a known expiry or after an owner-authorized deletion.
 
 ## 10. Database scaling and consistency
 
@@ -128,7 +128,7 @@ A NoSQL key-value or wide-column mapping store is attractive for predictable `co
 
 The unique code index or conditional insert is the final concurrency authority. If two generators produce the same random candidate, only one write wins and the loser retries with a new candidate. Preallocated ID ranges avoid that collision path altogether.
 
-Concurrent delete and redirect requests need a defined result. The redirect service checks durable or cache metadata including version/tombstone state; deletion invalidates edge and regional cache entries. A short propagation window can return a cached redirect only if product requirements accept it; otherwise redirect decisions read a strongly consistent deletion state at additional latency. Codes remain reserved after deletion, preserving the immutable mapping invariant.
+Concurrent delete and redirect requests need a defined result. The redirect service checks durable or cache metadata including version/tombstone state; deleting a revocable link invalidates its internal cache entry, and its `Cache-Control: no-store` response prevents client/intermediary response caches from bypassing the next check. Only irrevocable `301` links can be edge-cached. Codes remain reserved after deletion, preserving the immutable mapping invariant.
 
 ## 12. Reliability and failure handling
 
@@ -140,7 +140,7 @@ Expired links are rejected at read time even if a background cleanup job has not
 
 The mapping itself favors consistency: after a successful create, the assigned code must resolve to its immutable destination, never a different one. Cache replicas and click counts can be eventually consistent. A brief delay before a newly created link appears at a far edge is acceptable if the origin can resolve it.
 
-For deletion and abuse takedowns, favor fast invalidation and consistency over maximum cache availability. For ordinary redirects during a cache outage, favor availability by reading the durable store. The interview answer should state exactly which decision is being made rather than claiming one universal consistency level.
+For deletion and abuse takedowns, favor fast invalidation and consistency over maximum cache availability; revocable links are not response-cached outside the service. For ordinary redirects during a cache outage, favor availability by reading the durable store. The interview answer should state exactly which decision is being made rather than claiming one universal consistency level.
 
 ## 14. Security
 
@@ -158,7 +158,7 @@ For analytics, monitor queue depth, consumer lag, dropped-event count, and end-t
 
 Preallocated sequential IDs are simple and collision-free but may be enumerable; random codes reduce predictability but require conditional-insert collision handling. A longer code expands capacity and reduces collision probability but is less compact.
 
-`301` improves client and intermediary caching but reduces control and can hide subsequent clicks; `302` preserves more control at the cost of more service traffic. SQL makes owner and audit queries easier; NoSQL simplifies large-scale key lookup. A cache-first path offers latency and scale, while durable-store fallback protects correctness during cache loss.
+`301` improves client and intermediary caching, but is valid only for a non-expiring, irrevocable mapping and can hide subsequent clicks. `302` with `Cache-Control: no-store` preserves expiry, deletion, and abuse-takedown enforcement at the cost of more service traffic. SQL makes owner and audit queries easier; NoSQL simplifies large-scale key lookup. A cache-first internal mapping path offers latency and scale, while durable-store fallback protects correctness during cache loss.
 
 ## 17. Future improvements
 
