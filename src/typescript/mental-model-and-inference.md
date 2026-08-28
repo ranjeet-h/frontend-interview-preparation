@@ -142,7 +142,7 @@ No. An annotation checks the relationship TypeScript can see in the source, not 
 
 Trust inference for local implementation details when the initializer and inferred type say exactly what a reader needs to know. Write an annotation at a boundary or when it communicates intent the implementation should be checked against: a function's public return type, a configurable collection meant to hold a particular base type, or a variable that should deliberately be wider than its initial literal. The useful question is not "can TypeScript infer this?" but "what contract do I want future changes to preserve?"
 
-## 6. The Traps — What Goes Wrong
+## 6. The Traps — What Goes Wrong in Production
 
 The first trap is treating a compile-time declaration like a runtime parser. `const customer: Customer = payload` does not convert `42` into a string and does not add a missing `email`. It only asks whether the *type of `payload`* is assignable. If that type is `any`, the checker has been told to stop protecting this assignment. Keep external values as `unknown` until validation proves their shape.
 
@@ -162,6 +162,6 @@ Structural typing and runtime validation answer different questions. Structural 
 
 Assignability is broader than equality. Two types need not be identical for one value to be assignable to another: a richer object can satisfy a smaller required shape, and a literal such as `"production"` can be assigned to `string`. Use assignability to reason about safe use at a destination, not to ask whether two types are written the same way.
 
-## 8. 🧠 The Memory Hook — What Sticks
+## 8. 🧠 The Memory Hook
 
 TypeScript is the clerk before the truck leaves: it checks the labels and then disappears. Inference reads labels already present, structural typing checks whether the required contents are there, and runtime validation is the only person who opens an unknown box.
