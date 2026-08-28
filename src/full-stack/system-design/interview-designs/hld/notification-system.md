@@ -106,20 +106,26 @@ Product service / client
                                       |
                                       v
                        preference + template resolver
-                         |             |              |
-                         v             v              v
-                  in-app worker    push worker   email / SMS workers
-                         |             |              |
-                         v             v              v
-                 inbox projection  provider adapters and per-provider limits
-                         |             |              |
-                         +-----> delivery attempts <-+
                                       |
-                         retry queue / dead-letter queue
+                                      v
+                  independently throttled channel workers
+                    | in-app          | push/email/SMS
+                    v                 v
+             inbox projection     provider adapters -> providers
+                    |                 |
+                    +------> delivery attempts / status store <--- provider callbacks / webhooks
+                                      ^
+                                      | immediate provider response
+                                      +----------- provider adapters
                                       |
-                            provider callbacks / webhooks
-                                      |
-                               final delivery status
+                    retryable failure | permanent or exhausted failure | terminal state
+                                      v                 v                         v
+                              retry queue        dead-letter queue       final delivery status
+                                      |                 |
+                                      v                 v
+                              channel workers    operator inspection / replay
+                                                        |
+                                                        +--> retry queue
 ```
 
 The notification API is stateless. Its transaction writes both the durable intent and an outbox record; a relay publishes the outbox record to the event queue. This avoids the dual-write failure where an accepted row exists but no worker ever sees it.
