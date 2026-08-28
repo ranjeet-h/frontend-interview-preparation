@@ -16,7 +16,7 @@ An async result with a single status tag works like a bag with one authoritative
 
 ## 3. How It Actually Works — The Full Explanation
 
-### Narrowing is path-sensitive evidence
+**Narrowing is path-sensitive evidence**
 
 Suppose a parameter is `string | number`. At the function boundary, both are possible. A `typeof` check splits control flow into two paths. Inside the number path, the value is a `number`; after returning from that path, the remaining reachable path can be treated as a `string`.
 
@@ -40,7 +40,7 @@ function brokenFormatId(id: string | number): string {
 
 The second function is the important failing example: the declared type remains a union because no runtime fact selected one member. A type assertion could silence the error, but it would not perform a check and could turn bad input into a runtime exception.
 
-### The built-in guards
+**The built-in guards**
 
 `typeof` is best for JavaScript primitive categories. TypeScript understands the runtime result strings: `"string"`, `"number"`, `"bigint"`, `"boolean"`, `"symbol"`, `"undefined"`, `"object"`, and `"function"`. Remember the JavaScript quirk that `typeof null` is `"object"`; use an explicit null check when null matters.
 
@@ -95,7 +95,7 @@ function present(value: string | null | undefined): string {
 
 `== null` is one useful intentional exception to a strict-equality style rule: it matches both `null` and `undefined`. Use it only when that combined meaning is wanted; otherwise prefer explicit `===` checks.
 
-### Truthiness is a coarse guard
+**Truthiness is a coarse guard**
 
 JavaScript converts a condition to boolean. `0`, `NaN`, `""`, `0n`, `null`, and `undefined` are falsy; other values are truthy. TypeScript can remove `null` and `undefined` from a truthy branch, but it cannot infer that “present” means “non-empty” if empty is a valid value.
 
@@ -119,11 +119,11 @@ function countUsersPrecisely(count: number | undefined): string {
 
 Use truthiness when every falsy value really means “absent.” Use explicit equality or a domain-specific predicate when `0`, `false`, or `""` is valid data.
 
-### Assignments and reachability matter
+**Assignments and reachability matter**
 
 The declared type controls what can be assigned; the observed type controls what is currently usable. A variable declared as `string | number` may be narrowed to `number` after `x = 1`, then to `string` after `x = "done"`, while a boolean assignment remains illegal because it is outside the declared type. When control flow returns, throws, or otherwise makes a branch unreachable, TypeScript can remove that branch’s possibilities from the remainder.
 
-### User-defined predicates: a checked result with a trust boundary
+**User-defined predicates: a checked result with a trust boundary**
 
 A function returning `value is T` is a user-defined type guard. When it returns `true`, TypeScript narrows the argument named in the predicate to `T` at the call site.
 
@@ -152,7 +152,7 @@ function lies(value: unknown): value is User {
 
 Keep predicates small, test them with valid and invalid values, and do not confuse a cast (`value as User`) with validation. A cast changes the compiler’s view only; a predicate should inspect the value.
 
-### Discriminated unions model valid async states
+**Discriminated unions model valid async states**
 
 Here is one model used throughout an application:
 
@@ -199,7 +199,7 @@ function resultLabel(result: AsyncResult<User>): string {
 
 If `AsyncResult` later gains `{ status: "cancelled" }`, the default branch receives that member instead of `never`, so compilation fails until the new state is handled. The throw is a runtime safety net; the exhaustiveness guarantee comes from the static type.
 
-### Why the discriminator beats independent booleans
+**Why the discriminator beats independent booleans**
 
 This tempting model has too many combinations:
 
@@ -241,20 +241,48 @@ The type improves state construction, reducer transitions, event handling, and r
 
 ```ts
 function parseUserResult(json: string): AsyncResult<User> {
-  const value: unknown = JSON.parse(json);
-
-  // A discriminant check is useful only after checking that value is an object.
-  if (typeof value !== "object" || value === null || !("status" in value)) {
-    throw new Error("Malformed result");
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch (error) {
+    return {
+      status: "error",
+      error: error instanceof Error ? error : new Error("Invalid JSON"),
+    };
   }
 
-  // This example has only established that a status property exists.
-  // Production code should validate every member and field before returning.
-  throw new Error("Use a complete runtime validator at the API boundary");
+  // The object and status checks establish enough shape to inspect each member.
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("status" in value) ||
+    typeof value.status !== "string"
+  ) {
+    return { status: "error", error: new Error("Malformed result") };
+  }
+
+  switch (value.status) {
+    case "idle":
+      return { status: "idle" };
+    case "loading":
+      return { status: "loading" };
+    case "success":
+      if (!("data" in value) || !isUser(value.data)) {
+        return { status: "error", error: new Error("Invalid user data") };
+      }
+      return { status: "success", data: value.data };
+    case "error":
+      if (!("error" in value) || typeof value.error !== "string") {
+        return { status: "error", error: new Error("Invalid error data") };
+      }
+      return { status: "error", error: new Error(value.error) };
+    default:
+      return { status: "error", error: new Error("Unknown result status") };
+  }
 }
 ```
 
-Static narrowing answers “what does this branch know, given the types and checks in the source?” Runtime validation answers “does this external value actually satisfy the contract?” Both are needed at an API boundary.
+This validator returns a valid `AsyncResult<User>` for every parsed status or returns a typed error state for invalid JSON, malformed objects, unknown statuses, and invalid member fields. Static narrowing answers “what does this branch know, given the types and checks in the source?” Runtime validation answers “does this external value actually satisfy the contract?” Both are needed at an API boundary.
 
 ## 4. Real Code — See It Working
 
@@ -351,33 +379,33 @@ TypeScript types are erased when code is emitted, while JSON arrives at runtime 
 
 The expression inside the guard runs at runtime, but narrowing itself is static. A built-in guard performs its own runtime operation; a custom predicate performs only whatever checks its body contains. A predicate that checks only `status` does not prove that a success member has valid `data`. Validate all required fields before treating the result as a trusted domain value.
 
-## 6. The Traps — What Goes Wrong
+## 6. The Traps — What Goes Wrong in Production
 
-### Treating a type assertion as a check
+**Treating a type assertion as a check**
 
 `const user = value as User` changes only the compiler’s opinion. It can be useful after an independently proven invariant, but it does not inspect `value`. At an API boundary, prefer `unknown` plus a real validator.
 
-### Forgetting that `null` is an object to `typeof`
+**Forgetting that `null` is an object to `typeof`**
 
 `typeof null === "object"` is a JavaScript historical quirk. A check for `typeof value === "object"` still leaves `null` possible, so access to properties or iteration can fail. Pair it with `value !== null`.
 
-### Assuming `in` means a usable property
+**Assuming `in` means a usable property**
 
 `"data" in value` proves the property exists, not that it has the expected type. Optional properties may put a type on both sides of the branch, and inherited properties also count. Use a required discriminant or check the property value itself when that distinction matters.
 
-### Letting a predicate lie
+**Letting a predicate lie**
 
 The compiler cannot audit `return true` in `value is User`. A false promise moves an invalid value into code that assumes the target shape, which is more dangerous than an ordinary compile error. Keep predicates local and explicit, and test malformed inputs.
 
-### Using several booleans for one state machine
+**Using several booleans for one state machine**
 
 Independent flags create a Cartesian product of combinations, most of which are invalid. Optional fields and optional chaining make the symptoms quieter without enforcing the invariant. A discriminated union puts the state and its required payload in one member.
 
-### Believing narrowing is permanent
+**Believing narrowing is permanent**
 
 Narrowing is tied to a path and the compiler’s knowledge at that point. A later assignment can widen the observed type again, and callbacks or mutable aliases can make a prior fact unsafe to preserve. Keep values immutable where practical and re-check at the point of use when mutation can occur.
 
-### Assuming a successful compile proves a complete switch
+**Assuming a successful compile proves a complete switch**
 
 A `switch` can compile while silently falling through or returning an unhelpful default. Use `never` to turn a new discriminant value into a visible compiler failure, then decide deliberately what runtime fallback should do.
 
@@ -393,6 +421,6 @@ A `switch` can compile while silently falling through or returning an unhelpful 
 | Discriminated union vs boolean flags | A union encodes mutually exclusive valid states; flags allow invalid combinations unless extra rules enforce them. | Model a state machine with one discriminant and member-specific payloads. |
 | Static narrowing vs runtime validation | Narrowing trusts declared types and checks in source; validation inspects actual external values. | Validate once at the boundary, then narrow safely inside the domain. |
 
-## 8. 🧠 The Memory Hook — What Sticks
+## 8. 🧠 The Memory Hook
 
 Narrowing is TypeScript asking, “What has this path proved?” A discriminant is the single authoritative label for an async state: one label selects one payload, while scattered booleans let impossible worlds leak into the UI. At the edge, validate reality; inside the program, let guards and exhaustive unions make the safe paths obvious.
