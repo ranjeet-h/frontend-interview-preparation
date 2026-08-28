@@ -86,7 +86,7 @@ function getProperty<T, Key extends keyof T>(object: T, key: Key): T[Key] {
 }
 
 const person = { name: "Mina", age: 31, active: true };
-const name = getProperty(person, "name");   // string
+const personName = getProperty(person, "name"); // string
 const age = getProperty(person, "age");     // number
 // getProperty(person, "email");             // Error: "email" is not a key of person.
 ```
@@ -99,20 +99,20 @@ A generic default makes a type argument optional when the caller has not supplie
 
 ```ts
 interface RequestOptions<Response = unknown> {
-  parse: (body: string) => Response;
+  parse?: (body: string) => Response;
   cacheKey?: string;
 }
 
 function request<Response = unknown>(options: RequestOptions<Response>): Response {
   // A real client would fetch here. This example focuses on the type relationship.
-  return options.parse('{"ok":true}');
+  return options.parse ? options.parse('{"ok":true}') : (undefined as Response);
 }
 
 const response = request({ parse: (body) => JSON.parse(body) as { ok: boolean } });
 // Response is inferred as { ok: boolean }, so response.ok is boolean.
 
-const unknownResponse = request({ parse: (body) => JSON.parse(body) });
-// If no useful candidate is available, the default makes the result unknown.
+const unknownResponse = request({ cacheKey: "health-check" });
+// No parser mentions Response, so there is no inference candidate; Response defaults to unknown.
 ```
 
 Defaults make an API easy to start with while leaving an escape hatch for callers who need precision. They are especially useful for configurable clients and table-like utilities, but a default should not conceal a genuinely important type choice. If the caller must provide a response schema for safety, require it instead.
@@ -163,22 +163,26 @@ type Row = {
   active: boolean;
 };
 
-type Column<T, Key extends keyof T = keyof T> = {
+type Column<T, Key extends keyof T> = {
   key: Key;
   heading: string;
   format?: (value: T[Key], row: T) => string;
 };
 
-type TableConfig<T, Key extends keyof T = keyof T> = {
+type AnyColumn<T> = {
+  [Key in keyof T]: Column<T, Key>;
+}[keyof T];
+
+type TableConfig<T> = {
   rows: readonly T[];
-  columns: readonly Column<T, Key>[];
+  columns: readonly AnyColumn<T>[];
 };
 
-function renderTable<T, Key extends keyof T = keyof T>(config: TableConfig<T, Key>): string[][] {
+function renderTable<T>(config: TableConfig<T>): string[][] {
   return config.rows.map((row) =>
     config.columns.map((column) => {
       const value = row[column.key];
-      return column.format ? column.format(value, row) : String(value);
+      return column.format ? column.format(value as never, row) : String(value);
     }),
   );
 }
@@ -202,7 +206,7 @@ const rendered = renderTable(table);
 // rendered is string[][]; invalid keys and mismatched formatter values fail at compile time.
 ```
 
-The default `Key = keyof T` makes the configuration convenient when it contains several kinds of columns. The `Key extends keyof T` relationship still ensures each column key exists and its formatter receives the corresponding property type. If a table API needs one fixed key, it can specify `TableConfig<Row, "active">` and make that narrower contract explicit.
+The mapped `AnyColumn<T>` type creates one column variant per property, then unions those variants. That discriminated union ensures an `"active"` column receives a boolean in `format`, while a `"name"` column receives a string; an invalid key or mismatched formatter is rejected. The `never` assertion is isolated inside the renderer because TypeScript cannot correlate `column.key`, `column.format`, and `row[column.key]` at that call site when `column` is a union. The configuration boundary still checks the relationship. If a table API needs one fixed key, it can specify `Column<Row, "active">` and make that narrower contract explicit.
 
 ## 5. The Interview Questions — All of Them, Done Properly
 
@@ -246,7 +250,7 @@ The type parameter is the captured type, such as `T`. The constraint is the mini
 
 Each parameter can represent a different role. In `map<T, U>`, `T` is the input element and `U` is the transformed output. They are related because the callback consumes `T` and produces `U`, but they need not be equal. For a selector, `T[Key]` makes the output depend on the chosen key instead.
 
-## 6. The Traps — What Goes Wrong
+## 6. The Traps — What Goes Wrong in Production
 
 `any` is not “better generics.” It accepts the value and then turns off checking at the boundary. A caller can invoke a method that does not exist, and the compiler will not help. Use `unknown` when a value is genuinely unknown and narrow or validate it; use a generic when input and output must remain related.
 
@@ -282,6 +286,6 @@ Constraints versus runtime validation: `extends` restricts code that TypeScript 
 
 Concrete types versus generic abstraction: a concrete type is clearer when the domain is intentionally fixed. Add a generic when a second real use case shares the same relationship and the abstraction makes both call sites safer or simpler.
 
-## 8. 🧠 The Memory Hook — What Sticks
+## 8. 🧠 The Memory Hook
 
 Generics are a type label that travels with the value: capture what came in, constrain only what the implementation needs, and reuse the label to describe what comes out. `keyof` chooses a legal door; indexed access tells you the type behind that exact door.
