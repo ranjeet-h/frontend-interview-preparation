@@ -11,7 +11,7 @@ TypeScript utility types let us derive a new static type from a type we already 
 Think of a complete shipping form as a master paper form kept by a warehouse. Different jobs need different views of that form:
 
 - `Partial` makes every field optional for a “fields changed so far” note.
-- `Required` checks that a completed submission has no blanks.
+- `Required` describes a completed submission whose declared fields must all be present to the compiler; it does not inspect blank values.
 - `Readonly` gives a worker a view they may inspect but must not edit.
 - `Pick` photocopies only named fields, such as the address label.
 - `Omit` photocopies everything except fields that must stay internal, such as an admin note.
@@ -27,7 +27,7 @@ The master form is still paper. Photocopying it does not alter the original, and
 
 Most object utilities are mapped types: TypeScript iterates over keys of an existing type and changes the modifier or selects a subset. `Partial<T>` makes each property optional, `Required<T>` removes optional markers, and `Readonly<T>` adds readonly markers. Those markers affect assignment checking, not the object itself.
 
-`Pick<T, K>` keeps keys `K` from `T`; `Omit<T, K>` keeps the keys of `T` after removing `K`. In simplified form, `Omit` is `Pick<T, Exclude<keyof T, K>>`: first calculate all keys except the forbidden ones, then pick the remainder. The built-in versions also constrain `K` so a typo is rejected.
+`Pick<T, K>` keeps keys `K` from `T`; `Omit<T, K>` keeps the keys of `T` after removing `K`. In simplified form, `Omit` is `Pick<T, Exclude<keyof T, K>>`: first calculate all keys except the forbidden ones, then pick the remainder. `Pick` constrains its key parameter to `keyof T`, but built-in `Omit<T, K>` does not. Therefore `Omit<User, "typo">` is permitted and has the same keys as `User`; the unknown key has nothing to remove. If a codebase wants typo rejection, it can define a stricter wrapper such as `StrictOmit<T, K extends keyof T> = Omit<T, K>`.
 
 `Record<K, V>` maps every key in `K` to the same value type `V`. With a finite union such as `"idle" | "saving" | "error"`, it requires all three entries. With `string`, it describes an open string-keyed object, which is broader and does not guarantee any particular named key exists.
 
@@ -113,6 +113,8 @@ type MyPick<T, K extends keyof T> = {
   [P in K]: T[P];
 };
 
+type StrictOmit<T, K extends keyof T> = Omit<T, K>;
+
 type MyReadonly<T> = {
   readonly [P in keyof T]: T[P];
 };
@@ -129,12 +131,17 @@ interface Product {
 }
 
 type ProductCard = MyPick<Product, "id" | "title">;
+type ProductWithoutPrice = StrictOmit<Product, "price">;
 type FrozenProduct = MyReadonly<Product>;
 type NonPreviewField = MyExclude<"id" | "title" | "price", "price">;
 type PriceResult = MyReturnType<(currency: string) => number>;
+
+type BuiltInTypoOmit = Omit<Product, "prcie">; // Allowed: no matching key is removed.
+// @ts-expect-error StrictOmit rejects a key that is not in Product.
+type StrictTypoOmit = StrictOmit<Product, "prcie">;
 ```
 
-Line by line, `MyPick` loops over only the requested keys and looks up each property’s original type. `MyReadonly` loops over every key and adds the readonly modifier while preserving each value type. `MyExclude` distributes over a union: a member assignable to `U` becomes `never`, and `never` disappears from the resulting union. `MyReturnType` uses `infer R` to ask the compiler to name the function’s result type and then returns that name. These aliases disappear after compilation; they do not create JavaScript functions.
+Line by line, `MyPick` loops over only the requested keys and looks up each property’s original type. `StrictOmit` adds the `K extends keyof T` constraint that built-in `Omit` intentionally does not have, then delegates the actual omission to `Omit`. `MyReadonly` loops over every key and adds the readonly modifier while preserving each value type. `MyExclude` distributes over a union: a member assignable to `U` becomes `never`, and `never` disappears from the resulting union. `MyReturnType` uses `infer R` to ask the compiler to name the function’s result type and then returns that name. These aliases disappear after compilation; they do not create JavaScript functions.
 
 For an edit form, derive the input contract from the canonical domain model instead of duplicating it:
 
@@ -199,7 +206,7 @@ Use a utility type when the new shape is mechanically tied to the source and sho
 
 No. They guide the TypeScript checker and are erased from emitted JavaScript. `Readonly<T>` does not call `Object.freeze`, `Omit<T, "secret">` does not remove a property, and `NonNullable<T>` does not reject `null`. Runtime parsing, copying, freezing, and redaction need actual code or a validation library.
 
-## 6. The Traps — What Goes Wrong
+## 6. The Traps — What Goes Wrong in Production
 
 - **Treating `Partial<T>` as a safe patch protocol.** A partial object says only that properties may be absent; it does not say how an update should interpret absence. Define patch semantics explicitly and validate before persistence.
 
