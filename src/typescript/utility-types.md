@@ -37,7 +37,7 @@ Most object utilities are mapped types: TypeScript iterates over keys of an exis
 
 Function utilities inspect a function type. `Parameters<F>` produces a tuple of its parameter types, preserving order and optional/rest information. `ReturnType<F>` produces the result type. For an overloaded function, these utilities use the last overload signature that is visible in the type, so overload order can matter. For generic or deliberately broad functions, the result can also be broad (`unknown`, `any`, or a generic constraint); it is not a runtime observation.
 
-All of these transformations are shallow unless the definition says otherwise. `Readonly<User>` prevents assignment to `user.address` but does not recursively make the address object readonly. A `Partial<User>` makes `address` optional, but if an address is present, its nested fields remain governed by the original `Address` type.
+All of these transformations are shallow unless the definition says otherwise. `Readonly<User>` prevents assignment to `user.address` but does not recursively make a present `address` object readonly. A `Partial<User>` makes `address` optional, but if an address is present, its nested `city` field remains governed by the original nested type.
 
 ## 4. Real Code — See It Working
 
@@ -49,6 +49,7 @@ interface User {
   name: string;
   email: string;
   role?: "admin" | "member";
+  address?: { city: string };
 }
 
 type UserDraft = Partial<User>;
@@ -60,6 +61,7 @@ const stored: StoredUser = {
   name: "Asha",
   email: "asha@example.com",
   role: "member",
+  address: { city: "Bengaluru" },
 };
 
 type PublicUser = Readonly<Pick<User, "id" | "name">>;
@@ -184,7 +186,7 @@ They are reusable generic type transformations supplied by TypeScript, such as `
 
 **Q: How is `Omit` conceptually built?**
 
-As `Pick<T, Exclude<keyof T, K>>`. `keyof T` produces all keys, `Exclude` removes the forbidden keys, and `Pick` rebuilds the object from what remains. The built-in type is implemented in the TypeScript library, but this equation is the correct mental model and explains why `K` must be a key of `T`.
+As `Pick<T, Exclude<keyof T, K>>`. `keyof T` produces all keys, `Exclude` removes the forbidden keys, and `Pick` rebuilds the object from what remains. The equation explains the behavior, but unlike `Pick`, built-in `Omit<T, K>` does not constrain `K` to `keyof T`, so unknown keys are ignored. Use `StrictOmit<T, K extends keyof T>` when typo rejection is desired.
 
 **Q: What is the difference between `Exclude` and `Extract`?**
 
@@ -242,6 +244,6 @@ No. They guide the TypeScript checker and are erased from emitted JavaScript. `R
 
 `Pick`/`Omit` versus runtime validation: static shape description versus runtime evidence. Use both at an external boundary: a utility type documents what the code expects, while validation and mapping establish that an unknown value really has that shape.
 
-## 8. 🧠 The Memory Hook — What Sticks
+## 8. 🧠 The Memory Hook
 
 Utility types are photocopiers for contracts: they make a compile-time view of an existing shape, but the original JavaScript object stays exactly as it was. Remember the verbs—`Partial` loosens, `Required` tightens, `Readonly` locks a view, `Pick` keeps, `Omit` removes, `Record` maps keys, `Exclude` removes union members, `Extract` keeps overlap, and function utilities inspect signatures. When the shape carries business meaning or crosses an untrusted boundary, give it a named contract and runtime validation instead of trusting a clever alias.
