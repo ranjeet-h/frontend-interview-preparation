@@ -64,10 +64,11 @@ For component props, events, refs, reducers, and API data in React, continue to
 ## Source policy
 
 Each lesson separates TypeScript's compile-time rules from JavaScript runtime
-behavior, uses runnable examples for behavior claims, and favors primary
-TypeScript documentation when language details matter. Examples that cross an
-external boundary treat the incoming value as unknown until runtime code has
-validated it.
+behavior and uses runnable examples for behavior claims. Official TypeScript
+documentation is the authority for compiler semantics and version-sensitive
+syntax. Interview-prep sources set topic priority only; they are not technical
+truth or semantic authority. Examples that cross an external boundary treat the
+incoming value as unknown until runtime code has validated it.
 
 ## Question policy
 
