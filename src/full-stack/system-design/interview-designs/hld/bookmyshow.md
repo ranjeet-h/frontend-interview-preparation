@@ -79,11 +79,11 @@ ShowSeat(showId, seatId, price, state, activeOwnerType, activeOwnerId, version)
 SeatHold(holdId, showId, customerId, status, expiresAt, idempotencyKey, totalAmount)
 SeatHoldItem(holdId, showId, seatId)
 Booking(bookingId, showId, customerId, status, confirmedAt, cancellationState)
-BookingItem(bookingId, showId, seatId, price)
+BookingItem(bookingItemId, bookingId, showId, seatId, price, recordedAt)
 PaymentAttempt(paymentAttemptId, holdId, provider, providerReference, status, amount, idempotencyKey)
 ```
 
-`ShowSeat` is the source of truth. Its key is `(showId, seatId)` and its row records whether the active owner is a hold or confirmed booking. `SeatHoldItem` and `BookingItem` have unique `(showId, seatId)` constraints appropriate to their active state. A transactional outbox records hold, confirmation, expiry, cancellation, and refund events only after their authoritative write commits.
+`ShowSeat` is the source of truth and the state-bearing active-ownership record. It has exactly one current row per `(showId, seatId)`; its `state`, `activeOwnerType`, and `activeOwnerId` record `AVAILABLE`, `HELD(holdId)`, or `BOOKED(bookingId)`. That unique current row is the active-only uniqueness guard. `SeatHoldItem` identifies a hold's requested seats while the hold is active. `BookingItem` is immutable booking history and deliberately has **no** unique `(showId, seatId)` constraint: a cancelled booking keeps its audit record, and a later booking of the released seat creates another historical item. A transactional outbox records hold, confirmation, expiry, cancellation, and refund events only after their authoritative write commits.
 
 ## 5. Draw the high-level architecture
 
@@ -115,9 +115,9 @@ The catalogue source and its search/read projections serve discovery. The invent
 2. The customer calls `POST /shows/{showId}/holds` with selected seats and an idempotency key. The Booking API validates the show, customer, seat selection, and requested price policy.
 3. In one strongly consistent transaction, the inventory store conditionally changes every requested `ShowSeat` from `AVAILABLE` to `HELD(holdId)` only if each row is still available, creates `SeatHold` with its lease expiry, writes hold items, and writes an outbox event. If any conditional update fails, the transaction rolls back and reports the unavailable seats.
 4. The client starts payment using the returned `holdId`. The payment orchestrator creates one idempotent `PaymentAttempt`, redirects or tokens the client for the provider, and records provider callbacks. A payment success alone is not a booking confirmation.
-5. The client or callback calls `POST /holds/{holdId}/confirm`. In one transaction, the service verifies that the payment is successful for the exact amount, the hold is still `ACTIVE`, and every `ShowSeat` is still owned by that `holdId`; it changes those rows to `BOOKED(bookingId)`, creates the booking, marks the hold confirmed, and writes an outbox event.
+5. The client or callback calls `POST /holds/{holdId}/confirm`. In one transaction, the service verifies that the payment is successful for the exact amount, the hold is still `ACTIVE`, and every `ShowSeat` is still owned by that `holdId`; it changes those current ownership rows to `BOOKED(bookingId)`, creates the booking and immutable `BookingItem` history, marks the hold confirmed, and writes an outbox event.
 6. A background expiry worker conditionally changes seats from `HELD(holdId)` to `AVAILABLE` only when the hold is still active and expired. It marks the hold expired and emits an invalidation event. A late payment callback sees the expired hold and triggers payment reconciliation or refund instead of resurrecting seats.
-7. For cancellation, the service checks booking and venue policy, then atomically changes eligible booked seats to `AVAILABLE` or a venue-specific blocked state, records cancellation, and requests an idempotent provider refund. The booking reports `CANCELLING` until the provider result is reconciled.
+7. For cancellation, the service checks booking and venue policy, then atomically marks the booking cancelled while preserving its immutable `BookingItem` history and changes eligible current `ShowSeat` ownership rows to `AVAILABLE` or a venue-specific blocked state. A released `AVAILABLE` row can be held and booked again by a later customer without changing the historical booking records. The service requests an idempotent provider refund, and the booking reports `CANCELLING` until the provider result is reconciled.
 
 ## 7. Identify bottlenecks
 
@@ -143,7 +143,7 @@ Cache seat maps with a short TTL and a `seatMapVersion`, but mark them as availa
 
 A strongly consistent relational database or transactional distributed store is suitable for `ShowSeat`, `SeatHold`, `Booking`, and `PaymentAttempt`, because the design needs conditional multi-row state changes, uniqueness, and auditability. The final authority is an atomic conditional update or row lock transaction, not a cache, queue, or payment callback.
 
-For example, a hold can issue an update equivalent to `UPDATE ShowSeat ... WHERE showId = ? AND seatId IN (...) AND state = 'AVAILABLE'`, verify every requested row changed, then commit the hold in the same transaction. An optimistic `version` check works as an alternative when the store supports compare-and-set. A unique active booking-seat record adds a second guard against implementation mistakes.
+For example, a hold can issue an update equivalent to `UPDATE ShowSeat ... WHERE showId = ? AND seatId IN (...) AND state = 'AVAILABLE'`, verify every requested row changed, then commit the hold in the same transaction. An optimistic `version` check works as an alternative when the store supports compare-and-set. The one current `ShowSeat` row per `(showId, seatId)` is the active-only uniqueness guard; historical `BookingItem` rows are never used as that guard.
 
 Search indexes, show-time read replicas, recommendation data, seat-map cache invalidations, notifications, and revenue analytics consume outbox events and are eventually consistent. If a just-confirmed booking must be read immediately, `GET /bookings/{bookingId}` reads the booking authority or a read-your-writes replica rather than an arbitrary lagging projection.
 
