@@ -208,7 +208,7 @@ Use a utility type when the new shape is mechanically tied to the source and sho
 
 No. They guide the TypeScript checker and are erased from emitted JavaScript. `Readonly<T>` does not call `Object.freeze`, `Omit<T, "secret">` does not remove a property, and `NonNullable<T>` does not reject `null`. Runtime parsing, copying, freezing, and redaction need actual code or a validation library.
 
-## 6. The Traps — What Goes Wrong in Production
+## 6. The Traps — What Goes Wrong
 
 - **Treating `Partial<T>` as a safe patch protocol.** A partial object says only that properties may be absent; it does not say how an update should interpret absence. Define patch semantics explicitly and validate before persistence.
 
@@ -244,6 +244,6 @@ No. They guide the TypeScript checker and are erased from emitted JavaScript. `R
 
 `Pick`/`Omit` versus runtime validation: static shape description versus runtime evidence. Use both at an external boundary: a utility type documents what the code expects, while validation and mapping establish that an unknown value really has that shape.
 
-## 8. 🧠 The Memory Hook
+## 8. 🧠 The Memory Hook — What Sticks
 
 Utility types are photocopiers for contracts: they make a compile-time view of an existing shape, but the original JavaScript object stays exactly as it was. Remember the verbs—`Partial` loosens, `Required` tightens, `Readonly` locks a view, `Pick` keeps, `Omit` removes, `Record` maps keys, `Exclude` removes union members, `Extract` keeps overlap, and function utilities inspect signatures. When the shape carries business meaning or crosses an untrusted boundary, give it a named contract and runtime validation instead of trusting a clever alias.
