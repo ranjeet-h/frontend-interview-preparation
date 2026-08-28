@@ -113,7 +113,7 @@ const lengths = mapValues(["Ada", "Linus"], (name) => name.length);
 // lengths: number[]
 ```
 
-Overloads make a search API pleasant when the return type depends on the call shape. The implementation uses a union internally, but callers see only the two supported forms.
+Overloads make a search API pleasant when the return type depends on the call shape. With no query, this API returns the complete `User[]`; with a query, it returns one matching `User` or `undefined`. A single `query?: string` signature would need a `User[] | User | undefined` return, forcing every caller to narrow a result that the call shape already tells us about.
 
 ```ts
 interface User {
@@ -126,17 +126,20 @@ const users: User[] = [
   { id: "u2", name: "Linus" },
 ];
 
-function searchUsers(query: string): User[];
-function searchUsers(query: string, limit: number): User[];
-function searchUsers(query: string, limit?: number): User[] {
-  const matches = users.filter((user) =>
+function searchUsers(): User[];
+function searchUsers(query: string): User | undefined;
+function searchUsers(query?: string): User[] | User | undefined {
+  if (query === undefined) {
+    return users;
+  }
+
+  return users.find((user) =>
     user.name.toLowerCase().includes(query.toLowerCase()),
   );
-  return limit === undefined ? matches : matches.slice(0, limit);
 }
 
-const allMatches = searchUsers("a");
-const firstMatch = searchUsers("a", 1);
+const allUsers = searchUsers(); // User[]
+const firstMatch = searchUsers("Ada"); // User | undefined
 ```
 
 When the input/output relationship is the same for every type, a generic is usually clearer than writing an overload for each type.
@@ -248,7 +251,7 @@ Both allow omission, but a default replaces `undefined` before the body runs, wh
 
 When a function value is assigned to a `void`-returning callback, TypeScript permits a value-returning function because the caller promises not to use the value. A function declaration explicitly annotated `(): void` cannot return a value. This distinction protects common APIs such as `forEach` while still enforcing a literal `void` implementation.
 
-## 6. The Traps — What Goes Wrong
+## 6. The Traps — What Goes Wrong in Production
 
 **Trap: using `Function` as a callback type.** It says almost nothing about parameters and makes calls return `any`. Write the actual parameter and return contract instead, or use `() => unknown` when the function will be stored but not called.
 
@@ -284,7 +287,7 @@ When a function value is assigned to a `void`-returning callback, TypeScript per
 
 **Compile-time checking vs runtime behavior.** TypeScript can reject an unsafe callback assignment or a missing argument before emit. It cannot prevent JavaScript from being called by an untyped consumer, cannot create overload dispatch at runtime, and cannot validate JSON. The emitted function still needs ordinary JavaScript branching and runtime validation where data is untrusted.
 
-## 8. 🧠 The Memory Hook — What Sticks
+## 8. 🧠 The Memory Hook
 
 A function type is an order form plus a receipt: parameters say what may enter, the return type says what comes out, and generics preserve the relationship between them. Overloads are multiple public forms for one implementation; unions are alternatives in one form; callbacks must be safe for every value the caller may hand them.
 
