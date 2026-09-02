@@ -6,6 +6,7 @@ The 100-question system design guide is organized so you can study foundations f
 
 | Chapter | Questions | What it covers |
 |---|---|---|
+| [Complete Study Guide](complete-study-guide.md) | Complete revision | Single-page fundamentals → networking → APIs/DB → caching → all trade-offs |
 | [Foundations](concepts.md) | 15 concepts | Proxies, scaling, messaging, auth, CAP, indexing, hashing |
 | [Easy problems](easy.md) | Q16–Q35 (20) | URL shortener, cache, auth, email, leaderboard, and similar |
 | [Medium problems](medium.md) | Q36–Q70 (35) | Instagram, Uber, payments, search, collaboration at product scale |

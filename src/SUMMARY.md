@@ -1112,6 +1112,7 @@
     - [Database Modeling Question Bank](full-stack/databases/modeling-management-question-bank.md)
   - [Cloud & DevOps](full-stack/cloud/index.md)
   - [System Design](full-stack/system-design/index.md)
+    - [Complete Study Guide](full-stack/system-design/complete-study-guide.md)
     - [Foundations](full-stack/system-design/concepts.md)
       - [API Gateway vs Load Balancer](full-stack/system-design/foundations/api-gateway-vs-load-balancer.md)
       - [Reverse Proxy vs Forward Proxy](full-stack/system-design/foundations/reverse-proxy-vs-forward-proxy.md)
