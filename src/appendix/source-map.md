@@ -57,6 +57,7 @@ Maps archived root files and CSV imports to their **canonical book chapters**. A
 | Book chapter | Canonical source | Notes |
 |---|---|---|
 | [Practical Questions (50 Interview Builds)](../react/practical-questions.md) | `src/react/practical-questions.md` | Curated beginner/intermediate/advanced React practical builds |
+| [Next.js interview track](../nextjs/index.md) | User-provided 180-question Next.js bank | Curated App Router-first track; version-sensitive claims defer to official Next.js documentation |
 
 ## `06-javascript-coding-DSA-problems.md` → DSA
 

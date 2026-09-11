@@ -279,6 +279,19 @@
 
 ---
 
+# Next.js
+
+- [Next.js](nextjs/index.md)
+  - [App Router Foundations](nextjs/app-router-foundations.md)
+  - [Rendering and Data Fetching](nextjs/rendering-and-data-fetching.md)
+  - [Server and Client Components](nextjs/server-and-client-components.md)
+  - [Navigation, Errors, and Metadata](nextjs/navigation-errors-and-metadata.md)
+  - [APIs, Server Actions, and Middleware](nextjs/apis-server-actions-and-middleware.md)
+  - [Security, Performance, and Production](nextjs/security-performance-and-production.md)
+  - [Interview Question Bank](nextjs/interview-question-bank.md)
+
+---
+
 # Full Stack Expansion
 
 - [Full Stack Expansion](full-stack/index.md)

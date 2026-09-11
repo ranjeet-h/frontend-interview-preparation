@@ -16,6 +16,7 @@ you want broader coverage.
 | [JavaScript](javascript/index.md) | Core JS theory, coding problems, output questions, polyfills | Ready |
 | [DSA](dsa/index.md) | Arrays, strings, objects, application problems, implementations | Ready |
 | [React](react/index.md) | Hooks, state, architecture, patterns, challenges | Ready |
+| [Next.js](nextjs/index.md) | App Router, rendering, data fetching, server/client boundaries, APIs, and production | Ready |
 | [Full Stack Expansion](full-stack/index.md) | Backend, databases, cloud, system design, AI/agents | Growing |
 | [Appendix](appendix/index.md) | Source map, original files, expansion notes | Ready |
 
