@@ -15,6 +15,15 @@ book:
     # BEGIN-GENERATED-CHAPTERS
     - index.md
     - study-system.md
+    - part: "Foundational Interview Guides"
+      chapters:
+        - 01-html-css-web-concepts.md
+        - 02-javascript-theory-concepts.md
+        - 03-javascript-coding-problems.md
+        - 04-react-theory-concepts.md
+        - 05-react-coding-challenges.md
+        - 06-javascript-coding-DSA-problems.md
+        - 100_System_Design_Interview_Questions_Complete_Guide.md
     - part: "Frontend Fundamentals"
       chapters:
         - frontend/index.md

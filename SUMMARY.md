@@ -5,6 +5,16 @@
 
 ---
 
+# Foundational Interview Guides
+
+- [HTML, CSS & Web Concepts](01-html-css-web-concepts.md)
+- [JavaScript Theory Concepts](02-javascript-theory-concepts.md)
+- [JavaScript Coding Problems](03-javascript-coding-problems.md)
+- [React Theory Concepts](04-react-theory-concepts.md)
+- [React Coding Challenges](05-react-coding-challenges.md)
+- [JavaScript Coding & DSA Problems](06-javascript-coding-DSA-problems.md)
+- [100 System Design Interview Questions](100_System_Design_Interview_Questions_Complete_Guide.md)
+
 # Frontend Fundamentals
 
 - [Frontend Fundamentals](frontend/index.md)

@@ -64,15 +64,24 @@ const resolveBookPath = (from, target) => {
   return null;
 };
 
+const fenceMarker = (line) => {
+  const match = /^(\s*)(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match) return null;
+  return {
+    char: match[2][0],
+    length: match[2].length,
+    info: match[3].trim(),
+  };
+};
+
 const markdownLinks = (text) => {
   const links = [];
   let fence = null;
   for (const line of text.split(/\r?\n/)) {
-    const marker = /^(\s*)(`{3,}|~{3,})/.exec(line);
+    const marker = fenceMarker(line);
     if (marker) {
-      const current = { char: marker[2][0], length: marker[2].length };
-      if (!fence) fence = current;
-      else if (current.char === fence.char && current.length >= fence.length) fence = null;
+      if (!fence) fence = marker;
+      else if (marker.char === fence.char && marker.length >= fence.length && !marker.info) fence = null;
       continue;
     }
     if (fence) continue;
@@ -111,11 +120,10 @@ for (const page of listed) {
 
   let fence = null;
   for (const line of text.split(/\r?\n/)) {
-    const marker = /^(\s*)(`{3,}|~{3,})/.exec(line);
+    const marker = fenceMarker(line);
     if (!marker) continue;
-    const current = { char: marker[2][0], length: marker[2].length };
-    if (!fence) fence = current;
-    else if (current.char === fence.char && current.length >= fence.length) fence = null;
+    if (!fence) fence = marker;
+    else if (marker.char === fence.char && marker.length >= fence.length && !marker.info) fence = null;
   }
   if (fence !== null) fail(`${page}: unbalanced fenced code block`);
 }

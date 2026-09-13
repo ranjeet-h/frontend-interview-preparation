@@ -100,6 +100,7 @@ These tags allow you to embed media directly into your web page.
 *   Other common attributes for both include **`autoplay`** (starts playing automatically, often blocked by browsers) and **`loop`** (repeats the media when it finishes).
 
 ---
+
 ## CSS
 
 ### 6. Explain the CSS Box Model.
