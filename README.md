@@ -1,153 +1,187 @@
-# Frontend Interview Preparation
+# Full Stack Interview Preparation Guide 🚀
 
-An open-source, long-form study book for frontend and full-stack interviews. It combines guided
-explanations, practical code examples, coding exercises, question banks, and system-design
-practice in one navigable book.
+A comprehensive interview study system for frontend, backend, databases, cloud, system design,
+and AI prep. The repository is structured so new domains can be added without reshaping the whole
+book.
 
-The book is authored by **Ranjeet Harishchandre** and is published as a static Quarto Book on
-[GitHub Pages](https://ranjeet-h.github.io/frontend-interview-preparation/).
+## 📚 Table of Contents
 
-## What is covered
+- [Overview](#overview)
+- [Repository Structure](#repository-structure)
+- [Topics Covered](#topics-covered)
+- [How to Use](#how-to-use)
+- [Study Path](#study-path)
+- [Contributing](#contributing)
+- [License](#license)
 
-- HTML, CSS, browser APIs, web performance, and security
-- JavaScript fundamentals, asynchronous behavior, browser internals, coding problems, and output questions
-- TypeScript concepts and interview questions
-- React architecture, hooks, state, performance, testing, and coding challenges
-- Next.js rendering, routing, server/client boundaries, and production concerns
-- Backend APIs, Node.js, Express, FastAPI, Python, authentication concepts, and testing
-- SQL, PostgreSQL, MySQL, MongoDB, SQLAlchemy, indexing, transactions, and data modeling
-- Cloud, DevOps, queues, observability, WebSockets, and full-stack integration
-- System-design foundations plus high-level and low-level interview designs
-- AI and agent concepts
+## 🎯 Overview
 
-Start with the rendered [study book](https://ranjeet-h.github.io/frontend-interview-preparation/) or open
-[`index.md`](index.md) locally.
+This repository is designed for developers preparing for technical interviews across frontend and
+full-stack roles. It contains:
 
-## Local development
+- **500+ Interview Questions** across the core frontend and JavaScript tracks
+- **Detailed Explanations** with code examples
+- **Coding Challenges** with solutions
+- **Best Practices** and performance optimization techniques
+- **Real-world Scenarios** and practical applications
+- **Planned expansion tracks** for backend, databases, cloud, system design, and AI agents
+- **A 100-question system design guide** split into navigable chapters
+- **CSV-backed question banks** for frontend and backend theory/coding practice
 
-The repository uses [Quarto](https://quarto.org/) for rendering and keeps every chapter as
-Markdown. Node.js is used only for the small build and verification scripts; the project has no
-runtime package dependencies.
+## 📁 Repository Structure
 
-```bash
-# Install the pinned project-local Quarto CLI when needed.
-npm run book:install
-
-# Verify navigation, links, includes, assets, and code fences.
-npm run book:check
-
-# Parse every chapter with Quarto's reader without rendering the book.
-npm run book:preflight
-
-# Render the complete HTML book into _site/.
-npm run build
-
-# Review the last build at http://localhost:4200.
-npm run serve
+```
+interview-qna/
+├── 01-html-css-web-concepts.md      # HTML5, CSS3, Web Vitals, Browser APIs
+├── 02-javascript-theory-concepts.md # JS Fundamentals, ES6+, Async Programming
+├── 03-javascript-coding-problems.md # JS Coding Challenges & Solutions
+├── 04-react-coding-challenges.md    # React Implementation Problems
+├── 05-react-theory-concepts.md      # React Core Concepts & Advanced Topics
+├── 100_System_Design_Interview_Questions_Complete_Guide.md # System design question bank
+├── Frontend_Questions.csv           # Frontend theory question bank source
+├── Frontend_Coding_Questions.csv    # Frontend coding question bank source
+├── Backend_Questions.csv            # Backend theory question bank source
+├── Backend_Coding_Questions.csv     # Backend coding question bank source
+├── src/full-stack/                  # Backend, database, cloud, system design, AI tracks
+└── README.md                        # This file
 ```
 
-`npm run dev` renders only the home page into an ignored `.quarto-preview/` directory and serves it;
-it does not trigger the 1,139-page build:
+## 🎓 Topics Covered
 
-```bash
-npm run dev
-```
+### 1. HTML, CSS & Web Concepts
+- **HTML5 Features**: Semantic elements, new form controls, media elements
+- **CSS Fundamentals**: Box model, specificity, Flexbox, Grid
+- **Web Performance**: Core Web Vitals, optimization strategies
+- **Browser APIs**: Storage, DOM manipulation, security
+- **Design Patterns**: Frontend architecture patterns
 
-Open `http://localhost:4200/index.html`. To inspect another chapter, pass its Markdown path:
+### 2. JavaScript Theory & Concepts
+- **Core Concepts**: Hoisting, closures, scope, `this` keyword
+- **ES6+ Features**: Arrow functions, destructuring, modules, async/await
+- **Asynchronous Programming**: Event loop, Promises, callbacks
+- **Prototypes & Inheritance**: Object-oriented patterns
+- **Advanced Topics**: Memory management, performance optimization
 
-```bash
-npm run dev -- full-stack/system-design/medium.md
-```
+### 3. JavaScript Coding Problems
+- **40 Essential Problems** for 4+ years experience
+- **Data Structure Manipulation**: Arrays, objects, strings
+- **Algorithm Implementation**: Sorting, searching, optimization
+- **Practical Scenarios**: Real-world problem-solving
+- **Performance Considerations**: Time/space complexity analysis
 
-Then open `http://localhost:4200/full-stack/system-design/medium.html`. Stop the server with
-`Ctrl-C`. The page is a targeted visual check; links to chapters that were not rendered in this
-preview will not be available until you run the full build.
+### 4. React Coding Challenges
+- **Custom Hooks**: Implementation and best practices
+- **Performance Optimization**: Memoization, code splitting
+- **State Management**: Local and global state patterns
+- **Component Architecture**: Reusable component design
+- **Advanced Patterns**: HOCs, render props, context optimization
 
-For active editing, render one changed page without rebuilding the whole book:
+### 5. React Theory & Concepts
+- **Core Concepts**: Virtual DOM, component lifecycle, JSX
+- **Hooks Deep Dive**: useState, useEffect, custom hooks
+- **State Management**: Context API, Redux, Zustand
+- **Performance**: React.memo, useMemo, useCallback
+- **Testing**: Jest, React Testing Library, mocking
 
-```bash
-npm run render:changed -- javascript/index.md
-```
+### 6. Full Stack Expansion
+- **Backend & APIs**: Node.js, Python, FastAPI, auth, API design
+- **Databases**: MongoDB, MySQL, PostgreSQL, data modeling, indexing
+- **Cloud & DevOps**: AWS, Azure, Google Cloud, CI/CD, deployment
+- **System Design**: scalable architecture, trade-offs, 100-question practice set
+- **AI & Agents**: agentic workflows, prompt design, retrieval, evaluation, Claude
+- **Question Banks**: CSV-imported frontend and backend theory/coding banks
 
-The mtime-based watcher can render changed Markdown pages automatically:
+## 🎯 How to Use
 
-```bash
-npm run watch
-```
+### For Interview Preparation
 
-## EPUB and PDF exports
+1. **Start with Theory**: Begin with the theory files (01, 02, 05) to build a strong foundation
+2. **Practice Coding**: Move to coding problems (03, 04) to apply your knowledge
+3. **Review & Repeat**: Revisit concepts you find challenging
+4. **Mock Interviews**: Use these questions to practice with peers
 
-EPUB and PDF generation is intentionally local-only. The GitHub Pages deployment publishes HTML only;
-large binary exports are not part of the static deployment.
+### For Self-Assessment
 
-```bash
-npm run exports
-```
+- **Beginner**: Focus on HTML/CSS and basic JavaScript concepts
+- **Intermediate**: Master JavaScript fundamentals and React basics
+- **Advanced**: Dive into performance optimization and advanced patterns
 
-The generated EPUB and Typst PDF are written to `_site/`. They are ignored by Git and can be
-shared separately when needed.
+### Study Tips
 
-## Repository layout
+- **Take Notes**: Create your own summaries of key concepts
+- **Code Along**: Implement solutions before reading the answers
+- **Time Yourself**: Practice answering questions within time limits
+- **Group Study**: Discuss concepts with other developers
 
-```text
-.
-├── _quarto.yml             # HTML book configuration
-├── _quarto-release.yml     # Local EPUB/PDF profile
-├── SUMMARY.md              # Ordered navigation source
-├── index.md                # Book home page
-├── frontend/               # Frontend fundamentals
-├── javascript/             # JavaScript concepts and exercises
-├── typescript/             # TypeScript track
-├── react/                  # React track
-├── nextjs/                 # Next.js track
-├── full-stack/             # Backend, databases, cloud, and system design
-├── dsa/                    # Data structures and algorithms
-├── appendix/               # Source map and project notes
-├── assets/                 # Self-hosted fonts, Mermaid, and page tools
-├── filters/                # Quarto Lua filters for Markdown compatibility
-├── styles/                 # Quarto theme and responsive reading styles
-└── scripts/                # Build, export, serving, checking, and watch tools
-```
+## 📖 Study Path
 
-The original source tree was under `src/`. It was moved to the Quarto project root so the rendered
-paths remain unchanged: `frontend/html.html` still renders as `frontend/html.html`, just as it did
-with mdBook.
+### Week 1-2: Foundation
+- [01-html-css-web-concepts.md](01-html-css-web-concepts.md)
+- Basic JavaScript concepts from [02-javascript-theory-concepts.md](02-javascript-theory-concepts.md)
 
-## Content and navigation policy
+### Week 3-4: JavaScript Mastery
+- Complete [02-javascript-theory-concepts.md](02-javascript-theory-concepts.md)
+- Practice problems from [03-javascript-coding-problems.md](03-javascript-coding-problems.md)
 
-`SUMMARY.md` is the human-edited source of truth for book order. Run `npm run book:sync-nav` after
-changing it; the command updates only the generated chapter block in `_quarto.yml`.
+### Week 5-6: React Fundamentals
+- [05-react-theory-concepts.md](05-react-theory-concepts.md) - Core concepts
+- Basic challenges from [04-react-coding-challenges.md](04-react-coding-challenges.md)
 
-Educational content is preserved as Markdown. Migration changes are limited to the structural
-move required by Quarto, rendering-compatible blank lines around standalone horizontal rules, and
-relative paths that must follow the move. The integrity checker and the migration comparison
-workflow guard against accidental content loss.
+### Week 7-8: Advanced React
+- Advanced topics from [05-react-theory-concepts.md](05-react-theory-concepts.md)
+- Complex challenges from [04-react-coding-challenges.md](04-react-coding-challenges.md)
 
-## Deployment
+### Future Expansion
 
-The repository deploys automatically to GitHub Pages through
-[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) whenever `master`
-changes. The workflow installs the pinned Quarto version, runs the same HTML build used locally,
-and publishes `_site/` as the Pages artifact.
+Move into the [Full Stack Expansion](src/full-stack/index.md) track when you're ready to add
+backend, cloud, system design, and AI interview depth.
 
-The build runs `book:preflight` before the full render. This catches Quarto/Pandoc parsing errors
-across all chapters early, so a malformed Markdown page cannot fail a long GitHub Actions render
-after hundreds of pages have already been processed.
+## 🤝 Contributing
 
-GitHub Pages must be enabled for the repository with **Settings → Pages → Source: GitHub Actions**.
-EPUB and PDF files are intentionally not deployed; generate them locally with `npm run exports`.
+We welcome contributions to improve this interview preparation guide!
 
-## Contributing
+### How to Contribute
 
-1. Fork the repository and create a focused branch.
-2. Add or improve a Markdown chapter and link new chapters from `SUMMARY.md`.
-3. Keep examples accurate, runnable where applicable, and useful for interview preparation.
-4. Run `npm run book:check`, `npm run build`, and `git diff --check`.
-5. Open a pull request with a short explanation of the learner outcome.
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/amazing-question`)
+3. **Add** your questions, answers, or improvements
+4. **Commit** your changes (`git commit -m 'Add amazing question'`)
+5. **Push** to the branch (`git push origin feature/amazing-question`)
+6. **Open** a Pull Request
 
-Please preserve existing questions, examples, criteria, and source-faithful details when improving
-an educational page.
+### Contribution Guidelines
 
-## Author
+- **Quality**: Ensure questions are relevant and well-explained
+- **Formatting**: Follow the existing markdown structure
+- **Code Examples**: Include working code examples
+- **Difficulty**: Indicate the target experience level
+- **Accuracy**: Verify all technical information
 
-**Ranjeet Harishchandre**
+### What We're Looking For
+
+- **New Questions**: Relevant interview questions not already covered
+- **Better Explanations**: Improved or alternative explanations
+- **Code Examples**: Additional practical examples
+- **Performance Tips**: Optimization strategies and best practices
+- **Real-world Scenarios**: Practical applications and use cases
+
+## 🙏 Acknowledgments
+
+- **Interviewers**: For asking challenging questions that push our knowledge
+- **Community**: For sharing knowledge and experiences
+- **Open Source**: For the tools and libraries that make frontend development possible
+
+## 📞 Support
+
+If you find this repository helpful, please:
+
+- ⭐ **Star** the repository
+- 🔄 **Share** with fellow developers
+- 💬 **Open issues** for questions or suggestions
+- 🚀 **Contribute** your own questions and answers
+
+---
+
+**Happy Coding & Good Luck with Your Interviews!** 🎉
+
+*Remember: The best preparation is consistent practice and understanding the fundamentals deeply.* 

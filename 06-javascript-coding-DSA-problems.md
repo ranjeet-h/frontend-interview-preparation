@@ -968,7 +968,6 @@ Template literals are a feature introduced in ES6 that provide a more powerful a
 In summary, template literals make code more readable, reduce errors from complex concatenation, and simplify the creation of multi-line strings, which is very common in frontend development for tasks like creating HTML templates.
 
 ---
-
 ### **Object-Related Questions**
 
 **33. Deep Clone an Object: Write a function to create a deep copy of a JavaScript object, handling nested objects and arrays.**
@@ -1469,7 +1468,6 @@ person.introduce(); // Output: I'm Zoe.
 ```
 
 ---
-
 ### **Frontend-Specific Application Problems**
 
 **45. Implement a Debounce Function: Write a debounce function from scratch, which is critical for performance in handling events like search input or window resizing.**
