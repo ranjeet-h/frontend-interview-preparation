@@ -36,6 +36,9 @@ npm run book:install
 # Verify navigation, links, includes, assets, and code fences.
 npm run book:check
 
+# Parse every chapter with Quarto's reader without rendering the book.
+npm run book:preflight
+
 # Render the complete HTML book into _site/.
 npm run build
 
@@ -126,6 +129,10 @@ The repository deploys automatically to GitHub Pages through
 [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml) whenever `master`
 changes. The workflow installs the pinned Quarto version, runs the same HTML build used locally,
 and publishes `_site/` as the Pages artifact.
+
+The build runs `book:preflight` before the full render. This catches Quarto/Pandoc parsing errors
+across all chapters early, so a malformed Markdown page cannot fail a long GitHub Actions render
+after hundreds of pages have already been processed.
 
 GitHub Pages must be enabled for the repository with **Settings → Pages → Source: GitHub Actions**.
 EPUB and PDF files are intentionally not deployed; generate them locally with `npm run exports`.

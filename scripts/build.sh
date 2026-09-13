@@ -7,9 +7,10 @@ cd "$ROOT"
 
 node scripts/sync-nav.mjs
 node scripts/check.mjs
+QUARTO="$(bash scripts/ensure-quarto.sh)"
+node scripts/preflight.mjs --quarto "$QUARTO"
 rm -rf "$ROOT/_site"
 
-QUARTO="$(bash scripts/ensure-quarto.sh)"
 "$QUARTO" render --to html
 
 if [ -f "$ROOT/_site/search.json" ]; then

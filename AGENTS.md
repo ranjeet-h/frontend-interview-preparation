@@ -15,6 +15,7 @@ Before describing a migration or content change as complete, run:
 
 ```bash
 npm run book:check
+node scripts/preflight.mjs
 git diff --check
 npm run build
 ```

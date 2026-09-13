@@ -16,6 +16,7 @@
     "clean": "bash scripts/clean.sh",
     "book:install": "bash scripts/install-quarto.sh",
     "book:sync-nav": "node scripts/sync-nav.mjs",
-    "book:check": "node scripts/check.mjs"
+    "book:check": "node scripts/check.mjs",
+    "book:preflight": "node scripts/preflight.mjs"
   }
 }
