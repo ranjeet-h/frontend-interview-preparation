@@ -59,6 +59,7 @@ flowchart TD
 | 70 | [Design Distributed Search Engine](#70-design-distributed-search-engine) |
 
 ---
+
 ### 36. **Design Instagram**
 
 **Why interviewers ask** — Tests whether you can split a social product into read-heavy feeds, write-heavy media uploads, and real-time engagement without one path blocking the other.

@@ -1,7 +1,7 @@
 # JavaScript Polyfills
 
 > For implementation challenges beyond polyfills → [DSA Implementations](../dsa/implementations.md).
-> Canonical Promise theory → [Core Concepts](concepts/promises.md).
+> Canonical Promise theory → [Core Concepts](concepts/promise-states.md).
 
 Polyfill questions are not really about recreating the standard library from memory. They test whether you can recover an API's contract, identify the runtime behavior hidden behind the friendly method name, and implement only what JavaScript can actually control.
 

@@ -321,6 +321,7 @@ async def trigger_server_bug():
     # Simulates an unhandled zero division or unhandled library crash
     result = 100 / 0
     return {"result": result}
+```
 
 
 ## 5. The Interview Questions — All of Them, Done Properly

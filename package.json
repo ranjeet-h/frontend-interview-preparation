@@ -1,0 +1,21 @@
+{
+  "name": "frontend-interview-preparation",
+  "private": true,
+  "description": "Full Stack Interview Study Book rendered with Quarto",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "build": "bash scripts/build.sh",
+    "exports": "bash scripts/exports.sh",
+    "serve": "node scripts/serve.mjs",
+    "watch": "node scripts/watch.mjs",
+    "render:changed": "node scripts/render-changed.mjs",
+    "clean": "bash scripts/clean.sh",
+    "book:install": "bash scripts/install-quarto.sh",
+    "book:sync-nav": "node scripts/sync-nav.mjs",
+    "book:check": "node scripts/check.mjs"
+  }
+}

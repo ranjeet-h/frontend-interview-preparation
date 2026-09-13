@@ -28,8 +28,8 @@ same explanation in multiple places.
 
 ## Dedicated database expansion pages
 
-- [SQL Concept Pages](databases/sql/index.md)
-- [SQL Query Practice Pages](databases/sql-query-practice/index.md)
-- [MySQL Concept Pages](databases/mysql/index.md)
-- [PostgreSQL Concept Pages](databases/postgresql/index.md)
-- [MongoDB Concept Pages](databases/mongodb/index.md)
+- [SQL Concept Pages](sql/index.md)
+- [SQL Query Practice Pages](sql-query-practice/index.md)
+- [MySQL Concept Pages](mysql/index.md)
+- [PostgreSQL Concept Pages](postgresql/index.md)
+- [MongoDB Concept Pages](mongodb/index.md)
