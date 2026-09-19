@@ -88,7 +88,7 @@ The `Map` example is production-relevant: caches, registries, subscription manag
 
 Here is a complete React example. It can be placed in a standard React + TypeScript application. The child is memoized so the effect of prop identity is observable in the console.
 
-```tsx
+```ts
 import { memo, useCallback, useMemo, useState } from "react";
 
 type SearchOptions = {
@@ -138,7 +138,7 @@ Typing changes `SearchPanel`’s state and therefore re-renders the parent. Beca
 
 If the value depends on render data, include that data rather than forcing an empty dependency list:
 
-```tsx
+```ts
 import { useCallback, useMemo, useState } from "react";
 
 type Sort = "name" | "updated";
@@ -216,7 +216,7 @@ The first trap is confusing equal contents with equal identity. This fails in `M
 
 The second trap is wrapping an unstable value in another unstable value. This does not help:
 
-```tsx
+```ts
 const options = { pageSize: 20 };
 const childProps = useMemo(() => ({ options }), [options]);
 ```

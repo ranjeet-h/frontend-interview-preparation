@@ -50,7 +50,7 @@ That loop is infinite only when the effect keeps producing a changed state value
 
 React compares dependency-array entries with `Object.is`, one position at a time. Primitives such as strings and numbers usually remain equal when their value is unchanged. Objects, arrays, and functions are compared by reference. This creates a common loop:
 
-```tsx
+```ts
 const options = { query, limit: 20 };
 
 useEffect(() => {
@@ -68,7 +68,7 @@ Strict Mode in development may mount, run effects, clean them up, and mount agai
 
 The following is a complete component for a Vite React TypeScript app. Its fake request is intentionally delayed so the example runs without a backend. A new `customerId` aborts the old request, and the effect depends on the primitive ID rather than an object made during render.
 
-```tsx
+```ts
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -154,7 +154,7 @@ The reset calls inside the effect are safe here because the effect runs only whe
 
 Here is the derived-value version. It has no effect because `visibleItems` is not independent state; it is a direct consequence of the current inputs.
 
-```tsx
+```ts
 type Item = { id: string; name: string };
 
 function ItemList({ items, searchTerm }: { items: Item[]; searchTerm: string }) {
@@ -173,7 +173,7 @@ function ItemList({ items, searchTerm }: { items: Item[]; searchTerm: string }) 
 
 For an expensive calculation, `useMemo` may reduce repeated work, but it does not turn a state loop into a correct design. This complete component keeps the inputs concrete and defines the filtering work locally. The dependency list must still include the values used by the calculation:
 
-```tsx
+```ts
 import { useMemo, useState } from "react";
 
 type Item = { id: string; name: string };

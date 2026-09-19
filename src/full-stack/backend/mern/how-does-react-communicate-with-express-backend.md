@@ -112,7 +112,7 @@ module.exports = router;
 
 **React hook — one fetch, shared cache**
 
-```tsx
+```ts
 // client/src/api/profile.ts
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/apiClient";
@@ -131,7 +131,7 @@ export function useProfile() {
 
 **Mutation with cache invalidation**
 
-```tsx
+```ts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/apiClient";
 

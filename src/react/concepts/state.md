@@ -44,7 +44,7 @@ The following are contextual TSX components. Each is self-contained at the compo
 
 **Snapshot closures and functional updaters**
 
-```tsx
+```ts
 import { useState } from 'react';
 
 export function CounterBatchDemo() {
@@ -84,7 +84,7 @@ After clicking the direct button once, the count increases from `0` to `1`, beca
 
 **Immutable object and array updates**
 
-```tsx
+```ts
 import { useState } from 'react';
 
 type Task = {
@@ -138,7 +138,7 @@ export function TaskList() {
 
 **Derived values belong in render**
 
-```tsx
+```ts
 import { useState } from 'react';
 
 type Item = { id: string; name: string; price: number };
@@ -168,7 +168,7 @@ There is one source of truth for the editable fact, `discountCode`. The totals a
 
 An Effect is for making a committed React render agree with something React does not own: a browser subscription, timer, network connection, media element, or third-party widget. Its setup runs after commit, and its cleanup must undo the resource created by that setup before the dependencies change or the component unmounts. In development Strict Mode, React can test this contract with setup → cleanup → setup, so cleanup should remove the exact listener, cancel the exact timer, or disconnect the exact resource that setup created.
 
-```tsx
+```ts
 import { useEffect, useState } from 'react';
 
 // Runnable inside any React + TypeScript app rendered in a browser.

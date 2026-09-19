@@ -61,7 +61,7 @@ Historically, libraries used an `as` prop (`<Button as="a" href="/login">` or `<
 
 The modern industry standard is the **`asChild` (Slot) pattern**, popularized by Radix UI. Instead of creating a wrapper DOM element or dynamically instantiating a component, `<Button asChild>` uses a `Slot` utility that clones its immediate JSX child and merges the button's CSS classes, event handlers, ARIA attributes, and refs directly onto that child:
 
-```tsx
+```ts
 <Button asChild variant="secondary">
   <Link href="/dashboard">Go to Dashboard</Link>
 </Button>
@@ -73,7 +73,7 @@ This renders a single clean `<a>` tag with full button styling and keyboard beha
 
 When a component has multiple visual pieces (like a Modal with a header, body, close button, and footer), passing all content through a giant configuration object creates "Configuration Hell":
 
-```tsx
+```ts
 // Anti-pattern: Configuration Hell
 <Modal 
   title="Delete Project" 
@@ -89,7 +89,7 @@ The moment a team needs the header icon to sit below the title or wants a custom
 
 The solution is **Compound Components**. Break the component into coordinated sub-components that share state via React Context:
 
-```tsx
+```ts
 // Pattern: Inversion of Control with Compound Components
 <Dialog.Root open={isOpen} onOpenChange={setIsOpen}>
   <Dialog.Trigger asChild>
@@ -129,7 +129,7 @@ Here is a complete, production-grade implementation of a polymorphic, accessible
 
 **Example 1: Production-Grade Polymorphic Button with `cva` and `asChild`**
 
-```tsx
+```ts
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { clsx, type ClassValue } from "clsx";
@@ -245,7 +245,7 @@ Button.displayName = "Button";
 
 **Example 2: Compound Modal with Context and Keyboard Accessibility**
 
-```tsx
+```ts
 import * as React from "react";
 
 interface DialogContextValue {
@@ -458,7 +458,7 @@ Developers often see two cards on different pages that look identical today (sam
 
 Adding a boolean flag for every new visual or behavioral twist:
 
-```tsx
+```ts
 // The Mistake: Conflicting booleans
 <Button isPrimary isDanger isSmall isLarge isSubmit />
 ```
@@ -484,7 +484,7 @@ Writing a custom button that only accepts `{ label, onClick }` and renders `<but
 
 Embedding analytics tracking or API fetching directly inside shared UI primitives:
 
-```tsx
+```ts
 // The Mistake: Domain coupling
 function Modal({ children }) {
   useEffect(() => {

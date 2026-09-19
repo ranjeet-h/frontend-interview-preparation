@@ -59,7 +59,7 @@ Because uncontrolled inputs live in the native DOM, they integrate seamlessly wi
 **Example 1: Full Uncontrolled Form with Native `FormData` and React 19 Actions**
 This pattern handles dozens of inputs, checkboxes, and file uploads with zero state overhead.
 
-```tsx
+```ts
 import React from 'react';
 
 export function RegistrationForm() {
@@ -126,7 +126,7 @@ export function RegistrationForm() {
 **Example 2: Imperative DOM Access with `useRef` and File Reset**
 When you need programmatic focus management, direct measurements, or custom file reset logic, `useRef` gives you direct access to the DOM node.
 
-```tsx
+```ts
 import React, { useRef } from 'react';
 
 export function FileUploaderWithReset() {

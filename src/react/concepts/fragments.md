@@ -4,7 +4,7 @@
 
 JSX expressions need one returned root, but many UI components naturally produce several sibling elements. The old workaround was an extra `<div>`:
 
-```tsx
+```ts
 function NameAndEmail() {
   return (
     <div>
@@ -33,7 +33,7 @@ In TSX, the short syntax `<>...</>` is JSX syntax for a Fragment. Depending on t
 
 The explicit form is equivalent in behavior:
 
-```tsx
+```ts
 import { Fragment } from "react";
 
 function Header() {
@@ -50,14 +50,14 @@ React represents the group in its internal tree, commonly described as a Fragmen
 
 The short syntax accepts no attributes. In particular, this is invalid TSX:
 
-```tsx
+```ts
 // Invalid: the shorthand Fragment cannot receive key, className, ref, or any other prop.
 // <>...</> cannot be written with an attribute.
 ```
 
 When a Fragment must be keyed, use the explicit form. A key belongs on the Fragment group, not on only its first child:
 
-```tsx
+```ts
 import { Fragment } from "react";
 
 type Product = { id: string; name: string; price: number };
@@ -93,7 +93,7 @@ Strict Mode and concurrent rendering make render purity important. In developmen
 
 **Example 1: Direct grid children**
 
-```tsx
+```ts
 type Stats = { followers: number; following: number; repositories: number };
 
 function UserStats({ followers, following, repositories }: Stats) {
@@ -119,7 +119,7 @@ If `.stats-grid` is a grid container, the three `article` elements are the relev
 
 **Example 2: Valid table structure**
 
-```tsx
+```ts
 type Revenue = { label: string; q1: number; q2: number };
 
 function RevenueCells({ q1, q2 }: Pick<Revenue, "q1" | "q2">) {
@@ -158,7 +158,7 @@ export function RevenueTable({ rows }: { rows: Revenue[] }) {
 
 **Example 3: Keyed definition-list groups**
 
-```tsx
+```ts
 import { Fragment } from "react";
 
 type GlossaryItem = { id: string; term: string; definition: string };
@@ -181,7 +181,7 @@ The explicit Fragment is necessary because the mapped expression produces two si
 
 **Example 4: A keyed Fragment can intentionally reset descendants**
 
-```tsx
+```ts
 import { Fragment, useState } from "react";
 
 function DraftEditor({ documentId }: { documentId: string }) {
@@ -235,7 +235,7 @@ When `documentId` changes, the keyed Fragment represents a new group, so the edi
 
 **Trap 2: Keying the wrong node.** In a map where each item returns multiple siblings, this does not key the complete group:
 
-```tsx
+```ts
 type Item = { id: string; title: string; description: string };
 
 const items: Item[] = [

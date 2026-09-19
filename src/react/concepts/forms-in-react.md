@@ -74,7 +74,7 @@ To build a resilient multi-step form:
 
 This example demonstrates an accessible, high-performance form using uncontrolled ref registration, schema validation, touched-state error handling, and server error mapping.
 
-```tsx
+```ts
 import React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -258,7 +258,7 @@ export function RegistrationForm() {
 
 This example showcases native form handling without third-party form libraries, leveraging native `FormData`, React 19 action hooks, and zero keystroke re-renders.
 
-```tsx
+```ts
 import React, { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 

@@ -31,7 +31,7 @@ Submission is a one-way handoff. The counter disables the handoff while the requ
 
 A controlled input has a defined React value and an event that updates the same owner:
 
-```tsx
+```ts
 const [email, setEmail] = useState("");
 
 <input
@@ -44,7 +44,7 @@ React is the source of truth. This is useful when the UI must immediately derive
 
 An uncontrolled input lets the DOM own the live value. `defaultValue` sets its initial value, while `value` would take control. On submit, read the current values through the form event:
 
-```tsx
+```ts
 function SearchForm() {
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -121,7 +121,7 @@ File inputs are special: their value cannot be controlled by setting a string in
 
 This self-contained TypeScript React example uses controlled text and checkbox fields because it needs derived validation and explicit ownership. It demonstrates touched state, a form-level server error, field error mapping, reset-after-success, accessibility connections, and both a handler guard and a disabled button for duplicate-submit protection. The API function is injected so the component remains runnable with a fake implementation in a test or demo.
 
-```tsx
+```ts
 import { useState } from "react";
 
 type Values = { email: string; password: string; remember: boolean };

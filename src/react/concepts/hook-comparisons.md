@@ -43,7 +43,7 @@ Dependencies also control freshness. A callback created during a render closes o
 
 Inside a component that has declared `const [count, setCount] = useState(0)`, the two update forms differ like this:
 
-```tsx
+```ts
 setCount(count + 1);                 // reads this render's `count`
 setCount((current) => current + 1);  // React supplies the current queued value
 ```
@@ -58,7 +58,7 @@ A custom hook is not another storage mechanism. It is a function that composes h
 
 The following TypeScript example assumes React 18 or newer in a browser-based React application. It deliberately demonstrates `useState`, `useReducer`, `useRef`, `useMemo`, and `useCallback`; it does not demonstrate `useContext` or `useEffect`. Those two hooks are shown and labelled in the separate examples below, so the coverage claim stays accurate.
 
-```tsx
+```ts
 import { memo, useCallback, useMemo, useReducer, useRef, useState } from "react";
 
 type CartItem = { id: string; name: string; price: number };
@@ -148,7 +148,7 @@ The callback above has an empty dependency list safely because it dispatches a f
 
 For a timer that must be cleaned up on unmount, the ref and effect belong together. This second example assumes the same browser React setup and demonstrates the production boundary explicitly. The callback ref keeps the pending timer on the stable subscription while still calling the newest `onExpire`; the delay dependency restarts an active timer with the remaining time when `delayMs` changes:
 
-```tsx
+```ts
 import { useEffect, useRef } from "react";
 
 export function useUndoWindow(onExpire: () => void, delayMs = 5000) {
@@ -195,7 +195,7 @@ Changing `onExpire` does not restart the timer; the ref deliberately makes the c
 
 **useContext example — provider owns the state, consumer reads it:**
 
-```tsx
+```ts
 import { createContext, useContext, useState } from "react";
 
 const ThemeContext = createContext<"light" | "dark">("light");
@@ -296,7 +296,7 @@ A custom hook is a reusable composition of hooks and behavior, not shared state 
 
 The first trap is putting visible state in a ref:
 
-```tsx
+```ts
 const secondsRef = useRef(0);
 
 function tick() {
@@ -314,7 +314,7 @@ Memoizing everything is also a performance trap. `useMemo` and `useCallback` ret
 
 An empty dependency list is not a freshness instruction. This code has a stable but stale callback if `userId` changes:
 
-```tsx
+```ts
 const saveCurrentUser = useCallback(() => save(userId), []);
 ```
 
@@ -322,7 +322,7 @@ The fix is normally `[userId]`, or a redesign that passes the ID as an argument 
 
 A related identity trap is memoizing an object while forgetting one of its inputs:
 
-```tsx
+```ts
 const options = useMemo(() => ({ userId, sort }), [userId]);
 ```
 

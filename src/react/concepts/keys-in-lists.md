@@ -93,7 +93,7 @@ Example 1: The Index Key Bug vs Stable Key Fix
 
 Runtime/context: React 18+ in a browser client component, using TypeScript with JSX in a `.tsx` file. The example assumes the standard React DOM renderer and `crypto.randomUUID()` support.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 interface Todo {
@@ -175,7 +175,7 @@ Example 2: The Key-Based Reset Pattern for Standalone Components
 
 Runtime/context: React 18+ in a browser client component, using TypeScript with JSX in a `.tsx` file and the standard React DOM renderer.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 interface CommentEditorProps {
@@ -238,7 +238,7 @@ Example 3: Fragment Keys in Definition Lists
 
 Runtime/context: React 18+ in a browser client component, using TypeScript with JSX in a `.tsx` file and the standard React DOM renderer.
 
-```tsx
+```ts
 import React from "react";
 
 interface GlossaryItem {
@@ -359,7 +359,7 @@ To provide a key to a fragment, you must import React and use the explicit synta
 
 Runtime/context: React 18+ with TypeScript and JSX in a `.tsx` file; this complete example defines the item type, component props, and containing component.
 
-  ```tsx
+  ```ts
   import React from "react";
 
   interface ListItemData {

@@ -33,7 +33,7 @@ The line cook (the child component) takes this ticket (props) and prepares the m
 **From JSX to component invocation.**
 When you write JSX in your component:
 
-```tsx
+```ts
 <UserProfileCard username="alex99" role="admin" isActive={true} />
 ```
 
@@ -90,7 +90,7 @@ The callback function executes inside the parent's lexical scope, allowing the p
 **Modern default props versus legacy `defaultProps`.**
 In modern functional components, default prop values are handled directly through JavaScript ES6 object destructuring default values:
 
-```tsx
+```ts
 import type { ReactNode } from 'react';
 
 interface ButtonProps {
@@ -128,7 +128,7 @@ If a parent creates a new object literal (`style={{ color: 'red' }}`) or an inli
 
 Here is a production-grade task item card showing typed props, default parameters, and child-to-parent callback events:
 
-```tsx
+```ts
 import React from 'react';
 
 // 1. Define a strict contract for all data and callbacks this component accepts
@@ -188,7 +188,7 @@ export function TaskItem({
 
 A common prop design mistake is having optional props that only make sense in certain combinations (e.g., a modal that takes `errorMessage` when `variant="error"` but shouldn't allow it when `variant="success"`). TypeScript discriminated unions let you create impossible states at compile time:
 
-```tsx
+```ts
 import React from 'react';
 
 // Discriminated union: variant determines which specific props are valid
@@ -232,7 +232,7 @@ export function Banner(props: BannerProps) {
 
 Instead of passing 8 different configuration props down 5 levels just to feed a deeply nested button, pass components directly as `children`:
 
-```tsx
+```ts
 import React, { ReactNode } from 'react';
 
 interface DialogProps {
@@ -287,7 +287,7 @@ export function DeleteAccountFlow() {
 
 Each render creates its own handler function. That handler closes over the props and state values from the render that created it; a later render does not rewrite the old closure:
 
-```tsx
+```ts
 import { useState } from 'react';
 
 export function RenderSnapshot() {
@@ -372,7 +372,7 @@ To preserve memoization, wrap functions in `useCallback` and objects/arrays in `
 `defaultProps` is a static property attached to component functions (`Button.defaultProps = { variant: 'primary' }`). In React versions that support it for function components, missing or `undefined` props receive the default, while an explicit `null` does not. React 19 removed function-component `defaultProps`; class components continue to support it.
 
 ES6 default parameter syntax uses native JavaScript destructuring right in the function signature:
-```tsx
+```ts
 interface ButtonProps {
   variant?: string;
   size?: string;
@@ -389,7 +389,7 @@ For current function components, use the standard JavaScript parameter default s
 
 In almost all cases, `children` should be typed as `React.ReactNode`:
 
-```tsx
+```ts
 import type { ReactNode } from 'react';
 
 interface CardProps {
@@ -417,7 +417,7 @@ Spreading props is risky for three main reasons:
 **Trap 1: copying props into state creates stale derived state.**
 A widespread antipattern is initializing component state directly from a prop and expecting that state to update when the parent passes a new prop:
 
-```tsx
+```ts
 import { useState } from 'react';
 
 // ❌ WRONG: State is only initialized once on component mount!
@@ -441,7 +441,7 @@ function UserEmailEditor({ initialEmail }: { initialEmail: string }) {
 **Trap 2: mutating nested prop objects in place.**
 When receiving complex data structures, developers sometimes mutate nested properties before rendering or in event handlers:
 
-```tsx
+```ts
 interface FilterConfig {
   activeFilters: Record<string, boolean>;
 }
@@ -467,7 +467,7 @@ function FilterList({ filterConfig, onChange }: FilterListProps) {
 
 **Fix excerpt (inside the component's `handleToggle`):**
 
-```tsx
+```ts
 // ✅ CORRECT: Create a fresh object with updated properties
 const handleToggle = (key: string) => {
   const updatedFilters = {
@@ -486,7 +486,7 @@ const handleToggle = (key: string) => {
 **Trap 3: breaking memoization with new references.**
 Wrapping a child component in `React.memo` is completely ineffective if the parent component passes unstable object or function references:
 
-```tsx
+```ts
 import { memo, useState } from 'react';
 
 type UserBadgeProps = {
@@ -520,7 +520,7 @@ function ParentDashboard() {
 
 **The Fix:** Stabilize reference identities with `useMemo`, `useCallback`, or module-level constants:
 
-```tsx
+```ts
 import { memo, useCallback, useState } from 'react';
 
 type UserBadgeProps = {
@@ -556,7 +556,7 @@ function ParentDashboard() {
 **Trap 4: spreading unknown props into native HTML elements.**
 When building custom UI wrapper components, spreading `...rest` props onto raw HTML nodes often leaks custom properties into the DOM:
 
-```tsx
+```ts
 import type { ButtonHTMLAttributes } from 'react';
 
 interface CustomButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -577,7 +577,7 @@ function BadButton({ isLoading, variant, ...rest }: CustomButtonProps) {
 
 **The Fix:** Destructure all custom component props explicitly, so only valid HTML attributes remain in the `rest` object before spreading onto the DOM node:
 
-```tsx
+```ts
 import type { ButtonHTMLAttributes } from 'react';
 
 interface CustomButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

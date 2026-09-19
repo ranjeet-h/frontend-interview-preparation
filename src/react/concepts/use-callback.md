@@ -44,7 +44,7 @@ console.log(Object.is(-0, 0)); // false
 
 The dependency list must include reactive values read by the callback: props, state, and variables declared in the component that can change between renders. Stable state setter functions supplied by React do not need to be listed. A functional state update often removes a state dependency because React supplies the latest pending value to the updater:
 
-```tsx
+```ts
 import { useCallback, useState } from "react";
 
 export function Counter() {
@@ -76,7 +76,7 @@ The second callback does not read `count` from its closure. It asks React to app
 
 TypeScript checks the callback's parameter and return types, while React supplies the hook's runtime behavior. Let inference handle simple callbacks when the surrounding types are clear, but annotate parameters at the boundary where inference cannot help and use an explicit function type when the callback is part of a component API:
 
-```tsx
+```ts
 import { useCallback, useState } from "react";
 import type { ChangeEvent } from "react";
 
@@ -114,7 +114,7 @@ Server Components cannot call interactive hooks such as `useCallback`; put that 
 
 This example is self-contained TSX. Toggling the theme rerenders `TaskBoard`, but the memoized rows can skip because their task objects and callback props remain stable. Toggling a task changes only the affected task object; the other rows keep their previous object references.
 
-```tsx
+```ts
 import { memo, useCallback, useState } from "react";
 
 type Task = { id: string; title: string; done: boolean };
@@ -171,7 +171,7 @@ export function TaskBoard() {
 
 The first component intentionally demonstrates the bug: `message` is read but omitted, so the function created by the first render is reused. The corrected component includes the value. The callback identity now changes when the message changes, which is the correct trade-off.
 
-```tsx
+```ts
 import { useCallback, useState } from "react";
 
 export function HonestSaveButton() {
@@ -209,7 +209,7 @@ export function StaleSaveButtonForContrast() {
 
 The direct `useEffect` call is isolated inside a custom hook because synchronization is the hook's responsibility. The component passes a stable callback so the subscription does not restart when unrelated component state changes. The cleanup is still essential; stability is not cleanup.
 
-```tsx
+```ts
 import { useCallback, useEffect, useState } from "react";
 
 function useRoomSubscription(roomId: string, onMessage: (text: string) => void) {
@@ -243,7 +243,7 @@ export function RoomPanel() {
 
 `useRef` is sometimes the right companion when an external callback must keep one identity but read mutable latest data. That is a different semantic choice from `useCallback`: the ref deliberately opts out of render-snapshot capture. Encapsulate that policy and document it.
 
-```tsx
+```ts
 import { useCallback, useRef, useState } from "react";
 
 export function StableLatestLogger() {
@@ -325,7 +325,7 @@ The wrong assumption is that an empty dependency list means “this callback sho
 
 This looks optimized but still creates new references:
 
-```tsx
+```ts
 import { memo, useCallback, useState } from "react";
 
 type Row = { id: string; open: boolean };

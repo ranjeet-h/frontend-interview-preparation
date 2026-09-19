@@ -43,14 +43,14 @@ The server is still involved on a hard load. A request for `/app/users/42` must 
 
 Route parameters are named parts of the path:
 
-```tsx
+```ts
 // /users/42
 { path: "users/:userId", element: <UserDetails /> }
 ```
 
 `useParams()` reads `userId`, which is normally required to locate a particular resource. Query parameters follow `?` and can be repeated or optional:
 
-```tsx
+```ts
 // /users?status=active&page=2
 const [searchParams, setSearchParams] = useSearchParams();
 const status = searchParams.get("status") ?? "all";
@@ -65,7 +65,7 @@ URL state is different from ephemeral component state. A selected tab, filter, s
 
 Nested routes let a stable parent own common UI and let children own only the changing area:
 
-```tsx
+```ts
 function AppLayout() {
   return (
     <>
@@ -90,7 +90,7 @@ Not-found handling has two cases. A route with `path: "*"` catches a URL for whi
 
 A protected route can decide whether to render a private screen:
 
-```tsx
+```ts
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const auth = useAuth();
 
@@ -122,7 +122,7 @@ The router listens to `popstate` so Back and Forward cause the UI to match the r
 
 This is a compact React Router 7.x Data-mode example. It uses a parent layout, an auth loader, a dynamic resource route, query state, lazy modules, a replacement redirect, a resource-level 404, and a catch-all page.
 
-```tsx
+```ts
 import {
   createBrowserRouter,
   isRouteErrorResponse,

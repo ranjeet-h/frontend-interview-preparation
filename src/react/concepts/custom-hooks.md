@@ -34,7 +34,7 @@ Hooks that synchronize with an external system still need correct lifecycle beha
 
 The following file assumes React 18+ and TypeScript in a browser build such as Vite. It is complete enough to paste into `src/SearchPage.tsx`; the `searchProducts` function is an injected production boundary, so the hook does not own network caching.
 
-```tsx
+```ts
 import { useEffect, useMemo, useState } from "react";
 
 type Product = { id: string; name: string };
@@ -125,7 +125,7 @@ The debounce hook owns only time. The search hook owns request lifecycle and abo
 
 Here is a second complete hook that demonstrates composition without shared state. It uses the browser's external-store contract, so React can subscribe and read snapshots safely:
 
-```tsx
+```ts
 import { useState, useSyncExternalStore } from "react";
 
 function subscribeToOnlineStatus(onChange: () => void) {
@@ -208,7 +208,7 @@ Assuming a custom hook is a singleton causes subtle product bugs. Two `useDraft(
 
 Putting a condition around a hook is another common failure:
 
-```tsx
+```ts
 // Wrong: the hook sequence changes when enabled changes.
 if (enabled) {
   useOnlineStatus();

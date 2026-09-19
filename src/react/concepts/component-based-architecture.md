@@ -56,7 +56,7 @@ Context is another explicit ownership boundary. `createContext` creates a channe
 
 The following is a self-contained TSX example for a Vite-style React app. It shows a domain-agnostic button, a structural card with explicit slots, and a domain component that owns the user action state. It uses inline styles so it does not depend on a CSS framework.
 
-```tsx
+```ts
 import { useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -182,7 +182,7 @@ The important boundary is not the number of files. `Button` owns generic button 
 
 This small example makes the render-snapshot rule visible. Each click handler belongs to the render that created it, so it logs the `count` captured by that snapshot. The functional update is still the safe way to calculate the next state when several updates may be queued.
 
-```tsx
+```ts
 import { useState } from 'react';
 
 export function SnapshotDemo() {
@@ -201,7 +201,7 @@ export function SnapshotDemo() {
 
 The following examples show the two boundaries that are easy to confuse with render logic. The event handler performs the user-requested action immediately. The effect synchronizes the committed `title` value with the browser's document after the render that displays it.
 
-```tsx
+```ts
 import { useEffect, useState } from 'react';
 
 export function DocumentTitleDemo() {
@@ -229,7 +229,7 @@ export function DocumentTitleDemo() {
 
 Context moves ownership to the Provider and makes the consumer's dependency explicit at the point of use. This focused example has separate state and dispatch contexts: a badge subscribes to the changing state, while the button subscribes only to the stable dispatch function. A state update rerenders the badge, but it does not notify the dispatch-only consumer because the dispatch context value remains the same reference.
 
-```tsx
+```ts
 import {
   createContext,
   useContext,
@@ -326,7 +326,7 @@ Keys describe identity among siblings. A stable record ID lets React preserve th
 
 **Trap: Business logic inside a primitive.** This is a misleading “reusable” button:
 
-```tsx
+```ts
 // Wrong boundary: this generic-looking control knows auth, API, and item identity.
 function DeleteButton({ itemId }: { itemId: string }) {
   const { user } = useAuth();

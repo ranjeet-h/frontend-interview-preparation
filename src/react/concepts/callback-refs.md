@@ -6,7 +6,7 @@ React normally lets you describe *what* should be rendered. A ref is the deliber
 
 Suppose an information panel starts closed:
 
-```tsx
+```ts
 useEffect(() => {
   const panel = panelRef.current;
   if (panel) {
@@ -19,7 +19,7 @@ On the first render there is no panel, so the object ref is `null`. Later, openi
 
 A callback ref solves the notification problem. Instead of giving React a mutable container, give it a function:
 
-```tsx
+```ts
 const setPanelNode = (node: HTMLDivElement | null) => {
   if (node) {
     // The node has just been attached for this ref.
@@ -48,7 +48,7 @@ This analogy also explains the boundary. The callback is not a render-time expre
 
 The basic type is a function accepting a node or `null`:
 
-```tsx
+```ts
 const setInputNode: React.RefCallback<HTMLInputElement> = (node) => {
   if (node === null) {
     console.log('input detached');
@@ -83,7 +83,7 @@ The callback runs after the relevant DOM mutation has been committed, but “in 
 
 **Stable identity and `useCallback`.** This is an identity-sensitive prop. An inline function creates a fresh function object on every render:
 
-```tsx
+```ts
 <div ref={(node) => console.log(node)} />
 ```
 
@@ -91,7 +91,7 @@ When the parent re-renders, React sees a different `ref` function. It may call t
 
 Use `useCallback` when avoiding this detach/attach churn matters or when the callback installs resources:
 
-```tsx
+```ts
 const setCardNode = useCallback((node: HTMLDivElement | null) => {
   if (node === null) {
     return;
@@ -105,14 +105,14 @@ The tradeoff is dependency management, not magic performance. `useCallback` keep
 
 Stability is especially important when the callback calls state setters. This pattern can loop:
 
-```tsx
+```ts
 // Avoid: a new callback can set state, rerender, detach, and set state again.
 <div ref={(node) => node && setWidth(node.offsetWidth)} />
 ```
 
 Even with a stable callback, guard state updates when measurement can produce the same value repeatedly:
 
-```tsx
+```ts
 const setMeasuredNode = useCallback((node: HTMLDivElement | null) => {
   if (node === null) {
     return;
@@ -127,7 +127,7 @@ const setMeasuredNode = useCallback((node: HTMLDivElement | null) => {
 
 **Traditional cleanup and React 19 cleanup.** For React versions whose callback ref type returns `void`, do setup and teardown in the node/null branches. Keep the resource handle somewhere stable if teardown needs it:
 
-```tsx
+```ts
 const observerRef = useRef<ResizeObserver | null>(null);
 
 const setObservedNode = useCallback((node: HTMLDivElement | null) => {
@@ -147,7 +147,7 @@ const setObservedNode = useCallback((node: HTMLDivElement | null) => {
 
 React 19 also supports a callback ref returning a cleanup function. In that form, setup belongs in the callback and cleanup is returned next to it:
 
-```tsx
+```ts
 const setObservedNode = useCallback((node: HTMLDivElement | null) => {
   if (node === null) {
     return;
@@ -166,7 +166,7 @@ For this React 19 form, React runs the returned cleanup when the ref is detached
 
 **Dynamic lists, identity, and ownership.** Hooks cannot be called inside `.map()`, but one stable `Map` can own many nodes. The item’s stable key is the ownership identity:
 
-```tsx
+```ts
 const itemNodes = useRef(new Map<string, HTMLLIElement>());
 
 return (
@@ -195,7 +195,7 @@ For many rows, avoid creating a new callback per row if identity churn is measur
 
 **Callback refs versus object refs and effects.** An object ref is passive storage:
 
-```tsx
+```ts
 const inputRef = useRef<HTMLInputElement | null>(null);
 
 function focusInput() {
@@ -219,7 +219,7 @@ On the server there is no DOM node to pass. A callback ref is not a server-side 
 
 TypeScript should express nullability at the boundary:
 
-```tsx
+```ts
 const setButtonNode: React.RefCallback<HTMLButtonElement> = (node) => {
   if (node === null) {
     return;
@@ -237,7 +237,7 @@ The examples below are complete components. They use callback refs as the trigge
 
 **Example 1: conditional measurement and focus**
 
-```tsx
+```ts
 import { useCallback, useState } from 'react';
 
 export function MeasuredPanel() {
@@ -280,7 +280,7 @@ The callback runs when `open` causes the panel to mount, so it does not miss the
 
 **Example 2: a keyed list registry and scrolling**
 
-```tsx
+```ts
 import { useRef } from 'react';
 
 type Message = { id: string; text: string };
@@ -331,7 +331,7 @@ The map is one stable object ref, not one hook call per item. Each callback adds
 
 **Example 3: observer setup with React 19 cleanup**
 
-```tsx
+```ts
 import { useCallback, useState } from 'react';
 
 export function ObservedCard() {
@@ -411,7 +411,7 @@ There is no browser host node to measure on the server. The callback is useful w
 
 **Trap 1: unconditional state updates from an unstable callback**
 
-```tsx
+```ts
 // Bad: new ref identity plus setState can repeat forever.
 <div ref={(node) => node && setWidth(node.offsetWidth)} />
 ```
@@ -420,7 +420,7 @@ Use a stable callback and avoid setting state when the value is unchanged. Also 
 
 **Trap 2: treating `null` as impossible**
 
-```tsx
+```ts
 // Bad for the traditional API: node can be null during detach.
 const setInput = (node: HTMLInputElement | null) => node.focus();
 ```
@@ -429,7 +429,7 @@ Narrow first. In React 19’s returned-cleanup form, setup receives the node and
 
 **Trap 3: leaking a list registry**
 
-```tsx
+```ts
 // Bad: detached nodes remain strongly referenced.
 ref={(node) => {
   if (node) nodes.current.set(item.id, node);

@@ -78,7 +78,7 @@ A `key` changes component identity. Giving a provider or a provider-owned child 
 
 This snippet can be placed in a TSX file with React installed. It demonstrates ownership, a nullable typed default, a fail-fast hook, stable dispatch identity, and the reducer’s stable state identity when no state transition occurs.
 
-```tsx
+```ts
 import {
   createContext,
   memo,
@@ -154,7 +154,7 @@ export function App() {
 
 **Example 2 — Nearest provider and the default value**
 
-```tsx
+```ts
 import { createContext, useContext, type ReactNode } from "react";
 
 const LanguageContext = createContext("en");
@@ -185,7 +185,7 @@ The first label reads `en`; the nested label reads `fr`. If `Label` were rendere
 
 **Example 3 — Composition can remove the dependency entirely**
 
-```tsx
+```ts
 import type { ReactNode } from "react";
 
 type User = { name: string };
@@ -219,7 +219,7 @@ The layout does not need a `user` prop because the caller constructs the menu an
 
 **Why memoize a provider value?** To avoid broadcasting a freshly allocated object when the underlying fields are unchanged:
 
-```tsx
+```ts
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 
 type User = { id: string };
@@ -250,7 +250,7 @@ Do not add `useMemo` mechanically. It does not provide field-level selection, an
 
 **How should TypeScript defaults be typed?** For a required provider, use a nullable or undefined default and guard it in a custom hook:
 
-```tsx
+```ts
 import { createContext, useContext } from "react";
 
 type Session = { id: string };
@@ -275,7 +275,7 @@ For an optional dependency, give `createContext` a real safe fallback and type t
 
 **Trap: the inline object broadcast**
 
-```tsx
+```ts
 import { createContext, useMemo, type ReactNode } from "react";
 
 type User = { id: string };
@@ -312,7 +312,7 @@ Use a stable value when the provider rerenders for unrelated reasons. Remember t
 
 **Trap: confusing the default with provider initialization**
 
-```tsx
+```ts
 import { createContext, useContext } from "react";
 
 const ThemeContext = createContext<string | undefined>("light");

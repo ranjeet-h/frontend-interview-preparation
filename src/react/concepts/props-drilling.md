@@ -101,7 +101,7 @@ Here is a complete progression from prop drilling to composition, context, and s
 
 **The Anti-Pattern: Prop Drilling Through 4 Intermediate Layout Components**
 
-```tsx
+```ts
 import React from 'react';
 
 interface User {
@@ -163,7 +163,7 @@ function NavUserSection({ user, onLogout }: { user: User; onLogout: () => void }
 
 We invert control by composing the `NavUserSection` directly at the top level and passing it through layout slots.
 
-```tsx
+```ts
 import React, { ReactNode } from 'react';
 
 interface User {
@@ -222,7 +222,7 @@ export function DashboardComposition({ user, onLogout }: { user: User; onLogout:
 
 When data is truly broadcast across disparate parts of the app (like header, sidebar, settings modal, and comments), React Context is appropriate.
 
-```tsx
+```ts
 import React, { createContext, useContext, useMemo, useState, ReactNode } from 'react';
 
 interface User {
@@ -293,7 +293,7 @@ function UserAvatarConsumer() {
 
 When data is remote server data, query caching eliminates both prop drilling and boilerplate Context providers.
 
-```tsx
+```ts
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 
@@ -391,7 +391,7 @@ This eliminates prop drilling because intermediate components no longer need to 
 
 Creating a single `AppContext` containing user info, active theme, cart items, notification toasts, and form data.
 
-```tsx
+```ts
 // ❌ Disaster: Any change to cartItems re-renders the ThemeToggle and UserBadge
 const AppContext = createContext<{
   user: User;
@@ -407,7 +407,7 @@ Every time an item is added to the cart, the entire app re-renders because `AppC
 
 Passing a new object literal directly into the `value` prop of a Context Provider.
 
-```tsx
+```ts
 // ❌ Every time ParentComponent renders (e.g. on local state change), 
 // a brand new object is created at value={{ user, logout }}, re-rendering all consumers!
 function AuthProvider({ children }: { children: ReactNode }) {
@@ -442,7 +442,7 @@ This is an anti-pattern. Two-level prop passing is explicit, readable, and easy 
 
 Fetching a large JSON payload at the root page and drilling small slices of that data through 8 layers of components.
 
-```tsx
+```ts
 // ❌ Root fetches everything and drills user, settings, notifications, permissions...
 function RootApp() {
   const [data, setData] = useState<FullDashboardData | null>(null);

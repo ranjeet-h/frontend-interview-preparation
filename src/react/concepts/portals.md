@@ -36,7 +36,7 @@ The analogy has one limit: the remote stage does not automatically make the perf
 
 **The API and the two trees.** The API comes from `react-dom`:
 
-```tsx
+```ts
 import { createPortal } from "react-dom";
 
 createPortal(children, domNode, optionalKey);
@@ -101,7 +101,7 @@ The following labeled TSX examples are self-contained except for the normal Reac
 
 **Example A — a stable host, typed context, accessible modal, and React bubbling.**
 
-```tsx
+```ts
 import {
   createContext,
   type ReactNode,
@@ -243,7 +243,7 @@ There are three separate responsibilities here. `createPortal` handles placement
 
 Use this when the component, rather than the HTML document, owns the host. The host is created after a client commit and removed by the same lifecycle hook. The `host` state makes the first render return `null`; it also prevents a server render from reading `document`.
 
-```tsx
+```ts
 import { type ReactNode, useState } from "react";
 import { createPortal, createRoot } from "react-dom";
 import { useEffect } from "react";
@@ -289,7 +289,7 @@ The cleanup removes the exact node created by that setup. It is safe if the comp
 
 If the same dialog edits different products, decide whether draft state should survive the product change. This complete browser-entry example uses a stable `#modal-root` host and makes the reset choice explicit; an SSR application should resolve the host in a client-only lifecycle step as shown in Example A/B.
 
-```tsx
+```ts
 import { useState } from "react";
 import { createPortal, createRoot } from "react-dom";
 
@@ -408,7 +408,7 @@ Placement is not semantics. Without focus management, keyboard users may tab int
 
 This fails:
 
-```tsx
+```ts
 // ❌ Runs while the module or render is evaluated on the server.
 const host = document.getElementById("modal-root");
 ```
@@ -419,7 +419,7 @@ Resolve browser nodes after the client commit, or pass a server-known host throu
 
 This leaks orphan nodes and is unsafe under discarded renders:
 
-```tsx
+```ts
 // ❌ A render is not a resource-ownership boundary.
 const host = document.createElement("div");
 document.body.appendChild(host);

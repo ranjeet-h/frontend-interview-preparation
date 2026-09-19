@@ -60,7 +60,7 @@ For example, `<Form key={userId} userId={userId} />` remounts and resets the for
 
 **Example 1: snapshot capture versus a mutable instance.** The following is a contextual TSX example: place it in a React + TypeScript application with React 18 or later. The class version demonstrates the hazard; the local `user` variable in the function version is captured by that render.
 
-```tsx
+```ts
 import { Component, useState } from 'react';
 
 type UserProps = { user: string };
@@ -110,7 +110,7 @@ Click a Follow button for Alice, switch to Bob immediately, and wait. The class 
 
 **Example 2: one synchronization unit.** This is also a contextual TSX example requiring React. The socket object is deliberately tiny so the setup/cleanup pairing is visible.
 
-```tsx
+```ts
 import { useEffect } from 'react';
 
 const chatSocket = {
@@ -138,7 +138,7 @@ When `roomId` changes from `general` to `support`, React cleans up the `general`
 
 **Example 3: the class escape hatch for render errors.** This is a contextual TSX component requiring React’s `Component`, `ErrorInfo`, and `ReactNode` types.
 
-```tsx
+```ts
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
@@ -193,7 +193,7 @@ Use a ref when the requirement is genuinely “latest mutable value,” not when
 
 The following contextual fragment assumes `useRef` is imported from React and `user` is a prop or local value in the component:
 
-```tsx
+```ts
 const latestUser = useRef(user);
 useEffect(() => {
   // Only a committed render may publish a value to this shared ref.

@@ -50,7 +50,7 @@ For server state, a query library can make request identity a first-class concep
 
 This first example is intentionally unsafe. It is valid React code, but an older response can overwrite a newer one:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type Result = { id: string; title: string };
@@ -73,7 +73,7 @@ export function UnsafeSearch({ query }: { query: string }) {
 
 The following component is self-contained apart from React and can be pasted into a browser-based React/TypeScript app. The fake API deliberately makes shorter queries slower, so an old request is likely to finish last. The `active` guard preserves correctness even though the fake promise cannot be cancelled:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type Result = { id: string; title: string };
@@ -118,7 +118,7 @@ export function SafeSearchWithIgnore({ query }: { query: string }) {
 
 For a real `fetch`, use a new controller per effect run and treat abort as expected:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type Result = { id: string; title: string };

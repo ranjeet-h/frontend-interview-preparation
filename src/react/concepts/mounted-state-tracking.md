@@ -38,7 +38,7 @@ Development Strict Mode deserves a precise mention. React may run setup, cleanup
 
 This first example is a complete custom hook plus component. It uses `useEffect` inside the reusable hook, where the request’s lifecycle belongs. The fake client deliberately has no cancellation API, which is the case where an effect-scoped guard can still be justified.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type Profile = { id: string; name: string };
@@ -82,7 +82,7 @@ export function ProfileCard({ id }: { id: string }) {
 
 In an application, the better fetch path is cancellation. This example is self-contained apart from the normal browser `fetch` API and handles both unmounting and a changed `id`. `AbortController` is best-effort: the response may already have settled, server work may continue, or an API may not stop immediately. The cleanup aborts the old request, while the `AbortError` branch treats expected cancellation as non-failure; the signal and request-identity checks are the final protection before committing a result.
 
-```tsx
+```ts
 import { useEffect, useRef, useState } from "react";
 
 type Profile = { id: string; name: string };

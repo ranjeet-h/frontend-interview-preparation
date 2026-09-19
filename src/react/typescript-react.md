@@ -65,7 +65,7 @@ Assumptions: React 18 or newer, TypeScript with JSX enabled, and the automatic J
 
 Here is a reusable input boundary with optional props, default values, renderable children, a correctly typed event, a ref, and validation state:
 
-~~~tsx
+~~~ts
 import { forwardRef, type ChangeEvent, type ReactNode } from "react";
 
 type TextFieldProps = {
@@ -119,7 +119,7 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(
 
 An event type can often be inferred when the handler is inline. Extracting it is useful when the handler is reused or its boundary is part of the API:
 
-~~~tsx
+~~~ts
 import type { ChangeEvent, FormEvent } from "react";
 
 type SearchFormProps = {
@@ -154,7 +154,7 @@ The `typeof query === "string"` check narrows `FormDataEntryValue` from `string 
 
 This reducer makes every UI transition visible and exhaustive:
 
-~~~tsx
+~~~ts
 type User = { id: string; name: string };
 
 type UserState =
@@ -201,7 +201,7 @@ The `status` check narrows the union. There is no `users?` field that can be abs
 
 Context can expose a non-null value to consumers while preserving the missing-provider failure:
 
-~~~tsx
+~~~ts
 import { createContext, useContext, type ReactNode } from "react";
 
 type Theme = "light" | "dark";
@@ -232,7 +232,7 @@ The hook is the boundary that narrows `ThemeContextValue | null` to `ThemeContex
 
 Generics preserve a value relationship in a custom hook and a component:
 
-~~~tsx
+~~~ts
 import { useState } from "react";
 
 export function useSelection<T>(initial: T | null) {
@@ -269,7 +269,7 @@ For `Select<User>`, the option passed to both label and selection callbacks is t
 
 Finally, validate external data before it becomes a prop. This small validator is deliberately explicit and has no dependency on a particular schema library:
 
-~~~tsx
+~~~ts
 type Product = { id: string; name: string; priceCents: number };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

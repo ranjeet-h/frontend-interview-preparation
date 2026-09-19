@@ -7,7 +7,7 @@ read server-side data sources, use secrets without sending them to the browser,
 and contribute no component JavaScript to the client bundle. A Client Component
 is opted into with the module directive:
 
-```tsx
+```ts
 "use client"
 
 import { useState } from "react"

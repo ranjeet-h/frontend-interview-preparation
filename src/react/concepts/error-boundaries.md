@@ -8,7 +8,7 @@ The failure is not confined to the widget automatically. Without an Error Bounda
 
 An ordinary `try...catch` around JSX does not solve this:
 
-```tsx
+```ts
 try {
   return <Recommendations items={items} />;
 } catch {
@@ -82,7 +82,7 @@ For an event or async error, first choose the owner. A form submission usually o
 
 **Example 1 — a reusable class boundary.** This self-contained TSX example can run in a React + TypeScript app. The fallback accepts the error and a reset callback, while `componentDidCatch` owns logging. The default fallback deliberately avoids complex rendering.
 
-```tsx
+```ts
 import React, { ErrorInfo, ReactNode } from "react";
 
 type FallbackProps = {
@@ -145,7 +145,7 @@ export class ErrorBoundary extends React.Component<
 
 **Example 2 — placement, identity, and a render crash.** The widget throws only when `broken` is true. The chart’s failure replaces the chart fallback, not the stable transactions panel. `broken` belongs to `RevenuePanel`, inside the keyed boundary subtree, so changing `reportId` remounts the owner and clears that state too.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 type FallbackProps = {
@@ -256,7 +256,7 @@ export function Dashboard({ initialReportId = "report-1" }: {
 
 **Example 3 — intentionally bridge an async error.** This runnable example defines the wrapper and usage site in the same TSX block. It uses ordinary state to make an async failure visible to render; the boundary catches the `throw` on the next render. For routine request failures, prefer a query or form state model; use this when the feature should enter the same fatal fallback as a render bug.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 function normalizeError(value: unknown): Error {

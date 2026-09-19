@@ -54,7 +54,7 @@ This is different from JavaScript object reference identity. `{ id: 'a' } !== { 
 
 The following is a complete React/TypeScript module for a cart component. It is a contextual module: it can be rendered by any React application, but the host application's `createRoot` setup is intentionally outside the study example.
 
-```tsx
+```ts
 import { useState } from 'react';
 
 interface CartItem {
@@ -161,7 +161,7 @@ The data path is visible: `items` becomes each row's `item` prop, while `handleU
 
 The same contract appears in a controlled input:
 
-```tsx
+```ts
 import { useState } from 'react';
 
 export function SearchBox() {
@@ -183,7 +183,7 @@ Here React state supplies `value` to the DOM, the browser supplies the event pay
 
 For reducer-based ownership, the same loop is explicit: `dispatch(action)` sends intent to the owner, the reducer calculates the next snapshot from the previous snapshot and that action, and React renders again.
 
-```tsx
+```ts
 import { useReducer } from 'react';
 
 type CounterState = { count: number };

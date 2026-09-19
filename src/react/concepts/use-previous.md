@@ -23,7 +23,7 @@ On the first render, there is no road behind this component instance, so the mir
 
 The usual implementation is deliberately split across render and commit:
 
-```tsx
+```ts
 function usePrevious<T>(value: T): T | undefined {
   const ref = useRef<T | undefined>(undefined);
 
@@ -54,7 +54,7 @@ The hook observes render history; it is not a general event log. It is useful fo
 
 The following is a complete component for a React 18+ TypeScript app. It can be pasted into a Vite React TS project. Clicking the button changes state, which causes the hook to expose the value from the prior committed render.
 
-```tsx
+```ts
 import { useEffect, useRef, useState } from "react";
 
 function usePrevious<T>(value: T): T | undefined {
@@ -98,7 +98,7 @@ export default function PriceTracker() {
 
 For a status transition, the comparison is just as direct:
 
-```tsx
+```ts
 import { useEffect, useRef } from "react";
 
 function usePrevious<T>(value: T): T | undefined {

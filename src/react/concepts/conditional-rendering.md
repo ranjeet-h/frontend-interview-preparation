@@ -30,7 +30,7 @@ When a component cannot or should not render its primary UI due to prerequisites
 
 This is a contextual fragment: it assumes `status`, `data`, `Spinner`, `ErrorMessage`, `error`, `EmptyPlaceholder`, and `MainContent` are defined by the surrounding component.
 
-```tsx
+```ts
 if (status === 'loading') return <Spinner />;
 if (status === 'error') return <ErrorMessage error={error} />;
 if (data.length === 0) return <EmptyPlaceholder />;
@@ -44,7 +44,7 @@ Ternaries handle mutually exclusive binary branches inside JSX expressions where
 
 This is a contextual fragment: it assumes `isSubmitting` is a boolean and `Spinner` is an available component.
 
-```tsx
+```ts
 <button className={isSubmitting ? 'opacity-50' : 'opacity-100'}>
   {isSubmitting ? <Spinner /> : 'Save Changes'}
 </button>
@@ -62,7 +62,7 @@ When a UI transitions between three or more states, chaining nested ternaries ca
 
 This is a contextual fragment: it assumes `TabState`, `OverviewTab`, `AnalyticsTab`, `SettingsTab`, and `FallbackTab` are defined by the surrounding feature.
 
-```tsx
+```ts
 const VIEW_MAP: Record<TabState, React.ComponentType> = {
   overview: OverviewTab,
   analytics: AnalyticsTab,
@@ -87,7 +87,7 @@ When a condition changes props on the same component type at the exact same tree
 
 This is a contextual fragment: it assumes `isVIP` is a boolean and `ProfileCard` is a defined component.
 
-```tsx
+```ts
 // Render 1
 <div>{isVIP ? <ProfileCard badge="gold" /> : <ProfileCard badge="silver" />}</div>
 ```
@@ -99,7 +99,7 @@ When a condition returns a different component or HTML tag at that tree location
 
 This is a contextual fragment: it assumes `isAdmin` is a boolean and both dashboard components are defined.
 
-```tsx
+```ts
 // Render 1: <AdminDashboard /> -> Render 2: <UserDashboard />
 <div>{isAdmin ? <AdminDashboard /> : <UserDashboard />}</div>
 ```
@@ -111,7 +111,7 @@ If two branches render the same component type but represent fundamentally disti
 
 This is a contextual fragment: it assumes `isEditingProfile`, `profileData`, `settingsData`, and `Form` are defined.
 
-```tsx
+```ts
 {isEditingProfile ? (
   <Form key="profile-form" initialData={profileData} />
 ) : (
@@ -127,7 +127,7 @@ Managing asynchronous lifecycle with scattered booleans leads to invalid UI stat
 
 This is a contextual fragment: it assumes `useState` is imported and `User` is a domain type declared elsewhere.
 
-```tsx
+```ts
 // Antipattern: 8 possible permutations (e.g. isLoading=true AND isError=true)
 const [isLoading, setIsLoading] = useState(false);
 const [isError, setIsError] = useState(false);
@@ -136,7 +136,7 @@ const [data, setData] = useState<User[] | null>(null);
 
 Modeling state as a TypeScript discriminated union gives TypeScript compile-time narrowing. It does not validate untrusted runtime data or guarantee that a JavaScript value actually matches the union unless a runtime parser or validator checks it:
 
-```tsx
+```ts
 type FetchState =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -152,7 +152,7 @@ TypeScript narrows the type in each conditional branch, ensuring `data` cannot b
 
 Here is a complete, production-grade implementation demonstrating early returns, discriminated unions, safe logical short-circuits, key-based state resets, and map-driven views:
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface Project {
@@ -377,7 +377,7 @@ A discriminated union models async status as mutually exclusive objects tagged w
 
 This is a contextual fragment: it assumes `User` is a domain type declared elsewhere.
 
-```tsx
+```ts
 type AsyncState<T> =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -398,7 +398,7 @@ This is a contextual fragment: it assumes `notifications`, `user`, `Badge`, and 
 
 **Trap 2: Violating the Rules of Hooks with Conditional Early Returns**
 - *The Mistake:* Placing a hook call after a conditional early return:
-  ```tsx
+  ```ts
   function UserProfile({ userId }: { userId: string | null }) {
     if (!userId) return <EmptyState />;
     // ❌ Error: Rendered fewer hooks than expected
@@ -416,7 +416,7 @@ Strict Mode does not make conditional hooks valid. Its extra development checks 
 
 **Trap 3: Accidental State Leakage Across Conditional Branches**
 - *The Mistake:* Conditionally rendering the same component type for two distinct entities without keys:
-  ```tsx
+  ```ts
   // User switches from editing Alice to editing Bob
   {selectedUser.role === 'admin' ? (
     <UserForm initialRole="admin" />
@@ -434,7 +434,7 @@ This is a contextual fragment: it assumes `selectedUser` and `UserForm` are defi
 
   This is a contextual fragment: it assumes `isLoading`, `isError`, `data`, `Spinner`, `Error`, `List`, and `Empty` are defined.
 
-  ```tsx
+  ```ts
   return (
     <div>
       {isLoading ? <Spinner /> : isError ? <Error /> : data ? <List items={data} /> : <Empty />}
@@ -446,7 +446,7 @@ This is a contextual fragment: it assumes `selectedUser` and `UserForm` are defi
 
 **Trap 5: Rendering Protected UI Before Auth Resolution**
 - *The Mistake:* Checking `if (user.isAdmin)` when `user` is still `null` during initial session verification:
-  ```tsx
+  ```ts
   function AdminPage() {
     const { user } = useAuth(); // user is null while token validates
     if (!user.isAdmin) return <Navigate to="/unauthorized" />;

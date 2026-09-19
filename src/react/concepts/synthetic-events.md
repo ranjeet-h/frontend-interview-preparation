@@ -88,7 +88,7 @@ Here are real-world examples demonstrating event delegation, target resolution, 
 
 When building complex interactive components like buttons with icons and badges, clicking the child element must not break data extraction.
 
-```tsx
+```ts
 import React from "react";
 
 interface ActionButtonProps {
@@ -128,7 +128,7 @@ export function ActionButton({ actionId, label, icon, onAction }: ActionButtonPr
 
 In modern React (17+), event objects retain their data inside async callbacks, debounce timers, and API pipelines.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 export function SearchFilter() {
@@ -167,7 +167,7 @@ export function SearchFilter() {
 
 Demonstrating how parent containers handle delegated actions while child elements selectively stop propagation.
 
-```tsx
+```ts
 import React from "react";
 
 interface FileItem {
@@ -267,7 +267,7 @@ React strictly adheres to standard W3C event conventions. Returning `false` from
 
 When you place an icon, badge, or SVG inside a button, clicking the button often registers the SVG or `<span>` as `e.target`.
 
-```tsx
+```ts
 // ❌ BROKEN: If user clicks the inner icon, e.target is the <i> tag, which lacks dataset.id
 function ProductCard({ id }: { id: string }) {
   function handleClick(e: React.MouseEvent<HTMLButtonElement>) {
@@ -311,7 +311,7 @@ To synchronize React events with document-level popover closers, attach your doc
 
 A classic mistake in single-page applications is submitting a form without calling `e.preventDefault()`.
 
-```tsx
+```ts
 // ❌ BROKEN: Triggers a full browser reload and loses all in-memory client state
 function LoginForm() {
   function handleSubmit(e: React.FormEvent) {

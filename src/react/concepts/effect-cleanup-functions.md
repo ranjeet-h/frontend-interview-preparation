@@ -28,7 +28,7 @@ On unmount, React runs the last committed cleanup and does not run a replacement
 
 The key detail is that each setup closes over the props and state from its own render. If `roomId` changes from `alpha` to `beta`, the cleanup created while `roomId` was `alpha` still knows how to disconnect `alpha`. That is why setup and cleanup should be written together:
 
-```tsx
+```ts
 import { useEffect } from "react";
 
 type Connection = { disconnect(): void };
@@ -68,7 +68,7 @@ The following examples assume React 18+ with `useEffect` imported from `react`. 
 
 An interval must be cleared using the ID returned by the same setup call. A functional state update matters here because the interval callback may keep the effect's original render in its closure:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 export function PollingClock() {
@@ -89,7 +89,7 @@ export function PollingClock() {
 
 Event removal depends on the same callback identity and compatible listener options. Defining the callback inside the effect makes that identity local to the setup/cleanup pair:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 export function OnlineStatus() {
@@ -114,7 +114,7 @@ export function OnlineStatus() {
 
 For changing requests, create a fresh controller for each effect run. The cleanup aborts the old run before the new run starts. The `AbortError` branch is expected control flow, while other errors still deserve normal error handling:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type User = { id: string; name: string };
@@ -161,7 +161,7 @@ export function UserProfile({ userId }: { userId: string }) {
 
 Here is the same race boundary with a subscription-shaped API. The subscription object—not a newly created function—is the thing that owns the resource, so cleanup calls its unsubscribe method:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type Message = { text: string };
@@ -254,7 +254,7 @@ The first trap is “cleanup is only for unmount.” With `[roomId]`, an old roo
 
 The second trap is removing a listener with a new function:
 
-```tsx
+```ts
 // Wrong: these are two different function objects.
 window.addEventListener("resize", () => console.log(window.innerWidth));
 window.removeEventListener("resize", () => console.log(window.innerWidth));
@@ -268,7 +268,7 @@ The fourth trap is treating a boolean cancellation flag as network cancellation.
 
 The following is an illustrative fragment, not a standalone component. It assumes `useEffect`, `loadReport`, and the `setReport` state setter already exist in the surrounding component; that context is omitted so the cancellation boundary stays visible.
 
-```tsx
+```ts
 useEffect(() => {
   let active = true;
 
@@ -290,7 +290,7 @@ The sixth trap is returning a Promise from cleanup:
 
 The following is an illustrative fragment, not a standalone component. It assumes `useEffect` and an application-specific `disconnectAsync` function are available in the surrounding component; the surrounding setup is omitted because the example focuses only on React's synchronous cleanup contract.
 
-```tsx
+```ts
 // Wrong: async makes the returned cleanup value a Promise.
 useEffect(() => {
   return async () => {
@@ -301,7 +301,7 @@ useEffect(() => {
 
 Use a synchronous cleanup that starts the asynchronous operation instead:
 
-```tsx
+```ts
 useEffect(() => {
   return () => {
     void disconnectAsync();
@@ -315,7 +315,7 @@ The seventh trap is using a ref guard to defeat Strict Mode:
 
 The following is an illustrative fragment, not a standalone component. It assumes `useRef`, `useEffect`, and the application-specific `connect` function are available in the surrounding component; that setup is omitted because the example focuses on why a ref guard is unsafe.
 
-```tsx
+```ts
 // Wrong: it hides a lifecycle problem and can break after a real remount.
 const didRun = useRef(false);
 useEffect(() => {

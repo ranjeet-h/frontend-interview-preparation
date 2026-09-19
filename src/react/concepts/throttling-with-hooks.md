@@ -38,7 +38,7 @@ Throttle is a frequency ceiling, not a real-time promise. Timers are minimum del
 
 This hook and component are self-contained apart from React. The first scroll event runs immediately; further events are ignored until a later event arrives outside the 100 ms window.
 
-```tsx
+```ts
 // Assumptions: React 18+ Hooks, a browser timer/Date.now implementation, and TypeScript.
 import { useCallback, useRef, useState } from "react";
 
@@ -91,7 +91,7 @@ The expensive boundary is the throttled handler itself, not only the state updat
 
 When the final drag or resize value matters, save the newest arguments and expose cancellation.
 
-```tsx
+```ts
 // Assumptions: React 18+ Hooks, browser-compatible setTimeout/clearTimeout, and TypeScript.
 import { useCallback, useRef } from "react";
 
@@ -175,7 +175,7 @@ If a custom hook owns a `window.addEventListener` subscription, its cleanup must
 
 The custom hook below owns the external `window` subscription, so its cleanup is also the lifecycle boundary for the throttled timer. The component only consumes that hook; it does not need to know how the listener is registered.
 
-```tsx
+```ts
 // Assumptions: React 18+ Hooks, a browser with window resize events, and TypeScript DOM types.
 import { useEffect, useState } from "react";
 

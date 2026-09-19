@@ -189,7 +189,7 @@ Notice how update logic and DOM cleanup are scattered across event handlers. Add
 
 Here, the UI is a direct reflection of a single state object. When the state changes, the entire view updates automatically. No DOM nodes are queried or manually mutated.
 
-```tsx
+```ts
 import React, { useRef, useState } from 'react';
 
 type FormState =
@@ -297,7 +297,7 @@ function fakePaymentApi(card: string, signal: AbortSignal): Promise<{ txId: stri
 
 When an imperative browser action is required (e.g. auto-focusing the card input after a validation error or reset), we bridge the gap cleanly using a ref:
 
-```tsx
+```ts
 import React, { useState, useRef } from 'react';
 
 export function AccessibleInput() {
@@ -390,7 +390,7 @@ In an imperative world, if you start mutating DOM nodes halfway through a long c
 - **What Actually Happens:** If `firstName` updates but an event handler forgets to call `setFullName(firstName + ' ' + lastName)`, the UI displays stale, conflicting data.
 - **The Fix:** Derive values on the fly during render:
 
-```tsx
+```ts
 // ❌ WRONG: Imperative state synchronization
 const [firstName, setFirstName] = useState('');
 const [lastName, setLastName] = useState('');

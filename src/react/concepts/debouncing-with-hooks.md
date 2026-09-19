@@ -43,7 +43,7 @@ Debouncing a value does not cancel a fetch. If the debounced query changes from 
 
 The following hook is a complete value-debouncing implementation. It uses the global timer functions so it works in browsers and in test environments without requiring `window`.
 
-```tsx
+```ts
 import * as React from "react";
 
 export function useDebounce<T>(value: T, delayMs: number): T {
@@ -65,7 +65,7 @@ export function useDebounce<T>(value: T, delayMs: number): T {
 
 Here is a consumer plus its request hook. Assume the app serves `GET /api/products?q=...` and returns a JSON array of `{ id, name }` objects. The input is intentionally immediate; only the request-driving value is delayed.
 
-```tsx
+```ts
 import * as React from "react";
 import { useDebounce } from "./useDebounce";
 
@@ -137,7 +137,7 @@ The search effect is separate from the debounce hook because the concerns are di
 
 For a callback API, a small implementation can expose cancellation. This example has trailing behavior and deliberately documents that changing the callback does not cancel a timer already scheduled for the same invocation; the callback reference is read when the timer fires.
 
-```tsx
+```ts
 import * as React from "react";
 
 export function useDebouncedCallback<Args extends unknown[]>(

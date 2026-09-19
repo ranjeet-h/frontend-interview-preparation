@@ -65,7 +65,7 @@ console.log(currentStatus); // sent
 
 Here is a self-contained React + TypeScript example. It assumes a normal React 18+ application and can be rendered as `<Counter />`. The interval is created once, but it never gets stuck at 1 because the updater receives the current state from React.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
@@ -91,7 +91,7 @@ export function Counter() {
 
 The common broken form captures the initial value. With `count = 0`, every tick computes `0 + 1`, so React receives `1` repeatedly. This is a complete component so the contrast can be copied into a React + TypeScript app and run:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 export function BrokenCounter() {
@@ -111,7 +111,7 @@ export function BrokenCounter() {
 
 An ordinary React event handler is different from a long-lived external listener. React attaches the handler for the committed render, so a later render replaces it with a new closure that sees that render's snapshot. Inside one click, though, the handler still sees one snapshot: two direct updates both calculate from the same `count`, while two functional updates are processed in sequence.
 
-```tsx
+```ts
 import { useState } from "react";
 
 export function EventHandlerSnapshots() {
@@ -141,7 +141,7 @@ After either click causes a render, React recreates these functions and the next
 
 This listener stays registered while `label` changes, but it still uses the latest label because the handler reads the shared ref at event time. The cleanup removes the exact function that was added, so the listener does not survive unmounting:
 
-```tsx
+```ts
 import { useEffect, useRef, useState } from "react";
 
 export function WindowKeyLogger({ label }: { label: string }) {
@@ -164,7 +164,7 @@ export function WindowKeyLogger({ label }: { label: string }) {
 
 When a long-lived callback needs the latest value rather than the latest previous state, a ref makes that intent explicit. This hook keeps one interval while the callback reads the current `onTick` function. It is a targeted escape hatch for an imperative subscription; ordinary render logic should still use props and state directly.
 
-```tsx
+```ts
 import { useEffect, useRef } from "react";
 
 export function useStableInterval(
@@ -188,7 +188,7 @@ export function useStableInterval(
 
 For an async search, the dependency keeps the effect aligned with the query. `AbortController` is best-effort: it asks the browser to stop work, but it cannot guarantee that the server stopped processing or that a response already resolved will be undone. The request identity check is the correctness guard, so an older response cannot replace results for the latest query even if abort is too late. The exact fetch API assumes a browser environment.
 
-```tsx
+```ts
 import { useEffect, useRef, useState } from "react";
 
 function useSearchResults(query: string) {

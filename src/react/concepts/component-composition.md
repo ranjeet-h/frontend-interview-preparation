@@ -4,7 +4,7 @@
 
 Every frontend team eventually creates a "God Component." It usually starts innocently with a reusable modal, card, or dropdown:
 
-```tsx
+```ts
 // Month 1: Simple and clean
 <Modal title="Delete User" isOpen={isOpen} onClose={handleClose} onSubmit={handleDelete} />
 ```
@@ -13,7 +13,7 @@ Three months later, the product team wants a modal with an icon in the header. N
 
 If you solve this by adding configuration props, your component quickly explodes into an unmaintainable monster:
 
-```tsx
+```ts
 // Month 6: The Mega-Component Prop Explosion
 <Modal
   title="Upgrade Plan"
@@ -71,7 +71,7 @@ Some components do not know their children ahead of time (e.g., `Sidebar`, `Dial
 
 When you need multiple independent insertion zones, you use named slots. In React, a slot is simply a prop that accepts a `ReactNode` or `ReactElement`:
 
-```tsx
+```ts
 function Layout({ sidebar, header, children }: LayoutProps) {
   return (
     <div className="layout">
@@ -91,7 +91,7 @@ When a parent renders JSX and passes it as `children` to a wrapper component, th
 **2. Specialization (Configuring Generics into Specific Variants)**
 Instead of using inheritance to make a "subclass" of a component, we use specialization: a specific component renders a generic one and configures it with distinct props or children.
 
-```tsx
+```ts
 // Generic Base Component
 function Dialog({ title, children }: DialogProps) {
   return (
@@ -144,7 +144,7 @@ Here are production-ready patterns illustrating containment, named slots, and co
 
 **Example 1: Containment with Named Slots and Render Optimization**
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface CollapsiblePanelProps {
@@ -196,7 +196,7 @@ export function DashboardView() {
 
 Below is a complete, accessible, type-safe `<Accordion>` widget implementing compound components with static namespace exports.
 
-```tsx
+```ts
 import React, { createContext, useContext, useState } from 'react';
 
 // 1. Context definition for internal state sharing
@@ -371,7 +371,7 @@ Prop drilling occurs when data must be passed down through multiple intermediate
 
 Instead of reaching for Redux or Zustand immediately, you can solve this by lifting the child component up to the parent and passing the instantiated element down via `children` or a named slot:
 
-```tsx
+```ts
 // Before (Prop Drilling): Page -> Layout -> Sidebar -> Nav -> UserAvatar
 <Page user={user} />
 
@@ -407,7 +407,7 @@ Custom Hooks solved all of these problems by bringing logic composition directly
 
 *The Mistake:* Creating helper subcomponents inside the body of another component:
 
-```tsx
+```ts
 function TableView({ data }: { data: string[] }) {
   // ❌ FATAL ERROR: Re-created on every render!
   function TableRow({ text }: { text: string }) {
@@ -430,7 +430,7 @@ function TableView({ data }: { data: string[] }) {
 
 *The Fix:* Always declare components at the top level of the module, or use standard inline JSX mapping:
 
-```tsx
+```ts
 // ✅ Declare outside, pass props explicitly
 function TableRow({ text }: { text: string }) {
   return <tr><td>{text}</td></tr>;
@@ -451,7 +451,7 @@ function TableView({ data }: { data: string[] }) {
 
 *The Mistake:* Splitting straightforward components into excessive compound subcomponents when a simple prop would be cleaner:
 
-```tsx
+```ts
 // ❌ Over-engineered for a basic button
 <Button>
   <Button.Icon><CheckIcon /></Button.Icon>
@@ -462,7 +462,7 @@ function TableView({ data }: { data: string[] }) {
 *Why it fails:* It introduces unnecessary boilerplate, cognitive overhead, and lines of code for components that have no internal state coordination or complex layout variations.
 
 *The Fix:* Use standard props for simple, static leaf components:
-```tsx
+```ts
 // ✅ Simple, readable, direct
 <Button icon={<CheckIcon />}>Save Changes</Button>
 ```
@@ -471,7 +471,7 @@ function TableView({ data }: { data: string[] }) {
 
 *The Mistake:* Trying to build compound components by iterating over `children` with `React.Children.map` and injecting props using `React.cloneElement`:
 
-```tsx
+```ts
 // ❌ Brittle cloneElement pattern
 function TabList({ children, activeIndex, onChange }: any) {
   return (
@@ -495,7 +495,7 @@ function TabList({ children, activeIndex, onChange }: any) {
 
 *The Mistake:* Failing to throw an informative error when a compound child component is rendered outside its parent provider:
 
-```tsx
+```ts
 // ❌ Returns undefined silently or crashes with unhelpful TypeError
 function useAccordion() {
   return useContext(AccordionContext);
@@ -504,7 +504,7 @@ function useAccordion() {
 
 *The Fix:* Validate context in the custom hook:
 
-```tsx
+```ts
 // ✅ Fails fast with clear actionable developer guidance
 function useAccordionContext() {
   const context = useContext(AccordionContext);

@@ -61,3 +61,80 @@ table {
 #copy-page-button.copy-page-copied {
   color: #7cb342;
 }
+
+/* ------------------------------------------------------------------ */
+/* React Machine Coding pages: make each problem's boundaries obvious. */
+/* The theme adds the `machine-coding` class via theme/head.hbs.       */
+/* ------------------------------------------------------------------ */
+html.machine-coding main {
+  counter-reset: mc-problem;
+}
+
+/* The numbered heading rule replaces the subtle <hr> between problems. */
+html.machine-coding main hr {
+  display: none;
+}
+
+/* Keep the theme's heading scale but pin explicit sizes: mdBook's root is
+   10px (62.5%), so 1rem = 10px and these map to 34 / 26 / 19 px. */
+html.machine-coding main h1 {
+  font-size: 3.4rem;
+}
+
+html.machine-coding main h2 {
+  counter-increment: mc-problem;
+  margin-top: 4rem;
+  padding-top: 1.8rem;
+  border-top: 3px solid rgba(128, 128, 128, 0.32);
+  font-size: 2.6rem;
+  line-height: 1.3;
+}
+
+html.machine-coding main h2:first-of-type {
+  margin-top: 1.5rem;
+}
+
+html.machine-coding main h2::before {
+  content: counter(mc-problem) ". ";
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subsections (What are we building?, Basic Version, ...) stay secondary but
+   remain clearly readable. */
+html.machine-coding main h3 {
+  margin-top: 2rem;
+  font-size: 1.9rem;
+  opacity: 0.9;
+}
+
+/* Jump list injected at the top of each machine-coding page. */
+.mc-problem-index {
+  margin: 2rem 0 3rem;
+  padding: 1.6rem 1.8rem;
+  border: 1px solid rgba(128, 128, 128, 0.3);
+  border-radius: 8px;
+  background: rgba(128, 128, 128, 0.06);
+}
+
+.mc-problem-index ol {
+  margin: 0;
+  padding-left: 1.6rem;
+  columns: 2;
+  column-gap: 2.5rem;
+}
+
+.mc-problem-index li {
+  margin: 0.35rem 0;
+  break-inside: avoid;
+}
+
+.mc-problem-index a {
+  text-decoration: none;
+}
+
+@media (max-width: 767px) {
+  .mc-problem-index ol {
+    columns: 1;
+  }
+}

@@ -22,7 +22,7 @@ setCart((previousCart) => ({
 }));
 ```
 
-```tsx
+```ts
 import { useState } from "react";
 
 type CartItem = { id: number; name: string };
@@ -64,7 +64,7 @@ Immutable React state uses the sheet identity as a quick change signal and treat
 
 **Referential equality is the fast signal.** JavaScript primitives compare by value. Objects, arrays, and functions compare by identity:
 
-```tsx
+```ts
 const first = { role: "admin" };
 const second = first;
 second.role = "editor";
@@ -106,7 +106,7 @@ This makes `next.reports === previous.reports` true while the changed path has n
 
 **TypeScript helps at the boundary.** `readonly` can reject common assignments during type-checking, while `as const` narrows literals. Neither performs a deep runtime freeze, and a cast can silence the compiler. Prefer immutable APIs and narrow ownership:
 
-```tsx
+```ts
 type Settings = Readonly<{
   theme: "light" | "dark";
   alerts: boolean;
@@ -121,7 +121,7 @@ const nextSettings: Settings = { ...settings, theme: "dark" };
 
 **Example 1 — Runnable TSX: object and nested-object updates.** This component owns the profile and changes the root and nested identities intentionally:
 
-```tsx
+```ts
 import { useState } from "react";
 
 type Profile = {
@@ -161,7 +161,7 @@ export function ProfileEditor() {
 
 **Example 2 — Runnable TSX: array operations, functional updates, and stable keys.** `map` replaces one item, `filter` removes one, and spread adds one. The `key` comes from the todo, not its current position:
 
-```tsx
+```ts
 import { useState } from "react";
 
 type Todo = { id: number; text: string; done: boolean };
@@ -216,7 +216,7 @@ The mutating array methods include `push`, `pop`, `shift`, `unshift`, `splice`, 
 
 **Example 3 — Runnable TSX: state ownership and an effect boundary.** The owner changes state; the child requests a change; the effect synchronizes a document title and cleans up nothing because setting the title needs no subscription:
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type User = Readonly<{ name: string; role: "member" | "admin" }>;

@@ -8,7 +8,7 @@ Moving the variable to module scope is not a solution: every mounted copy would 
 
 `useState` provides that connection. It returns the state value for the current render and a setter that queues a state update. React can then render the component again with the resulting value. The important mental correction is that the setter is not a synchronous assignment to the variable already in the current function call. It is a request for a future render.
 
-```tsx
+```ts
 import { useState } from "react";
 
 export function Counter() {
@@ -53,7 +53,7 @@ When React renders a function component, it calls the function from top to botto
 
 For example, if the snapshot is `0`:
 
-```tsx
+```ts
 import { useState } from "react";
 
 export function QueueExample() {
@@ -101,7 +101,7 @@ The first handler normally queues `1` and `1`, so the next state is `1`. The sec
 
 **TypeScript describes the state contract.** Type inference works well for literals and initial values, but annotate empty collections and nullable values when the intended domain is broader:
 
-```tsx
+```ts
 import { useState } from "react";
 
 type User = { id: string; name: string };
@@ -144,7 +144,7 @@ The examples below are complete TSX components. They assume a normal React + Typ
 
 **Immutable object and array updates**
 
-```tsx
+```ts
 import { useState } from "react";
 
 type Profile = {
@@ -189,7 +189,7 @@ Only the changed nested object is copied. Unchanged values may retain their iden
 
 **Lazy initialization and derived data**
 
-```tsx
+```ts
 import { useState } from "react";
 
 type Task = { id: number; title: string; done: boolean };
@@ -248,7 +248,7 @@ The saved tasks are initial state, so the read is lazy and does not repeat when 
 
 **Effects synchronize external resources**
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 export function WindowWidth() {

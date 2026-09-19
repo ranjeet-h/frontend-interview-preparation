@@ -69,7 +69,7 @@ When a component re-renders, React simply executes a JavaScript function to gene
 
 Here is a complete, runnable example tracing the execution timeline across Trigger, Render, Commit, Paint, and Effects.
 
-```tsx
+```ts
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 
 export function RenderFlowInspector() {
@@ -151,7 +151,7 @@ export function RenderFlowInspector() {
 
 Now, let's examine why a parent re-render does not automatically translate into a DOM mutation for its children:
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 // Child component without memoization
@@ -218,7 +218,7 @@ In React 17 and earlier, React only batched multiple state updates inside synthe
 - *Why It Fails:* The Render phase must be mathematically pure. Because React may invoke render functions multiple times during concurrent transitions, StrictMode checks, or Suspense retries, side effects in the body execute repeatedly, resulting in duplicate API requests, memory leaks, and infinite loops.
 - *The Fix:* Move data fetching and external mutations into `useEffect` or dedicated event handlers.
 
-```tsx
+```ts
 // ❌ WRONG: Side effect executed during the render phase
 function UserProfile({ userId }: { userId: string }) {
   fetch(`/api/users/${userId}`); // Fires multiple times on concurrent renders or StrictMode!
@@ -240,7 +240,7 @@ function UserProfile({ userId }: { userId: string }) {
 - *Why It Fails:* `setState` does not mutate the current local variable; it schedules an update for the *next* render cycle. The current function execution retains the snapshot value of `count` from the moment the render occurred.
 - *The Fix:* If subsequent calculations require the updated value, calculate it in a local constant or use the functional updater form `setCount(prev => prev + 1)`.
 
-```tsx
+```ts
 // ❌ WRONG: Expecting synchronous mutation
 function Counter() {
   const [count, setCount] = useState(0);

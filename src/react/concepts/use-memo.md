@@ -72,7 +72,7 @@ That said, you still need to understand `useMemo` deeply. The vast majority of p
 
 The key here is that `processedProducts` only recalculates when `products`, `selectedCategory`, or `searchTerm` change. Typing in the note field or toggling dark mode triggers a re-render, but the expensive filter + sort loop does not run again.
 
-```tsx
+```ts
 import React, { useState, useMemo } from 'react';
 
 interface Product {
@@ -159,7 +159,7 @@ export function ProductTable({ products }: ProductTableProps) {
 
 Without `useMemo`, the `chartConfig` object gets a new reference on every render — including when the user types in the note field. `React.memo` would re-render the heavy chart on every keystroke. The `useEffect` would fire a network request on every keystroke. With `useMemo`, the reference only changes when `colorScheme` or `threshold` actually change.
 
-```tsx
+```ts
 import React, { useState, useMemo, useEffect, memo } from 'react';
 
 interface ChartConfig {
@@ -227,7 +227,7 @@ export function AnalyticsDashboard() {
 
 **Example 3: The Anti-Pattern Side by Side**
 
-```tsx
+```ts
 import React from 'react';
 
 interface UserProfileProps {
@@ -342,7 +342,7 @@ The fix: calculate cheap derived values as plain variables directly during rende
 
 The wrong assumption is that because you added `useMemo`, the expensive computation won't re-run. But if any dependency in your array is itself an unstable reference — an object literal or array literal defined outside `useMemo` but inside the component body — `Object.is()` returns `false` on every single render. The cache misses every time. The expensive calculation runs on every render. You've paid the hook overhead on top of the calculation cost, gaining nothing.
 
-```tsx
+```ts
 // ❌ BROKEN: options is a new object on every render.
 // useMemo fires every render. You've added overhead without saving anything.
 export function Report({ data, filterType }: { data: Item[]; filterType: string }) {

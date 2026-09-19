@@ -24,7 +24,7 @@ State is different: it is part of the script React uses to produce the visible s
 
 `useRef(initialValue)` returns an object with a mutable `current` property. React preserves that object for the lifetime of a mounted component instance:
 
-```tsx
+```ts
 import { useRef, useState } from 'react';
 
 export function RefCellExample() {
@@ -70,7 +70,7 @@ The following examples are complete labeled TSX examples. They use state for vis
 
 **Example 1: focus a committed DOM node and keep a timer handle out of state.**
 
-```tsx
+```ts
 import { useEffect, useRef, useState } from 'react';
 
 export function SearchPanel() {
@@ -118,7 +118,7 @@ The input is controlled because its value is visible UI. The timeout ID is not U
 
 **Example 2: expose a narrow imperative handle.**
 
-```tsx
+```ts
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 
 export type SearchBoxHandle = {
@@ -191,7 +191,7 @@ The parent receives only `focus` and `clear`, not the private input. The empty d
 
 **Example 3: callback refs for conditional measurement and dynamic nodes.**
 
-```tsx
+```ts
 import { useCallback, useRef, useState, type RefObject } from 'react';
 
 type Message = { id: string; text: string };

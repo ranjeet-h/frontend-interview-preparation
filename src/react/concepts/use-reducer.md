@@ -4,7 +4,7 @@
 
 You are three sprints deep on a checkout wizard. The user can add items, apply promo codes, pick a shipping method, toggle a billing address, and submit payment. Each piece of data lives in its own `useState` call:
 
-```tsx
+```ts
 const [cart, setCart] = useState<CartItem[]>([]);
 const [coupon, setCoupon] = useState<string | null>(null);
 const [discountPercent, setDiscountPercent] = useState(0);
@@ -34,7 +34,7 @@ In React, the deposit slip is the action object, the teller window slot is `disp
 
 The hook signature is:
 
-```tsx
+```ts
 const [state, dispatch] = useReducer(reducer, initialArg, init);
 ```
 
@@ -54,7 +54,7 @@ For TypeScript, never type actions as `{ type: string; payload?: any }`. That lo
 
 Here is a complete shopping cart and checkout manager. It uses discriminated unions, lazy initialization from `localStorage`, immutable state transitions, and the exhaustive `never` check.
 
-```tsx
+```ts
 import React, { useReducer, useEffect } from 'react';
 
 // ── State shape ───────────────────────────────────────────────────────────────
@@ -372,7 +372,7 @@ React detects that a dispatch occurred during the render phase and immediately s
 
 The most common bug looks like this:
 
-```tsx
+```ts
 // ❌ WRONG — pushes directly onto state.todos and returns the same object reference
 function reducer(state, action) {
   switch (action.type) {
@@ -385,7 +385,7 @@ function reducer(state, action) {
 
 React checks whether to trigger a re-render using `Object.is(prevState, nextState)`. Because you returned the exact same object that came in — you only mutated its internals — `Object.is` says they are equal and React bails out. The DOM never updates. The UI looks frozen even though your state array now contains the new item. The fix is always to return a fresh object with cloned nested structures:
 
-```tsx
+```ts
 // ✅ CORRECT — new outer object, new array
 case 'ADD_TODO':
   return { ...state, todos: [...state.todos, action.payload] };
@@ -393,7 +393,7 @@ case 'ADD_TODO':
 
 **Trap 2 — Putting side effects inside the reducer.**
 
-```tsx
+```ts
 // ❌ WRONG — fetch fires inside a function React may call multiple times
 function reducer(state, action) {
   switch (action.type) {
@@ -408,21 +408,21 @@ In StrictMode, React runs this reducer twice per dispatch in development, so you
 
 **Trap 3 — Expensive initial state computed on every render.**
 
-```tsx
+```ts
 // ❌ WRONG — parseStoredCart runs on every single render invocation
 const [state, dispatch] = useReducer(reducer, parseStoredCart(localStorage.getItem('cart')));
 ```
 
 JavaScript evaluates `parseStoredCart(localStorage.getItem('cart'))` every time the parent renders this component. React ignores the result after mount, but the computation still runs. Fix it with the lazy initializer:
 
-```tsx
+```ts
 // ✅ CORRECT — parseStoredCart runs once, on mount
 const [state, dispatch] = useReducer(reducer, 'cart', parseStoredCart);
 ```
 
 **Trap 4 — Treating `useReducer` like a fancy `useState` with setter-style actions.**
 
-```tsx
+```ts
 // ❌ ANTI-PATTERN — this is just useState with extra steps
 dispatch({ type: 'SET_FIRST_NAME', payload: 'Jane' });
 dispatch({ type: 'SET_LAST_NAME', payload: 'Doe' });
@@ -431,14 +431,14 @@ dispatch({ type: 'SET_IS_DIRTY', payload: true });
 
 This pattern completely misses the point. You are still pushing the coordination logic into the event handler, still calling multiple dispatches for one logical user action, still risking intermediate invalid states. The right mental model is to dispatch events, not setters. Name the action after what happened in the user's world, not after which field you want to change:
 
-```tsx
+```ts
 // ✅ CORRECT — one dispatch, one domain event, the reducer handles all field updates atomically
 dispatch({ type: 'USER_PROFILE_UPDATED', payload: { firstName: 'Jane', lastName: 'Doe' } });
 ```
 
 **Trap 5 — Reading state immediately after dispatching.**
 
-```tsx
+```ts
 const handleIncrement = () => {
   dispatch({ type: 'INCREMENT' });
   console.log(state.count); // ❌ prints the OLD count, not the incremented one

@@ -22,7 +22,7 @@ Every render is an immutable snapshot: its props, state values, and functions ar
 
 An `async` function always returns a promise, even when its body has no explicit `return`. Therefore this is invalid:
 
-```tsx
+```ts
 // Partial pattern: place this inside a component that imports React and
 // declares `Profile` and `setProfile` with useState, for example:
 // type Profile = { name: string };
@@ -35,7 +35,7 @@ React.useEffect(async () => {
 
 React receives a promise where it expects a cleanup function. The fix is to keep the effect callback synchronous and start the asynchronous function inside it:
 
-```tsx
+```ts
 // Partial pattern: place this inside a component that imports React and
 // provides `setProfile` as a useState setter in its component scope.
 React.useEffect(() => {
@@ -65,7 +65,7 @@ response B arrives
 
 An abort still rejects the promise, so the catch block must treat `AbortError` as expected control flow. Other errors should move the operation into an error state. For APIs that do not accept an abort signal, an active flag or request ID prevents an old completion from committing its result. The following is a partial pattern: it assumes a component scope with `React`, a stable `slowSource` function in the dependency list, and `setValue`/`setError` state setters declared with `React.useState`:
 
-```tsx
+```ts
 React.useEffect(() => {
   let current = true;
 
@@ -101,7 +101,7 @@ At a senior level, also separate data ownership from loading presentation. A Sus
 
 This complete browser example uses a mocked API so it can be copied into a React + TypeScript app without a backend. The delay makes out-of-order completion easy to observe.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type User = { id: string; name: string };
@@ -170,7 +170,7 @@ The previous user remains visible during a refresh because the example models `s
 
 To visibly exercise out-of-order completion, use a non-abortable source with a small driver. Click **Run A → B** and request A starts first but takes longer; B completes first and is shown. When A eventually completes, its request ID is stale, so it is ignored. This is the case an aborting demo cannot show because cancellation may prevent A from completing at all.
 
-```tsx
+```ts
 import { useRef, useState } from "react";
 
 type Result = { id: "a" | "b"; label: string };
@@ -212,7 +212,7 @@ export function OutOfOrderDriver() {
 
 For a user action, the async function belongs in the handler, not in an effect:
 
-```tsx
+```ts
 import { useState } from "react";
 
 export function SaveButton({ save }: { save: () => Promise<void> }) {

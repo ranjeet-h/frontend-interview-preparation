@@ -31,7 +31,7 @@ Browsers cannot execute JSX natively. During your build step, tools like Babel, 
 
 When you write:
 
-```tsx
+```ts
 const element = <button className="btn-primary" onClick={handleClick}>Save</button>;
 ```
 
@@ -77,7 +77,7 @@ A React Element is 100% immutable. React freezes it in development mode (`Object
 
 A React component is a JavaScript function (or ES6 class) that accepts an inputs object called `props` and returns a tree of React Elements:
 
-```tsx
+```ts
 function Button({ variant, children }: ButtonProps) {
   return <button className={`btn-${variant}`}>{children}</button>;
 }
@@ -136,7 +136,7 @@ Here are practical, runnable examples demonstrating element inspection, the hook
 
 **Example 1: Inspecting the React Element object**
 
-```tsx
+```ts
 import React from 'react';
 
 interface BadgeProps {
@@ -183,7 +183,7 @@ console.log('DOM Element:', domElement);
 
 **Example 2: The Direct Function Invocation Trap vs Proper JSX**
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface CounterProps {
@@ -230,7 +230,7 @@ export function Dashboard() {
 
 Because React elements are immutable, you cannot do `element.props.disabled = true`. You use `React.cloneElement` to produce a new element with merged props:
 
-```tsx
+```ts
 import React, { ReactElement } from 'react';
 
 interface ButtonGroupProps {
@@ -266,7 +266,7 @@ export function Toolbar() {
 
 **Example 4: Nested Component Definition Trap vs Extracted Component**
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 // BAD: Defined inside the parent component render cycle
@@ -399,7 +399,7 @@ Instead, React compares the previous element tree (stored on the Fibers) with th
 **Trap 2: Declaring a component definition inside another component's body**
 
 - **The Mistake:**
-  ```tsx
+  ```ts
   function Parent() {
     // Nested component definition
     const Row = ({ text }: { text: string }) => <div>{text}</div>;
@@ -412,7 +412,7 @@ Instead, React compares the previous element tree (stored on the Fibers) with th
 **Trap 3: Storing React Elements in `useState`**
 
 - **The Mistake:**
-  ```tsx
+  ```ts
   const [modal, setModal] = useState(<UserModal user={currentUser} />);
   ```
 - **Why it breaks:** `<UserModal user={currentUser} />` evaluates immediately into a static React Element object capturing the value of `currentUser` at that instant. When `currentUser` updates later in the parent component, the element stored inside `modal` state remains unchanged and stale.
@@ -421,7 +421,7 @@ Instead, React compares the previous element tree (stored on the Fibers) with th
 **Trap 4: Mutating element props directly**
 
 - **The Mistake:**
-  ```tsx
+  ```ts
   function Container({ child }: { child: ReactElement }) {
     child.props.className = 'active'; // Runtime error or silent corruption
     return child;

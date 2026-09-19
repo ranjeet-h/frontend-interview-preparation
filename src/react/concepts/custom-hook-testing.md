@@ -46,7 +46,7 @@ The snippets assume a TypeScript test project with React Testing Library’s `re
 
 For a hook whose contract is a value and an action:
 
-```tsx
+```ts
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { useBoolean } from "./useBoolean";
@@ -70,7 +70,7 @@ The test does not inspect the state variable or count renders. It calls the acti
 
 For a debounced value, control time and verify both the quiet period and replacement behavior:
 
-```tsx
+```ts
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useDebouncedValue } from "./useDebouncedValue";
@@ -102,7 +102,7 @@ This proves the invariant: after rapid input, one final value is published after
 
 For a context-dependent hook, make the provider part of the harness. This example uses a minimal provider so the setup is self-contained; an application test would import its real provider and fixture:
 
-```tsx
+```ts
 import { createContext, type PropsWithChildren, useContext } from "react";
 import { renderHook } from "@testing-library/react";
 import { expect, it } from "vitest";
@@ -130,7 +130,7 @@ it("reads the user from the provider supplied by the harness", () => {
 
 When the hook’s meaning is the UI, render the consumer instead. This test checks the user-visible contract of a form hook and assumes `ProfileForm` exposes the actual application form:
 
-```tsx
+```ts
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it } from "vitest";
@@ -148,7 +148,7 @@ it("shows validation through the accessible form UI", async () => {
 
 For an async hook, control the async boundary. This deferred-promise example is self-contained as a test shape; in a network-facing suite, MSW usually preserves more of the real request/response behavior:
 
-```tsx
+```ts
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { useLoadUser } from "./useLoadUser";
@@ -180,7 +180,7 @@ The same suite should reject the request and assert the error state. For a searc
 
 Cleanup has its own direct shape. A subscription hook should return the external system to a known state when its owner unmounts:
 
-```tsx
+```ts
 import { renderHook } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { useClockSubscription } from "./useClockSubscription";

@@ -18,7 +18,7 @@ account pages, and small client-side interactive islands.
 An App Router Server Component can be asynchronous and fetch from the source of
 truth directly:
 
-```tsx
+```ts
 export default async function ProductPage({
   params,
 }: { params: Promise<{ id: string }> }) {

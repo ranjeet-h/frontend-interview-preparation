@@ -74,7 +74,7 @@ In development Strict Mode, React may render more than once and deliberately per
 
 **Example 1 — a runnable labeled profiler boundary.** Save this as a component in a React + TypeScript app and render `<ProfiledSearch />`. Type in the input, select an item, and inspect the browser console. The busy loop is deliberately artificial so the profile has an observable signal; remove it from real code.
 
-```tsx
+```ts
 import { Profiler, type ProfilerOnRenderCallback, useState } from "react";
 
 const items = Array.from({ length: 200 }, (_, index) => `Metric ${index + 1}`);
@@ -146,7 +146,7 @@ The callback measures the profiled React subtree, not input latency, layout, pai
 
 **Example 2 — runnable context and identity investigation.** This example makes a provider value stable and gives the list items stable keys. It also shows a TypeScript context that fails loudly if a consumer is rendered outside its provider.
 
-```tsx
+```ts
 import {
   memo,
   useCallback,

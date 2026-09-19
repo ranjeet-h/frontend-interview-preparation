@@ -53,7 +53,7 @@ Cancellation can also be composed. `AbortSignal.timeout(5_000)` creates a signal
 
 The following TypeScript/React example assumes React 18+ and a browser or test environment with `fetch` and `AbortController`. It puts the effect in a reusable hook; the component only consumes the hook’s result.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type User = { id: string; name: string };
@@ -131,7 +131,7 @@ There are three deliberately separate lines of responsibility here. Creating the
 
 The `active` flag is not a replacement for abort. It is a last-mile state-write guard. It is useful when a wrapper around `fetch` does not forward the signal, when a response has already crossed the point where cancellation can stop it, or when several async steps follow the request. If the application uses TanStack Query, the equivalent is to accept the library-provided signal and forward it:
 
-```tsx
+```ts
 import { useQuery } from "@tanstack/react-query";
 
 export function useUserWithQuery(userId: string) {

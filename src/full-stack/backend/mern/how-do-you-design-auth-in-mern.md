@@ -337,7 +337,7 @@ module.exports = router;
 
 **React auth provider for frontend state**
 
-```tsx
+```ts
 // client/src/auth/AuthProvider.tsx
 import { createContext, useContext, useEffect, useState } from "react";
 import { api } from "../lib/apiClient";

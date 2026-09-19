@@ -70,7 +70,7 @@ The following examples are labeled by the behavior they demonstrate. They are va
 
 **Example A — Runnable pure render and event update.** The component derives its visible list without mutating the incoming array. The state updater creates a new array, so repeated updater calls are safe.
 
-```tsx
+```ts
 import { StrictMode, useState } from "react";
 
 type Task = { id: number; title: string };
@@ -110,7 +110,7 @@ export function App() {
 
 **Example B — Runnable symmetrical effect.** The listener is created inside the setup so cleanup closes over the exact function reference. Strict Mode can add and remove it during its drill without leaving a duplicate listener.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 export function WindowWidth() {
@@ -131,7 +131,7 @@ export function WindowWidth() {
 
 **Example C — Runnable request cancellation with a typed response.** The `AbortController` belongs to one effect setup. When the dependency changes or Strict Mode tests cleanup, the old request is aborted and cannot compete with the new request.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 type User = { id: number; name: string };

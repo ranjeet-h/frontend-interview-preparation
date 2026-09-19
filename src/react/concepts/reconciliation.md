@@ -4,7 +4,7 @@
 
 React lets a component describe the whole UI for the current state:
 
-```tsx
+```ts
 return <button disabled={isSaving}>Save</button>;
 ```
 
@@ -62,7 +62,7 @@ The array algorithm uses a fast sequential pass while old and new children line 
 
 State belongs to a position in the rendered tree as identified by its parent relationship, type, and key. Keeping the same component function at the same keyed position preserves its hooks. Changing the key deliberately creates a new identity:
 
-```tsx
+```ts
 <ProfileForm key={selectedUserId} userId={selectedUserId} />
 ```
 
@@ -93,7 +93,7 @@ React's memoization features change how much work is attempted, not the identity
 
 TypeScript checks the props supplied to a component; it does not participate in runtime reconciliation. `key` is special React metadata and is not received as a normal prop, so declare a separate `id` when the child needs the identifier:
 
-```tsx
+```ts
 type RowProps = { id: string; label: string };
 
 function Row({ id, label }: RowProps) {
@@ -120,7 +120,7 @@ The generic `ReactNode` type is appropriate for arbitrary `children`, while a sp
 
 This complete TSX example can run in a React + TypeScript app. Increment the counter, then change its label, its key, and its wrapper type.
 
-```tsx
+```ts
 import { useState } from 'react';
 
 function Counter({ label }: { label: string }) {
@@ -165,7 +165,7 @@ Changing `label` keeps the `Counter` identity. Changing `counterKey` changes its
 
 **Example 2: stable data keys keep state with the item**
 
-```tsx
+```ts
 import { useState } from 'react';
 
 type Todo = { id: string; text: string };
@@ -217,7 +217,7 @@ Check `Read`, prepend, and observe that its checked state stays with `Read`. Rep
 
 **Example 3: render can be discarded, but effects require a commit**
 
-```tsx
+```ts
 import { StrictMode, useEffect, useState } from 'react';
 
 function ConnectionStatus({ roomId }: { roomId: string }) {
@@ -305,7 +305,7 @@ Nothing at runtime. TypeScript validates props, but `key` is consumed by React a
 
 Give the component a new key, or render a different component type/position. The explicit-key approach is usually clearest:
 
-```tsx
+```ts
 <Editor key={documentId} documentId={documentId} />
 ```
 
@@ -315,7 +315,7 @@ Use it when switching documents should create a fresh editor. Do not change keys
 
 **Trap: defining a component inside another component**
 
-```tsx
+```ts
 function Dashboard() {
   function SearchBox() {
     const [query, setQuery] = useState('');
@@ -330,7 +330,7 @@ function Dashboard() {
 
 **Trap: generating keys during render**
 
-```tsx
+```ts
 items.map((item) => <Row key={crypto.randomUUID()} item={item} />);
 ```
 
@@ -338,7 +338,7 @@ Every render gives every row a new identity, so React cannot reuse the old rows.
 
 **Trap: confusing a key with a prop**
 
-```tsx
+```ts
 function Row(props: { id: string }) {
   return <li>{props.id}</li>;
 }
@@ -355,7 +355,7 @@ React may execute a component and then discover that the host output needs no mu
 
 **Trap: performing side effects in render**
 
-```tsx
+```ts
 function BadAnalytics({ userId }: { userId: string }) {
   analytics.track('view', { userId }); // may run for a discarded render
   return <p>{userId}</p>;
@@ -370,7 +370,7 @@ A memoized component can still update because its own state or a context subscri
 
 **Trap: changing a wrapper to change styling**
 
-```tsx
+```ts
 return isCard ? (
   <div className="card"><CheckoutForm /></div>
 ) : (

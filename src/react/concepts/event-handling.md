@@ -96,7 +96,7 @@ In modern React (v17+), **event pooling was completely removed**. Modern JavaScr
 
 This search form demonstrates preventing default browser page reloads while maintaining native keyboard and form submission semantics:
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface SearchFormProps {
@@ -148,7 +148,7 @@ export function SearchForm({ onSearch, isLoading }: SearchFormProps) {
 
 This example demonstrates passing arguments to handlers, managing row clicks, and stopping propagation so a row's action button doesn't trigger the row's selection:
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface Project {
@@ -218,7 +218,7 @@ export function ProjectList({ projects, onDeleteProject }: ProjectListProps) {
 
 This example illustrates the difference between `event.target` and `event.currentTarget` when handling backdrop clicks:
 
-```tsx
+```ts
 import React from 'react';
 
 interface ModalProps {
@@ -335,7 +335,7 @@ React strictly adheres to standard W3C DOM specifications and does not inspect t
 - **The Mistake:** Writing `<button onClick={setCount(count + 1)}>Click Me</button>` or `<button onClick={handleDelete(user.id)}>Delete</button>`.
 - **Why It Fails:** Adding parentheses `()` executes the function synchronously during component evaluation. When the component renders, `setCount` is called immediately. The state update schedules a re-render. During the re-render, `setCount` is called again immediately, resulting in an unrecoverable infinite loop error.
 - **The Fix:** Pass a function reference or wrap parameterized calls in an arrow function:
-  ```tsx
+  ```ts
   // Wrong (runs on render)
   <button onClick={setCount(count + 1)}>Increment</button>
   <button onClick={handleDelete(user.id)}>Delete</button>
@@ -349,7 +349,7 @@ React strictly adheres to standard W3C DOM specifications and does not inspect t
 - **The Mistake:** Placing a "Delete" or "Share" button inside an expandable card without stopping propagation.
 - **Why It Fails:** When the user clicks the "Delete" button, the click event bubbles up through the DOM tree. React triggers the button's `onClick` handler, and then immediately triggers the parent card's `onClick` expand/collapse handler. The card toggles its open/closed state while simultaneously triggering a deletion.
 - **The Fix:** Explicitly call `event.stopPropagation()` inside child action buttons:
-  ```tsx
+  ```ts
   function ActionButton({ onDelete }: { onDelete: () => void }) {
     return (
       <button
@@ -368,7 +368,7 @@ React strictly adheres to standard W3C DOM specifications and does not inspect t
 - **The Mistake:** Accessing `e.target.dataset.id` or `e.target.id` on a button that contains an internal icon or label element.
 - **Why It Fails:** `event.target` refers to the exact element clicked. If the button contains `<button data-id="123"><svg><path /></svg><span>Delete</span></button>`, clicking the icon sets `event.target` to the `<path>` or `<svg>` element. The `<path>` element does not have `data-id`, so `e.target.dataset.id` returns `undefined`.
 - **The Fix:** Always read attributes and values from `event.currentTarget`, which is guaranteed to be the element holding the `onClick` prop:
-  ```tsx
+  ```ts
   const handleButtonClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     // e.currentTarget is guaranteed to be the HTMLButtonElement
     const buttonId = e.currentTarget.dataset.id;
@@ -380,7 +380,7 @@ React strictly adheres to standard W3C DOM specifications and does not inspect t
 - **The Mistake:** Closing a custom dropdown by attaching a native `document.addEventListener('click', closeDropdown)` in a `useEffect`, while relying on `e.stopPropagation()` in React's dropdown `onClick` to keep it open.
 - **Why It Fails in React 17+:** In React 17+, React events bubble to the root container (`#root`), **not** to `document`. Native event listeners on `document` run during the native bubble phase *after* the event reaches `#root`. If a native listener is registered on `document`, React's synthetic `e.stopPropagation()` cannot prevent it because the native event has already left `#root` and arrived at `document`.
 - **The Fix:** Use React's own event boundary, or inspect `event.target` inside the native listener using `ref.current.contains(event.target)`:
-  ```tsx
+  ```ts
   useEffect(() => {
     const handleDocumentClick = (e: MouseEvent) => {
       // Check if click was outside the dropdown ref
@@ -397,7 +397,7 @@ React strictly adheres to standard W3C DOM specifications and does not inspect t
 - **The Mistake:** Using `<div onClick={handleClick}>Submit</div>` instead of a semantic `<button>`.
 - **Why It Fails:** A `<div>` is not focusable via keyboard navigation (Tab key), does not respond to `Enter` or `Space` key presses, and is announced as generic static text by screen readers.
 - **The Fix:** Use semantic `<button>` elements whenever an element is clickable. If a custom element is mandatory, explicitly add `tabIndex={0}`, `role="button"`, and an `onKeyDown` listener handling `Enter` and `Space`:
-  ```tsx
+  ```ts
   // Semantic & accessible for free
   <button type="button" onClick={handleClick}>Submit</button>
 

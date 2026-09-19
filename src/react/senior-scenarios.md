@@ -143,7 +143,7 @@ The examples below assume React 18+, TypeScript, and TanStack Query v5 where que
 
 **A feature route with a typed client and query states:**
 
-~~~tsx
+~~~ts
 import {
   QueryClient,
   QueryClientProvider,
@@ -237,7 +237,7 @@ The query key includes tenant scope, the request accepts the library-provided ab
 
 **A state boundary and a server-paginated, virtualized table:**
 
-~~~tsx
+~~~ts
 import { useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -343,7 +343,7 @@ This is intentionally a boundary, not a claim that 100,000 records should be fet
 
 **A global reporting seam with recoverable boundaries:**
 
-~~~tsx
+~~~ts
 import type { ErrorInfo, ReactElement, ReactNode } from "react";
 import { Component } from "react";
 
@@ -397,7 +397,7 @@ The boundary reports a safe identifier and keeps the failure local to a feature.
 
 **A migration seam and CI budget:**
 
-~~~tsx
+~~~ts
 import type { ReactElement } from "react";
 
 type LegacyInvoice = { invoice_id: string; amount: number; paid: boolean };

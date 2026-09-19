@@ -4,7 +4,7 @@
 
 Imagine building a `<Card />` component for a shared design system. In sprint one, it is simple: `title`, `description`, and `buttonText`.
 
-```tsx
+```ts
 // The beginning of prop explosion
 <Card title="Billing" description="Manage your invoices" buttonText="Upgrade" />
 ```
@@ -39,7 +39,7 @@ With composition, the frame provides the container and styling, while you provid
 
 When you write JSX with nested elements, React's compiler converts the nested elements into an argument passed to the component's props object under the key `children`.
 
-```tsx
+```ts
 // What you write:
 <Modal title="Confirm Delete">
   <p>Are you sure you want to delete this project?</p>
@@ -64,7 +64,7 @@ One of the most critical performance optimizations in React relies directly on h
 
 When a component updates its own state, React re-executes that component function from top to bottom. Any child component declared directly inside its JSX return body gets re-evaluated:
 
-```tsx
+```ts
 function BadContainer() {
   const [count, setCount] = useState(0);
 
@@ -82,7 +82,7 @@ function BadContainer() {
 
 Now watch what happens when you use composition with `children`:
 
-```tsx
+```ts
 function FastContainer({ children }: { children: React.ReactNode }) {
   const [count, setCount] = useState(0);
 
@@ -119,7 +119,7 @@ Keys are part of that identity story. Keeping the same component type and key le
 
 `children` represents the primary or default content area. When a component requires multiple distinct insertion points (like a layout with a header, sidebar, and body), use named element props:
 
-```tsx
+```ts
 interface SplitLayoutProps {
   sidebar: React.ReactNode;
   header?: React.ReactNode;
@@ -162,7 +162,7 @@ React provides the `React.Children` helper methods to handle this safely:
 
 When a wrapper component manages dynamic data or internal state that the consumer needs access to, `children` can be a function instead of JSX elements. Here the external source is the browser's mutable scroll position, so `useSyncExternalStore` gives React a render-time snapshot plus a way to hear about changes.
 
-```tsx
+```ts
 import { ReactNode, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -228,7 +228,7 @@ The contract has three important parts:
 
 Understanding React types in TypeScript is essential:
 
-```tsx
+```ts
 import React, { ReactNode, ReactElement } from "react";
 
 // 1. React.ReactNode (The Standard Choice)
@@ -272,7 +272,7 @@ function Panel({ children = <p>Nothing to show yet.</p> }: PanelProps) {
 
 Here is how modern production design systems build flexible cards without prop explosion:
 
-```tsx
+```ts
 import React, { createContext, useContext, ReactNode } from "react";
 
 // Context for coordinating subcomponents if needed
@@ -349,7 +349,7 @@ export function BillingSection() {
 
 This example demonstrates how a stateful shell can often avoid re-calling a heavy child during its own updates, while making the mount behavior explicit:
 
-```tsx
+```ts
 import React, { useState, ReactNode } from "react";
 
 // An expensive component that takes time to render
@@ -403,7 +403,7 @@ export function MetricsDashboard() {
 
 When building components like breadcrumbs, segmented buttons, or lists with dividers, use `React.Children.toArray` to safely inject separators:
 
-```tsx
+```ts
 import React, { ReactNode, Children } from "react";
 
 interface BreadcrumbsProps {
@@ -511,7 +511,7 @@ While Custom Hooks have largely replaced Render Props for stateful logic sharing
 
 With the declared type `React.ReactNode`, TypeScript rejects a direct `children.map(...)` call at compile time: the union also contains strings, numbers, elements, iterables, and empty values, and `ReactNode` has no guaranteed `.map` method. That is a type-checking failure, not runtime behavior:
 
-```tsx
+```ts
 // ❌ TypeScript compile-time failure: ReactNode is not guaranteed to be an array
 function List({ children }: { children: React.ReactNode }) {
   return (
@@ -524,7 +524,7 @@ function List({ children }: { children: React.ReactNode }) {
 
 If JavaScript or an unsafe cast bypasses TypeScript, the same assumption can fail at runtime when one child is an element or no child is passed:
 
-```tsx
+```ts
 // ⚠️ Unsafe cast: this compiles, but a single child has no .map method at runtime
 function UnsafeList({ children }: { children: React.ReactNode }) {
   const assumedArray = children as React.ReactNode[];
@@ -546,7 +546,7 @@ function List({ children }: { children: React.ReactNode }) {
 
 **Trap 2: breaking render isolation by creating new JSX inside the parent.**
 
-```tsx
+```ts
 // ❌ BROKEN: Creating the child JSX inside the stateful component
 function CounterShell() {
   const [count, setCount] = useState(0);
@@ -581,7 +581,7 @@ function CounterShell({ children }: { children: React.ReactNode }) {
 
 Trying to inject props into `children` dynamically via `React.cloneElement` creates invisible coupling, breaks if the caller wraps a child in a `<div />` or `React.Fragment`, and bypasses TypeScript safety:
 
-```tsx
+```ts
 // ❌ FRAGILE: Clones children to inject an "isActive" prop
 function TabGroup({ children, activeIndex }: { children: React.ReactNode; activeIndex: number }) {
   return (
@@ -630,7 +630,7 @@ function Tab({ index, label }: { index: number; label: string }) {
 
 **Trap 4: typing `children` as `React.ReactElement` or `JSX.Element`.**
 
-```tsx
+```ts
 // ❌ WRONG for general content: Excludes text, numbers, booleans, and arrays.
 // A fragment is not excluded: <>...</> is a ReactElement.
 interface ButtonProps {

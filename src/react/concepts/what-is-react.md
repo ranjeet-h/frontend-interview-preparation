@@ -68,7 +68,7 @@ Here is what happens under the hood across every step of that journey.
 
 Browsers cannot execute JSX natively. When you write `<div className="card"><h1>Hello</h1></div>`, a compiler like Babel, SWC, or TypeScript transpiles that syntax into standard JavaScript function calls using the JSX runtime:
 
-```tsx
+```ts
 // What you write:
 const element = <div className="card"><h1>Hello</h1></div>;
 
@@ -238,7 +238,7 @@ This complete browser example still has to coordinate each affected DOM node, bu
 **Declarative React approach.**
 In React, the entire UI is derived automatically from the `cart` state array. We write zero manual DOM queries:
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface Product {
@@ -418,7 +418,7 @@ When these functions execute in the browser, they return plain JavaScript object
 - **The Wrong Assumption:** Modifying a property on an existing state object or array will update the data and re-render the screen.
 - **Why It's Wrong:**
 
-```tsx
+```ts
 import { useState } from 'react';
 
 // ❌ WRONG: Mutating state directly
@@ -438,7 +438,7 @@ function MutatingStateExample() {
 - **The Nuance:** For a direct `setUser(user)` update, React can eagerly compare the new value with the current value and skip scheduling work immediately. Even when an update is scheduled and a later render happens for another reason, the mutated object can still be observed through the current snapshot or other references, producing inconsistent results rather than a guaranteed permanent freeze. The bug is that the old snapshot was changed behind React's back; React's equality check cannot detect a new value because there is no new reference.
 - **The Fix:** Always pass a fresh object or array reference:
 
-```tsx
+```ts
 import { useState } from 'react';
 
 // ✅ CORRECT: Immutable update with new object reference
@@ -460,7 +460,7 @@ function ImmutableStateExample() {
 - **The Wrong Assumption:** Calling a state updater immediately updates the variable in the current function execution scope.
 - **Why It's Wrong:**
 
-```tsx
+```ts
 import { useState } from 'react';
 
 // ❌ WRONG: Expecting synchronous state updates
@@ -479,7 +479,7 @@ function SynchronousStateExample() {
 - **What Actually Happens:** Calling `setCount` schedules a re-render for the *next* render cycle. The `count` variable in the current function execution is a `const` captured within the closure of the current render snapshot. It will remain `0` until the component function is invoked again on the next render.
 - **The Fix:** If you need the next value immediately in the same handler, compute it into a local variable first or use an effect/callback:
 
-```tsx
+```ts
 import { useState } from 'react';
 
 // ✅ CORRECT: Compute value locally

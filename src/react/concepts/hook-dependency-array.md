@@ -53,7 +53,7 @@ Save the following as `index.html` in a Vite React TypeScript app; the TSX block
 </html>
 ```
 
-```tsx
+```ts
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -145,7 +145,7 @@ Use the same local Vite React TypeScript setup, with this `index.html` fixture a
 </html>
 ```
 
-```tsx
+```ts
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -195,7 +195,7 @@ Use the same local Vite React TypeScript setup, with this `index.html` fixture a
 </html>
 ```
 
-```tsx
+```ts
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 

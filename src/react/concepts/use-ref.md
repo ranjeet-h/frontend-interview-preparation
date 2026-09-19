@@ -66,7 +66,7 @@ The `usePrevious` pattern illustrates the Commit Phase timing precisely. On rend
 
 The interval ID is pure bookkeeping — no UI depends on knowing its value. Storing it in state would cause a phantom re-render every time the timer starts or stops. The displayed seconds count goes in state because the screen must reflect it; the handle managing that interval goes in a ref.
 
-```tsx
+```ts
 import React, { useState, useRef, useEffect } from "react";
 
 export function Stopwatch() {
@@ -126,7 +126,7 @@ export function Stopwatch() {
 
 The ref gives you a direct handle to the real DOM node. Reading it inside event handlers is always safe because the Commit Phase has already completed by the time any user interaction fires.
 
-```tsx
+```ts
 import React, { useRef, useState } from "react";
 
 export function AutoFocusSearch() {
@@ -188,7 +188,7 @@ export function AutoFocusSearch() {
 
 This is the canonical example of refs carrying information across render cycles. The timing subtlety: during render N, `ref.current` still holds render N-1's value because the effect that would update it has not run yet. After commit, the effect updates the ref silently for next time.
 
-```tsx
+```ts
 import React, { useState, useRef, useEffect } from "react";
 
 // Returns whatever `value` was on the previous render.
@@ -230,7 +230,7 @@ export function PriceTracker({ currentPrice }: { currentPrice: number }) {
 
 A callback created inside a render closes over the state of that render. If it executes asynchronously later, state may have changed but the callback still reads the old snapshot. Storing the latest value in a ref breaks the closure's dependency on its creation-time snapshot.
 
-```tsx
+```ts
 import React, { useState, useRef, useEffect } from "react";
 
 export function LiveSearch() {
@@ -269,7 +269,7 @@ export function LiveSearch() {
 
 `useRef` has no initializer function overload. The expression you pass is evaluated by JavaScript before `useRef` even sees it — on every render.
 
-```tsx
+```ts
 // ❌ new HeavyService() runs and is garbage-collected on every single render
 const serviceRef = useRef(new HeavyService());
 
@@ -332,7 +332,7 @@ By storing the latest value in a ref (`latestValueRef.current = value`) via an e
 
 A Callback Ref is a function passed to the `ref` prop instead of a ref object:
 
-```tsx
+```ts
 <div ref={(node) => { if (node) setElementHeight(node.getBoundingClientRect().height); }} />
 ```
 
@@ -344,7 +344,7 @@ Unlike `useState(() => expensiveComputation())`, `useRef` does not accept an ini
 
 Use a `null` sentinel pattern:
 
-```tsx
+```ts
 const clientRef = useRef<ExpensiveClient | null>(null);
 
 function getClient(): ExpensiveClient {
@@ -361,7 +361,7 @@ function getClient(): ExpensiveClient {
 
 The wrong assumption is that refs work like local scratchpads during rendering. A common example is tracking render counts:
 
-```tsx
+```ts
 // ❌ WRONG: Mutating ref during render
 function BrokenCounter() {
   const renderCount = useRef(0);
@@ -373,7 +373,7 @@ function BrokenCounter() {
 
 In Concurrent React, if a speculative render is interrupted and discarded, `renderCount.current` has already incremented even though nothing committed. The count is permanently corrupted. Move the mutation into a `useEffect`:
 
-```tsx
+```ts
 // ✅ CORRECT: Mutate inside an effect — only after a real committed render
 function AccurateCounter() {
   const renderCount = useRef(0);
@@ -390,7 +390,7 @@ function AccurateCounter() {
 
 The wrong assumption: using `useRef` as a performance optimization to avoid re-renders when updating text or UI elements.
 
-```tsx
+```ts
 // ❌ WRONG: Changing ref does not update the screen
 function BrokenInput() {
   const textRef = useRef("");
@@ -407,7 +407,7 @@ Mutating `.current` does not notify React or schedule reconciliation. The screen
 
 **Trap: Passing expensive constructors directly to `useRef`**
 
-```tsx
+```ts
 // ❌ WRONG: new HeavyService() runs on every single render
 function Dashboard() {
   const serviceRef = useRef(new HeavyService());
@@ -418,7 +418,7 @@ The expression `new HeavyService()` is evaluated by JavaScript before `useRef` i
 
 **Trap: Relying on `useRef` to react to conditional DOM element mounting**
 
-```tsx
+```ts
 // ❌ WRONG: React does not trigger effects when ref.current changes
 function ConditionalMeasure() {
   const [show, setShow] = useState(false);
@@ -434,7 +434,7 @@ function ConditionalMeasure() {
 
 `ref.current` is not reactive. Placing `elementRef.current` in the dependency array does nothing — mutations to `.current` never trigger a dependency diff because they never cause a re-render. Use a Callback Ref instead:
 
-```tsx
+```ts
 // ✅ CORRECT: Callback ref fires immediately when node mounts
 function ConditionalMeasure() {
   const [show, setShow] = useState(false);

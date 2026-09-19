@@ -91,7 +91,7 @@ Here is how React's diffing behavior operates across different component structu
 
 **Example 1: Type Replacement vs Prop Mutation**
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 function Counter() {
@@ -142,7 +142,7 @@ export function TypeDiffingDemo() {
 
 **Example 2: How Keys Protect State During Multi-Child Diffing**
 
-```tsx
+```ts
 import React, { useState } from 'react';
 
 interface TodoItem {
@@ -288,7 +288,7 @@ No. React diffs strictly level-by-level within the same parent node. If an eleme
 
 **Trap 1: Defining Components Inside the Body of Another Component**
 
-```tsx
+```ts
 // WRONG: Defining a component inside another component's render function
 function ParentContainer() {
   const [count, setCount] = useState(0);
@@ -313,7 +313,7 @@ When a component is declared inside another component's render function, JavaScr
 
 **Trap 2: Generating Dynamic or Random Keys on the Fly**
 
-```tsx
+```ts
 // WRONG: Generating a new key on every render
 <UserCard key={Math.random()} user={user} />
 <UserCard key={Date.now()} user={user} />
@@ -325,7 +325,7 @@ Passing random numbers or timestamps as keys tricks React into believing that ev
 
 **Trap 3: Assuming Same JSX Structure Preserves State Across Wrapper Changes**
 
-```tsx
+```ts
 // Subtle bug: toggling isCard wipes out FormFields state
 {isCard ? (
   <div className="card-wrapper">
@@ -342,7 +342,7 @@ Developers often assume that because `<FormFields />` exists in both branches of
 
 **Trap 4: Expecting React to Track Cross-Container Moves**
 
-```tsx
+```ts
 // Moving a component from a drawer to a modal resets its state
 {isExpanded ? (
   <ModalContainer>

@@ -84,7 +84,7 @@ The database is the final source of truth. If two requests slip past Redis (for 
 
 This component prevents search input spam, deduplicates queries, and automatically cancels stale in-flight HTTP requests when the user types a new character.
 
-```tsx
+```ts
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';

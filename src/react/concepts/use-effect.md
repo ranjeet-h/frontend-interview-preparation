@@ -86,7 +86,7 @@ If you need to reset state when a key identity prop changes (like switching from
 
 **Data fetching with `AbortController` — the complete pattern.**
 
-```tsx
+```ts
 import React, { useState, useEffect } from "react";
 
 interface UserProfile {
@@ -159,7 +159,7 @@ function UserCard({ userId }: { userId: string }) {
 
 **Window event subscription — listener with guaranteed teardown.**
 
-```tsx
+```ts
 import React, { useState, useEffect } from "react";
 
 function WindowScrollProgress() {
@@ -207,7 +207,7 @@ function WindowScrollProgress() {
 
 **Synchronizing an imperative third-party widget — two separate effects for two separate concerns.**
 
-```tsx
+```ts
 import React, { useEffect, useRef } from "react";
 
 interface VideoPlayerProps {
@@ -280,7 +280,7 @@ A stale closure happens when an effect captures a variable from the component's 
 
 The classic example is a `setInterval` inside an effect with `[]`:
 
-```tsx
+```ts
 useEffect(() => {
   const id = setInterval(() => {
     setCount(count + 1); // count is captured as 0 forever
@@ -307,7 +307,7 @@ An `async` function always returns a `Promise`. React expects `useEffect` to ret
 
 The correct pattern is to define the async function inside the synchronous effect body and call it immediately:
 
-```tsx
+```ts
 useEffect(() => {
   let isIgnored = false;
 
@@ -336,7 +336,7 @@ If you're clearing or resetting state when an identity prop changes (like switch
 
 **Trap 1: Object or array in the dependency array causing an infinite loop.**
 
-```tsx
+```ts
 function SearchResults({ query }: { query: string }) {
   // This object is recreated on every render — new reference every time.
   const options = { caseSensitive: false, maxResults: 10 };
@@ -353,7 +353,7 @@ Fix: Move static objects outside the component entirely. Or pass the primitive v
 
 **Trap 2: Stale closure in `setInterval`.**
 
-```tsx
+```ts
 function Counter() {
   const [count, setCount] = useState(0);
 
@@ -372,7 +372,7 @@ Fix: `setCount(prev => prev + 1)`. The functional updater removes the dependency
 
 **Trap 3: Passing an `async` function directly.**
 
-```tsx
+```ts
 // WRONG: Returns Promise<void>, not undefined or a cleanup function
 useEffect(async () => {
   const data = await fetchData();
@@ -387,7 +387,7 @@ Fix: Define async inline and call it synchronously, as shown in the code example
 
 **Trap 4: Suppressing the linter instead of fixing the dependency graph.**
 
-```tsx
+```ts
 useEffect(() => {
   logVisit(userId, currentTheme);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -400,7 +400,7 @@ Fix: Include all reactive values. If you genuinely want to read a value in the e
 
 **Trap 5: Missing cleanup on subscriptions creates zombie handlers.**
 
-```tsx
+```ts
 useEffect(() => {
   const handleResize = () => setWidth(window.innerWidth);
   window.addEventListener("resize", handleResize);
@@ -416,7 +416,7 @@ Fix: Always mirror every setup call with its teardown in the return function.
 
 A subtle but important one: when your cleanup function closes over dependencies, it captures the values from the render *that scheduled the effect*, not the values from the render that triggered cleanup.
 
-```tsx
+```ts
 useEffect(() => {
   const ws = new WebSocket(`wss://example.com/room/${roomId}`);
   ws.onmessage = (msg) => handleMessage(msg);

@@ -52,7 +52,7 @@ The following TypeScript/React fragments are contextual application examples: th
 
 **Presentational component: a stable view-model boundary.**
 
-```tsx
+```ts
 // components/UserTable.tsx
 export interface UserRowViewModel {
   id: string;
@@ -111,7 +111,7 @@ The component still handles real UI behavior: loading and empty states, semantic
 
 **Container hook: fetch, transform, and coordinate route state.**
 
-```tsx
+```ts
 // hooks/useUsersList.ts
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -166,7 +166,7 @@ The query key includes `page`, so page 1 and page 2 are distinct server-state en
 
 **Route component: connect the two sides.**
 
-```tsx
+```ts
 // pages/UsersPage.tsx
 import { UserTable } from '../components/UserTable';
 import { useUsersList } from '../hooks/useUsersList';

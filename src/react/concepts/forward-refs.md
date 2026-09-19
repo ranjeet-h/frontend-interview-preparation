@@ -6,7 +6,7 @@ You are building a reusable design system component for your team. You create a 
 
 Then a feature team consumes your component inside a checkout form. When a customer submits an invalid credit card number, the checkout form needs to focus the invalid input immediately:
 
-```tsx
+```ts
 const inputRef = useRef<HTMLInputElement>(null);
 return <TextInput ref={inputRef} label="Card Number" />;
 ```
@@ -15,7 +15,7 @@ The consumer clicks submit and calls `inputRef.current?.focus()`, but nothing ha
 
 The developer tries to fix this inside `<TextInput />` by destructuring `ref` like a regular prop:
 
-```tsx
+```ts
 function TextInput({ ref, label, ...props }) {
   return <input ref={ref} {...props} />;
 }
@@ -77,7 +77,7 @@ When React's reconciler executes a standard function component during the render
 
 `React.forwardRef` is a higher-order wrapper function. When you wrap a component with it:
 
-```tsx
+```ts
 const TextInput = React.forwardRef((props, ref) => {
   return <input ref={ref} {...props} />;
 });
@@ -95,7 +95,7 @@ Passing a raw DOM node directly to a parent breaks the Law of Demeter. A parent 
 
 `useImperativeHandle` lets the child component intercept the incoming ref and supply a custom, restricted object instead of the raw DOM node:
 
-```tsx
+```ts
 useImperativeHandle(ref, () => ({
   focus: () => innerInputRef.current?.focus(),
   select: () => innerInputRef.current?.select(),
@@ -108,7 +108,7 @@ During the commit phase, React executes the factory function passed to `useImper
 
 React 19 eliminated the architectural distinction that required `forwardRef`. In React 19, function components can accept `ref` directly as a regular prop:
 
-```tsx
+```ts
 function TextInput({ ref, label, ...props }: TextInputProps) {
   return <input ref={ref} {...props} />;
 }
@@ -120,7 +120,7 @@ The JSX runtime in React 19 leaves `ref` inside the `props` object for function 
 
 When using `React.forwardRef` in TypeScript, the generic parameter order is counterintuitive:
 
-```tsx
+```ts
 React.forwardRef<RefTargetType, ComponentPropsType>((props, ref) => ...)
 ```
 
@@ -134,7 +134,7 @@ Here is how to implement forwarded refs across common production patterns: a des
 
 **Pattern 1: Production Design System Input with `React.forwardRef` (React 18 & Transitional)**
 
-```tsx
+```ts
 import React, { forwardRef, useId } from 'react';
 
 // Props inherit all native <input> attributes except the ref itself
@@ -187,7 +187,7 @@ TextInput.displayName = 'TextInput';
 
 **Pattern 2: Modern React 19 Direct `ref` as a Prop**
 
-```tsx
+```ts
 import React, { useId } from 'react';
 
 // In React 19, ref is part of standard ComponentPropsWithRef or explicit props
@@ -220,7 +220,7 @@ export function ModernTextInput({ label, error, ref, id, ...restProps }: ModernI
 
 **Pattern 3: Controlled Handle Exposure with `useImperativeHandle`**
 
-```tsx
+```ts
 import React, { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 
 // Define the exact public interface the parent is allowed to invoke
@@ -310,7 +310,7 @@ ConfirmModal.displayName = 'ConfirmModal';
 
 **Pattern 4: Parent Form Consuming Forwarded Ref and Imperative Modal**
 
-```tsx
+```ts
 import React, { useRef } from 'react';
 import { TextInput } from './TextInput';
 import { ConfirmModal, ConfirmModalHandle } from './ConfirmModal';
@@ -389,7 +389,7 @@ In React 19, the React team refactored element creation and fiber reconciliation
 
 In TypeScript, `React.forwardRef` takes two generic type arguments:
 
-```tsx
+```ts
 React.forwardRef<RefType, PropsType>((props, ref) => ...)
 ```
 
@@ -423,7 +423,7 @@ Refs should not be forwarded when:
 **Trap 1: Destructuring `ref` from `props` in React 18 or transitional codebases**
 
 *The Mistake:* Developers accustomed to regular props write:
-```tsx
+```ts
 function SearchInput({ ref, placeholder }: { ref: React.Ref<HTMLInputElement>; placeholder: string }) {
   return <input ref={ref} placeholder={placeholder} />;
 }
@@ -434,7 +434,7 @@ function SearchInput({ ref, placeholder }: { ref: React.Ref<HTMLInputElement>; p
 **Trap 2: Inverting the TypeScript generic parameter order**
 
 *The Mistake:* Writing the props interface first:
-```tsx
+```ts
 // WRONG: Inverted generic arguments
 const CustomInput = forwardRef<CustomInputProps, HTMLInputElement>((props, ref) => { ... });
 ```
@@ -444,7 +444,7 @@ const CustomInput = forwardRef<CustomInputProps, HTMLInputElement>((props, ref) 
 **Trap 3: Anonymous functions losing component names in DevTools**
 
 *The Mistake:* Passing an inline arrow function directly to `forwardRef`:
-```tsx
+```ts
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => (
   <button ref={ref} {...props} />
 ));
@@ -455,7 +455,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) =>
 **Trap 4: Accessing or mutating `ref.current` during the render phase**
 
 *The Mistake:* Reading or modifying the ref value directly in the component body:
-```tsx
+```ts
 const TextInput = forwardRef<HTMLInputElement, Props>((props, ref) => {
   // WRONG: Reading ref during render execution
   if (ref && 'current' in ref && ref.current) {
@@ -470,7 +470,7 @@ const TextInput = forwardRef<HTMLInputElement, Props>((props, ref) => {
 **Trap 5: Leaking full DOM nodes instead of a restricted imperative handle**
 
 *The Mistake:* Exposing the raw outer container DOM node on complex widgets:
-```tsx
+```ts
 export const DatePicker = forwardRef<HTMLDivElement, DatePickerProps>((props, ref) => {
   return <div ref={ref}><input /><CalendarPopup /></div>;
 });
@@ -481,7 +481,7 @@ export const DatePicker = forwardRef<HTMLDivElement, DatePickerProps>((props, re
 **Trap 6: Conditional ref forwarding causing null references and layout thrashing**
 
 *The Mistake:* Attaching the forwarded ref to different elements based on state:
-```tsx
+```ts
 const DynamicControl = forwardRef<HTMLElement, Props>(({ isEditing, ...props }, ref) => {
   return isEditing 
     ? <input ref={ref as React.Ref<HTMLInputElement>} {...props} />

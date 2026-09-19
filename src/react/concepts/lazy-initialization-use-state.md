@@ -18,7 +18,7 @@ If the hotel closes a room and opens a brand-new room, a new package is prepared
 
 The important distinction is between these two expressions:
 
-```tsx
+```ts
 // Fragment (not standalone): assumes React's useState and a createInitialItems helper.
 useState(createInitialItems())
 useState(() => createInitialItems())
@@ -41,7 +41,7 @@ The function is not a general “run this later” callback. React calls it with
 
 The result is not permanently frozen. A setter can replace it later:
 
-```tsx
+```ts
 // Fragment (not standalone): assumes React's useState and a readInitialItems helper.
 const [items, setItems] = useState(() => readInitialItems());
 
@@ -61,7 +61,7 @@ For server rendering, the initializer still runs while the component is rendered
 
 This self-contained component demonstrates the difference between eager evaluation and lazy initialization. `buildRows` logs whenever it runs; changing the filter causes a re-render.
 
-```tsx
+```ts
 import { useState } from "react";
 
 function buildRows() {
@@ -90,7 +90,7 @@ export function RowSearch() {
 
 This is the contrasting mistake:
 
-```tsx
+```ts
 // Fragment (not standalone): assumes React's useState and the buildRows helper above.
 // Incorrect when buildRows is expensive: it runs on every render.
 const [rows] = useState(buildRows());
@@ -100,7 +100,7 @@ React still keeps the first state value, so the bug can be hard to notice in the
 
 Reading a persisted preference is a practical use case, provided the environment supports the API:
 
-```tsx
+```ts
 import { useState } from "react";
 
 function readTheme(): "light" | "dark" {
@@ -127,7 +127,7 @@ export function ThemeToggle() {
 
 The initializer below is not appropriate because rendering it changes an external system:
 
-```tsx
+```ts
 // Intentionally bad, non-runnable example: it demonstrates a render-time side effect.
 // Do not do this: Strict Mode or another render retry can write more than once.
 const [id] = useState(() => {
@@ -190,7 +190,7 @@ The function is not returned to you for later use. React calls it as part of ini
 
 This code only uses `userId` on the first mount:
 
-```tsx
+```ts
 // Fragment (not standalone): assumes React's useState and a userId in component scope.
 const [draft, setDraft] = useState(() => makeDraft(userId));
 ```
@@ -205,7 +205,7 @@ Strict Mode can expose this by producing duplicate writes or requests in develop
 
 The difference is one pair of parentheses:
 
-```tsx
+```ts
 // Fragment (not standalone): assumes React's useState and a parseLargeDocument helper.
 useState(parseLargeDocument()); // parse now, on every component render
 useState(() => parseLargeDocument()); // let React initialize once per mount

@@ -18,14 +18,14 @@ Sometimes a guest needs a one-off service after checking in: “please call hous
 
 The parent creates a ref object, then attaches it to the child:
 
-```tsx
+```ts
 const searchRef = useRef<SearchBoxHandle>(null);
 return <SearchBox ref={searchRef} />;
 ```
 
 In React 18 and earlier, a function component does not receive that `ref` as an ordinary prop. `forwardRef` is the explicit boundary that gives the child a second `ref` argument:
 
-```tsx
+```ts
 const SearchBox = forwardRef<SearchBoxHandle, SearchBoxProps>((props, ref) => {
   // ref is available here because forwardRef passed it in.
 });
@@ -49,7 +49,7 @@ The factory should describe the handle, not perform the action immediately. The 
 
 In React 19, a function component can receive `ref` as a regular prop, so the wrapper is no longer required for that component style:
 
-```tsx
+```ts
 import { type Ref, useImperativeHandle, useRef } from 'react';
 
 type SearchBoxHandle = {
@@ -88,7 +88,7 @@ The underlying idea is unchanged: `ref` is the communication channel, and `useIm
 
 This complete example is suitable for a React 18 or React 19 project that supports TypeScript and JSX. It shows a reusable input exposing only two actions and a parent consuming the typed API.
 
-```tsx
+```ts
 import {
   forwardRef,
   useImperativeHandle,
@@ -175,7 +175,7 @@ Here is the important contrast. Exposing `inputRef` directly would let the paren
 
 If a handle reads changing state, make that choice explicit. This version keeps the public object stable while the method reads the latest value through a separate ref:
 
-```tsx
+```ts
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 
 type PlayerHandle = { reportPosition: () => number };

@@ -44,7 +44,7 @@ A cache is not ownership. The server remains authoritative when values conflict.
 
 **Query identity.** A query key identifies a cached resource and must include every input that changes its result:
 
-~~~tsx
+~~~ts
 ["orders", { customerId: "c-42", status: "open", page: 2 }]
 ~~~
 
@@ -70,7 +70,7 @@ An omitted status can show the wrong result. A random value or timestamp defeats
 
 Assumptions: React 18+, TypeScript, @tanstack/react-query v5, and one QueryClientProvider near the application root. The API returns JSON. Production boundaries should also validate response shapes.
 
-~~~tsx
+~~~ts
 import {
   QueryClient,
   QueryClientProvider,
@@ -121,7 +121,7 @@ The stable users key defines cache identity; the signal enables cancellation; th
 
 Here a client-owned search term selects a server query. placeholderData keeps a previous result visible while the new key fetches:
 
-~~~tsx
+~~~ts
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -163,7 +163,7 @@ function ProductSearch() {
 
 For a normal server-authoritative mutation, invalidate both list and detail identities:
 
-~~~tsx
+~~~ts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 type Invoice = { id: string; status: "pending" | "approved" };
@@ -201,7 +201,7 @@ The broad invoices key can match filtered lists, while the detail key is separat
 
 For a safe toggle, optimistic update needs cancellation, a snapshot, rollback, and final reconciliation:
 
-~~~tsx
+~~~ts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 type Todo = { id: string; title: string; completed: boolean };

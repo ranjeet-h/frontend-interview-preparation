@@ -53,7 +53,7 @@ The analogy has a useful limit: a component is not a black box at any cost. Its 
 
 **Understand controlled and uncontrolled contracts.** A controlled component receives its current value and an event that requests a change. It renders from the prop and does not maintain a competing source of truth. An uncontrolled component receives defaultValue and owns subsequent changes internally. A reusable component can support both, but the contract must be explicit:
 
-~~~tsx
+~~~ts
 import * as React from "react";
 
 function useControllableValue({
@@ -86,7 +86,7 @@ The Tabs API makes that distinction visible in its type: controlled usage suppli
 
 **Treat render props and function children as inversion of control.** A render prop lets a component own behavior while the caller owns markup:
 
-~~~tsx
+~~~ts
 import * as React from "react";
 
 function AsyncBoundary<T>({
@@ -117,7 +117,7 @@ This is useful when behavior is stable but the visual result varies. It can be h
 
 This small controlled/uncontrolled tabs implementation demonstrates one owner for selection, a compound API for structure, native buttons for keyboard-friendly activation, and explicit trigger/panel relationships. It intentionally uses no effects because it does not synchronize with an external system.
 
-~~~tsx
+~~~ts
 import * as React from "react";
 
 type TabsContextValue = {
@@ -237,7 +237,7 @@ The root owns the selection contract. The consumer owns content and ordering. Th
 
 Here is the same boundary in a feature. The shared button reports an event; the feature decides what it means:
 
-~~~tsx
+~~~ts
 import * as React from "react";
 
 type ButtonProps = React.ComponentPropsWithoutRef<"button"> & {

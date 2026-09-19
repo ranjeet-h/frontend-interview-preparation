@@ -35,7 +35,7 @@ The dependency array has the same meaning as for `useEffect`: React compares eac
 
 The hook's signature is:
 
-```tsx
+```ts
 useLayoutEffect(setup, dependencies?)
 ```
 
@@ -45,7 +45,7 @@ useLayoutEffect(setup, dependencies?)
 
 The following is a complete browser example for a React 18+ Vite-style TypeScript app. Put the first block in `src/main.tsx` and the second in `src/index.css`. It measures a real button, positions a tooltip before paint, remeasures when the button's label changes or the window resizes, and cleans up the resize listener. The initial `visible` state keeps the tooltip out of the DOM until the first measurement is available.
 
-```tsx
+```ts
 // src/main.tsx
 import { StrictMode, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
@@ -145,7 +145,7 @@ button {
 
 This second fixture shows the timing difference without depending on a test runner. It logs the order from one committed update. In an actual browser, passive effects are generally deferred until after the browser has had a chance to paint; React may choose an earlier flush for interaction-driven work, so “after paint” is the practical default, not a promise that every passive callback is late in every scheduling case.
 
-```tsx
+```ts
 import { useEffect, useLayoutEffect } from 'react';
 
 export function CommitTimeline() {
@@ -207,7 +207,7 @@ You can technically start such work there, but it is the wrong default. Fetching
 
 **Unconditional state updates.** This pattern is dangerous:
 
-```tsx
+```ts
 useLayoutEffect(() => {
   setSize(ref.current?.getBoundingClientRect().width ?? 0);
 });

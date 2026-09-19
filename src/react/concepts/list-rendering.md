@@ -88,7 +88,7 @@ Virtualization (also called windowing), implemented via libraries like `@tanstac
 
 Here is a complete, production-grade example demonstrating filtering, sorting, empty states, stable keys, and extracted item components.
 
-```tsx
+```ts
 import React, { useState, useMemo } from 'react';
 
 interface Task {
@@ -215,7 +215,7 @@ export function TaskManager({ initialTasks }: { initialTasks: Task[] }) {
 
 When grouping items by category where you cannot add an extra wrapping `<div>` (e.g. inside a description list `<dl>` or table `<tbody>`), use `<React.Fragment key={...}>`:
 
-```tsx
+```ts
 import React, { Fragment } from 'react';
 
 interface GroupedData {
@@ -306,7 +306,7 @@ React sees every item as a brand-new component type that did not exist in the pr
 **Trap 1: In-Place Array Mutation Before Mapping**
 Developers frequently sort or reverse arrays directly in the render body or inside callbacks using `.sort()` or `.reverse()`. In JavaScript, `Array.prototype.sort()` mutates the underlying array in place. If the array comes from component state or props, mutating it directly violates React's immutability contract. This causes stale renders, unpredictable memoization behavior in `useMemo`, and hard-to-track bugs.
 
-```tsx
+```ts
 // ❌ WRONG: Mutates state array in place
 function TaskList({ tasks }: { tasks: Task[] }) {
   const sorted = tasks.sort((a, b) => a.title.localeCompare(b.title));
@@ -324,7 +324,7 @@ function TaskList({ tasks }: { tasks: Task[] }) {
 **Trap 2: Forgetting the Return Statement in Arrow Functions**
 When converting a concise arrow function `items.map(item => <Row />)` to a multi-line body with braces `items.map(item => { ... })`, developers frequently forget to add an explicit `return` statement. In JavaScript, a block body without a `return` returns `undefined`. The map produces `[undefined, undefined]`, and React renders an empty blank space without throwing an explicit syntax error.
 
-```tsx
+```ts
 // ❌ WRONG: Returns undefined for every item
 {items.map(item => {
   const label = item.name.toUpperCase();
@@ -341,7 +341,7 @@ When converting a concise arrow function `items.map(item => <Row />)` to a multi
 **Trap 3: Placing the Key on Inner Children Instead of the Outer Element**
 When mapping an array to a custom component or a multi-element structure, developers often put the `key` on an inner HTML tag inside the child component. React reconciles siblings at the level of the `.map()` invocation. If the outermost returned element lacks a key, React triggers a missing key warning and falls back to index reconciliation.
 
-```tsx
+```ts
 // ❌ WRONG: Key placed inside the child component's JSX
 function UserCard({ user }: { user: User }) {
   return <div key={user.id} className="card">{user.name}</div>; // Useless here!

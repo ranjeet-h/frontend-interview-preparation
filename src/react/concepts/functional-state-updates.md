@@ -18,7 +18,7 @@ React renders a component with a particular state snapshot. Every event handler,
 
 The setter accepts either a next value or an updater function:
 
-```tsx
+```ts
 setCount(10);                    // replacement: next state is 10
 setCount((previous) => previous + 1); // updater: derive next state from previous
 ```
@@ -27,7 +27,7 @@ For a boolean state value, the same pattern is an explicit toggle. This is a
 fragment from a component that has already declared `const [open, setOpen] =
 useState(false)`:
 
-```tsx
+```ts
 setOpen((previous) => !previous);
 ```
 
@@ -73,7 +73,7 @@ Updaters also need to be pure. They describe a state transition; they should not
 
 This component is complete apart from the normal React application entry point. It shows why three direct replacements produce one increment while three updaters produce three increments.
 
-```tsx
+```ts
 import { useState } from "react";
 
 export function Counter() {
@@ -107,7 +107,7 @@ export function Counter() {
 
 The updater receives the latest array and returns a new array. The callback below is safe even when another queued update adds a different todo before React renders.
 
-```tsx
+```ts
 import { useState } from "react";
 
 type Todo = { id: number; title: string; done: boolean };
@@ -146,7 +146,7 @@ In a real application, `Date.now()` is not a durable unique ID under high-freque
 
 The component below assumes React 18+ and demonstrates the state part of an interval. The empty dependency list keeps one interval alive; the functional updater keeps `count` current without putting `count` in the dependency list.
 
-```tsx
+```ts
 import { useEffect, useState } from "react";
 
 export function ElapsedSeconds() {
@@ -171,7 +171,7 @@ The updater does not solve every timer problem. If the callback also needs a cha
 
 Functional updates are excellent for a small local transition. If many events update related fields and each event has a name and payload, a reducer makes the transition rules explicit while still receiving the latest state.
 
-```tsx
+```ts
 type State = { quantity: number; submitted: boolean };
 type Action =
   | { type: "increase"; amount: number }
@@ -249,7 +249,7 @@ The assumption is that `setCount(count + 1)` mutates `count`. It does not; the v
 
 This is wrong:
 
-```tsx
+```ts
 setTodos((previous) => {
   previous.push(todo);
   return previous;
@@ -268,7 +268,7 @@ These setter fragments assume a numeric `count` state. The bad updater uses a
 block body but forgets `return`, so its result is `undefined` and it violates
 the state contract by replacing the count with a non-number:
 
-```tsx
+```ts
 // Bad: the updater returns undefined.
 setCount((previous) => {
   previous + 1;

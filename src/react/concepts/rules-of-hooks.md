@@ -57,7 +57,7 @@ One important version boundary: this repository's React material assumes React 1
 
 This complete TypeScript/React 18 fixture models a feature flag, a subscription, and two independent pieces of state. The effect is always registered in the same position; only its work is conditional.
 
-```tsx
+```ts
 import {
   createContext,
   useContext,
@@ -138,7 +138,7 @@ export function App() {
 
 The common broken version is deceptively short:
 
-```tsx
+```ts
 type Props = { roomId: string; liveUpdatesEnabled: boolean };
 
 function BrokenRoomEditor({ roomId, liveUpdatesEnabled }: Props) {
@@ -153,7 +153,7 @@ function BrokenRoomEditor({ roomId, liveUpdatesEnabled }: Props) {
 
 The fix is to call `useRoomSubscription(roomId, liveUpdatesEnabled)` on every render. The custom hook itself decides whether to subscribe. The same principle applies to early returns:
 
-```tsx
+```ts
 function Profile({ userId }: { userId: string | null }) {
   const [isSaving, setIsSaving] = useState(false);
 
@@ -166,7 +166,7 @@ function Profile({ userId }: { userId: string | null }) {
 
 An event handler is a normal function invoked by an event, not a new place to create hook state:
 
-```tsx
+```ts
 function SaveButton() {
   const [saved, setSaved] = useState(false);
 

@@ -129,7 +129,7 @@ Let's look at two practical code examples: first, how to harness Fiber's concurr
 
 **Example 1: Concurrency in Action (`useTransition` vs. Blocking State)**
 
-```tsx
+```ts
 import React, { useState, useTransition, useDeferredValue } from 'react';
 
 // Generates an array of 15,000 items to simulate a heavy component tree
@@ -353,7 +353,7 @@ To help developers detect unsafe side effects early in development, React `Stric
 - **Why It Fails:** In Fiber's concurrent world, the render phase can be started, paused, interrupted, abandoned, or restarted from scratch. If an update is aborted because a higher-priority keystroke arrived, your component function ran, but its DOM mutations never happened. Any side effect in the component body has now fired for an aborted ghost render.
 - **The Fix:** Keep the component body strictly pure. All side effects must reside inside `useEffect`, `useLayoutEffect`, or event handlers, which only execute during or after the guaranteed commit phase.
 
-```tsx
+```ts
 // ❌ WRONG: Side effect in render phase (fires multiple times or on abandoned renders)
 function UserProfile({ userId }: { userId: string }) {
   analytics.trackPageView(userId); // Illegal!
@@ -381,7 +381,7 @@ function UserProfile({ userId }: { userId: string }) {
 - **Why It Fails:** Controlled inputs require synchronous, instant state updates. If you defer the text input's state update inside a transition, the user types a character, but the input value does not update immediately. The cursor jumps to the end of the field, characters appear out of order, and the input feels completely broken.
 - **The Fix:** Split your state into an urgent local state for the input field and a deferred transition state for the slow consumer tree:
 
-```tsx
+```ts
 // ❌ WRONG: Laggy input with broken cursor positioning
 function Search() {
   const [text, setText] = useState('');

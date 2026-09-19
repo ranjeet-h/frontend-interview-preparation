@@ -30,7 +30,7 @@ There are three user-facing lifecycle stages. **Mounting** is the first committe
 
 **Component identity controls state ownership.** React preserves local state when the same component type remains in the same position in the rendered tree. A different type, a different `key`, or a different position can create a different identity and reset that subtree’s state. State belongs to that identity—not to a particular function invocation. For example, changing rooms can intentionally reset chat history with a key remount:
 
-```tsx
+```ts
 <ChatRoomHook key={roomId} roomId={roomId} />
 ```
 
@@ -56,7 +56,7 @@ These are responsibility-level correspondences, not promises that Hooks reproduc
 
 **Function components use declarative synchronization.** An effect says, “When these reactive values describe this render, keep this external system configured for that snapshot.” The dependency array is not a timer or a command to “run once.” It describes which values can make the synchronization invalid. React compares dependency values with `Object.is`; if a dependency changed, it runs cleanup for the previous setup and then runs setup with the new render’s values.
 
-```tsx
+```ts
 // Contextual but complete: the application supplies ./chatApi.
 import { useEffect } from 'react';
 import { chatApi } from './chatApi';
@@ -86,7 +86,7 @@ On the first committed mount, the component renders, the DOM is committed, and t
 
 **A class-based implementation.** This is a complete component example, but the WebSocket URL is contextual: it requires a real server in the browser. Notice that the same resource is managed in mount, update, and unmount methods. The manual comparison and cleanup pairing are the important teaching points.
 
-```tsx
+```ts
 import React from 'react';
 
 interface ChatProps {
@@ -149,7 +149,7 @@ export class ChatRoomClass extends React.Component<ChatProps, ChatState> {
 
 **The Hook-based implementation.** This keeps the setup and its undo operation together. The socket is created inside the effect so cleanup closes the exact socket created by that effect, even if a later render has a different `roomId`. The functional state updater avoids reading a stale `messages` value from the effect’s closure. The URL is again contextual and needs a WebSocket server to run.
 
-```tsx
+```ts
 import { useEffect, useState } from 'react';
 
 interface ChatProps {
@@ -188,7 +188,7 @@ If messages must be cleared when the room changes, do that as part of the new ro
 
 **An effect with a request cancellation boundary.** This is a contextual fragment because `/api/user/:id` is an application endpoint, but the browser code is runnable when that endpoint exists. Aborting the old request asks the transport to stop work; the `isCurrent` guard is the request-generation protection that prevents an obsolete completion from updating state even if abort races with resolution. The `AbortError` branch is intentionally ignored because cancellation is expected behavior during navigation.
 
-```tsx
+```ts
 import { useEffect, useState } from 'react';
 
 interface User {
@@ -239,7 +239,7 @@ export function UserDetails({ userId }: { userId: string }) {
 
 **A layout measurement.** This example is also contextual because it expects a parent to pass a ref to a mounted target element. `useLayoutEffect` is appropriate because the tooltip’s position depends on the DOM geometry that React just committed. It should not be the default for ordinary data work because it can delay paint.
 
-```tsx
+```ts
 import { RefObject, useLayoutEffect, useRef, useState } from 'react';
 
 export function Tooltip({
@@ -323,7 +323,7 @@ Include every reactive value read by the effect that can change between renders:
 
 **Stale closures caused by an incomplete dependency list.** This code captures the `count` from the first render, so it repeatedly calculates `0 + 1`:
 
-```tsx
+```ts
 // Wrong: count is read but omitted from the dependency list.
 useEffect(() => {
   const id = window.setInterval(() => {
@@ -335,7 +335,7 @@ useEffect(() => {
 
 The better fix is a functional updater when the next value depends only on the previous value. It lets the interval ask React for the latest state without recreating the interval every tick:
 
-```tsx
+```ts
 useEffect(() => {
   const id = window.setInterval(() => {
     setCount((previous) => previous + 1);
@@ -346,7 +346,7 @@ useEffect(() => {
 
 **Using an effect to calculate derived data.** If `totalPrice` is completely determined by `items`, storing it separately creates a stale intermediate frame and an extra render:
 
-```tsx
+```ts
 // Wrong: the first render uses the old total, then the effect schedules another render.
 const [totalPrice, setTotalPrice] = useState(0);
 useEffect(() => {
@@ -356,13 +356,13 @@ useEffect(() => {
 
 Calculate it during render. Use `useMemo` only when the calculation is expensive and the dependency identity is meaningful:
 
-```tsx
+```ts
 const totalPrice = items.reduce((sum, item) => sum + item.price, 0);
 ```
 
 **Missing cleanup.** Adding a listener in an effect without removing it creates a new listener whenever the effect runs and leaves listeners behind after unmount:
 
-```tsx
+```ts
 useEffect(() => {
   function handleResize() {
     console.log(window.innerWidth);

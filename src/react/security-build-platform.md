@@ -74,7 +74,7 @@ The browser performs style calculation, layout (reflow), paint, and compositing.
 
 React’s default text path is safe for markup characters. This example is valid TypeScript/JSX and requires no effect:
 
-~~~tsx
+~~~ts
 type CommentProps = { author: string; text: string };
 
 export function Comment({ author, text }: CommentProps) {
@@ -91,7 +91,7 @@ The browser receives text nodes for `text`; it does not interpret the value as H
 
 If rich text is required, make the unsafe boundary narrow and explicit:
 
-~~~tsx
+~~~ts
 import DOMPurify from "dompurify";
 
 type RichTextProps = { htmlFromCms: string };
@@ -130,7 +130,7 @@ export async function loadAccount() {
 
 Dynamic imports create a code-splitting boundary. Tree shaking and splitting are different operations:
 
-~~~tsx
+~~~ts
 import { lazy, Suspense } from "react";
 
 const AdminReport = lazy(() => import("./AdminReport"));
@@ -150,7 +150,7 @@ The authorization check must be repeated by the server. Hiding or omitting the r
 
 A semantic, themeable control uses platform behavior instead of recreating it:
 
-~~~tsx
+~~~ts
 export function ThemeToggle({ dark, onToggle }: {
   dark: boolean;
   onToggle: () => void;

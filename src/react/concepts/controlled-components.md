@@ -55,7 +55,7 @@ When it comes to rendering performance, controlled inputs trigger a re-render of
 
 Here is a practical, production-ready implementation showcasing real-time formatting, derived validation, dynamic UI disabling, and checkbox state management.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 interface PaymentFormData {
@@ -221,7 +221,7 @@ When React sees `value={undefined}` on initial render, it treats the input as un
 
 To fix this, ensure the value is never `undefined`. Always provide a fallback default such as an empty string:
 
-```tsx
+```ts
 // Buggy: user.name is undefined while fetching
 <input value={user?.name} onChange={handleChange} />
 
@@ -252,7 +252,7 @@ Component libraries frequently support both patterns: consumers can let the comp
 
 You implement this by inspecting whether the controlled prop is provided. If `open !== undefined`, the component uses the prop; otherwise, it falls back to internal state initialized by `defaultOpen`:
 
-```tsx
+```ts
 interface ModalProps {
   open?: boolean;
   defaultOpen?: boolean;

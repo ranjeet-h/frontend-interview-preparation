@@ -57,7 +57,7 @@ The State Colocation Principle states that state should always be kept as close 
 
 Here is a practical, production-ready example: a synchronized Currency Converter where two sibling input boxes (USD and EUR) must always reflect equivalent exchange values in real time, accompanied by a dynamic conversion badge.
 
-```tsx
+```ts
 import React, { useState } from "react";
 
 // The exchange rate constant: 1 USD = 0.92 EUR
@@ -255,7 +255,7 @@ The transition depends on the scope, frequency, and persistence of the state:
 **Trap 1: Mirroring Lifted Props into Child `useState` ("Props in Initial State")**
 
 *The Mistake:* When a developer lifts state to a parent, but in the child component writes:
-```tsx
+```ts
 function ChildInput({ initialValue }: { initialValue: string }) {
   // ANTI-PATTERN: Copying prop into local state
   const [value, setValue] = useState(initialValue);
@@ -269,7 +269,7 @@ function ChildInput({ initialValue }: { initialValue: string }) {
 **Trap 2: Attempting to Synchronize Sibling State with `useEffect`**
 
 *The Mistake:* Leaving state in both sibling components and trying to keep them in sync by listening to prop changes in `useEffect`:
-```tsx
+```ts
 function SiblingB({ valueFromA, onSync }: { valueFromA: string; onSync: (v: string) => void }) {
   const [localVal, setLocalVal] = useState(valueFromA);
 
@@ -288,13 +288,13 @@ function SiblingB({ valueFromA, onSync }: { valueFromA: string; onSync: (v: stri
 **Trap 3: Passing Raw State Setters Instead of Intention-Revealing Handlers**
 
 *The Mistake:* Passing the raw dispatch function from `useState` directly down the tree:
-```tsx
+```ts
 <ProductFilters setFilters={setFilters} />
 ```
 *Why it fails:* Passing `setFilters` directly breaks component boundaries. The child component now has unrestricted access to overwrite the entire filter state object with any arbitrary shape. It also tightly couples the child to the exact state implementation details of the parent.
 
 *The Fix:* Encapsulate state updates in descriptive, intention-revealing handler functions:
-```tsx
+```ts
 <ProductFilters 
   selectedCategory={filters.category}
   onCategorySelect={(category) => setFilters(prev => ({ ...prev, category }))} 

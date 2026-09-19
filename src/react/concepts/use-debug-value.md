@@ -18,7 +18,7 @@ The optional formatter is an on-demand label printer. The hook gives React DevTo
 
 Call `useDebugValue` at the top level of a custom hook, alongside the other hooks it uses:
 
-```tsx
+```ts
 import React from "react";
 
 const onlineStore = {
@@ -56,7 +56,7 @@ The call belongs inside a custom hook because it describes that hook's internal 
 
 The first argument is the value DevTools should know about. The second argument is optional:
 
-```tsx
+```ts
 import React from "react";
 
 type Session = { user: { name: string } };
@@ -72,7 +72,7 @@ function useSessionDebugValue() {
 
 The formatter is for presentation only. It does not transform the value returned by the hook, and it should be pure: do not fetch, update state, write analytics, or mutate the session from it. React DevTools can call the formatter while inspecting the hook, so the hook should not rely on the formatter running during ordinary application execution. Passing an already-formatted expression as the first argument defeats this deferral:
 
-```tsx
+```ts
 import React from "react";
 
 type Session = {
@@ -107,7 +107,7 @@ The feature is deliberately a developer-experience boundary. It has no effect on
 
 This complete TypeScript/React example has a small external online-status store, a custom hook, a component that consumes it, and a browser entry point. Install React and React DOM 18 or newer, place the markup below in `index.html`, and compile the file as `main.tsx` with the repository's normal React toolchain. With React DevTools installed, inspect `StatusPanel` and expand `useOnlineStatus` to see the label change as the browser goes online or offline.
 
-```tsx
+```ts
 import React from "react";
 import { createRoot } from "react-dom/client";
 
@@ -165,7 +165,7 @@ Here the browser events and `useSyncExternalStore` cause the component to update
 
 For a hook with a larger object, expose a short status while preserving the object itself for application code. The formatter below avoids eagerly serializing the complete session on every render:
 
-```tsx
+```ts
 import React from "react";
 import { createRoot } from "react-dom/client";
 
