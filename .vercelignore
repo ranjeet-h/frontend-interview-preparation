@@ -1,0 +1,6 @@
+# Generated mdBook output; Vercel rebuilds it during the build step.
+book/
+
+# Local Vercel link metadata and pulled env files (may contain secrets).
+.vercel
+.env*

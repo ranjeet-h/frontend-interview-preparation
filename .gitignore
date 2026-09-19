@@ -1,3 +1,7 @@
 book/
 
 task-*.md
+
+# Vercel CLI link metadata + local env files (may contain secrets)
+.vercel/
+.env*
