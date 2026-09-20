@@ -24,10 +24,9 @@ table {
   max-width: 1100px;
 }
 
-/* Hide Previous / Next chapter side arrows */
-.nav-chapters {
-  display: none !important;
-}
+/* Previous / Next chapter navigation is styled as a bottom bar in
+   theme/navigation.css (same pattern as the sibling study books).
+   Do NOT hide .nav-chapters here or the bottom bar disappears. */
 
 /* Hide in-page headings dumped into the sidebar (mdBook sidebar-header-nav). */
 #sidebar .chapter a[href*="#"] {
