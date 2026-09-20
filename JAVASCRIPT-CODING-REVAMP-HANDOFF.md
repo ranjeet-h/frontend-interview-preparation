@@ -44,7 +44,46 @@
   fences). Its separately-appended duplicate problems were deleted
   (`parts/14-browser-javascript.a.md` lines 1622+). Lesson: when a subagent goes
   silent, check the file for in-place edits before assuming it died.
-- Final: 15 pages / 223 problems / ~35k lines; build clean; `git diff --check` clean.
+**PHASE 2/3 STATUS — DONE (no push until user says; committed locally):**
+- All 13 fragments landed (16, 17, 18, 19, 20, 21a, 21b, 22, 23, 24, 25a, 25b, 26).
+  Every question validated: template subsections match problem counts, no H1s,
+  no `---` separators, fences are javascript/text only.
+- 24-event-loop: subagent executed all 11 snippets in Node and documented the
+  `return Promise.resolve()` extra-tick subtlety in the trace.
+- Known benign `node --check` exceptions (triaged, not bugs): 16-Q12 var+function
+  same-name (valid sloppy script; strict/module caveat now documented in The Rule),
+  25b multi-file module fences (separate files shown in one block), 23's 2 bare-await
+  excerpts, plus Phase-1's 2 excerpts.
+- Q12 strict-mode caveat added by main agent after the checker proved the SyntaxError.
+- Assembled (28 pages total), SUMMARY extended, landing Part 2/3 index tables +
+  coverage map extended, build clean, diff-check clean.
+- Remaining: user review → push → (optional) Phase 4 ideas: migrate legacy
+  output-questions/part-* lessons or retire them (currently still in SUMMARY).
+
+**FINAL STATE (all work complete, committed locally, NOT pushed):**
+- 28 pages / 363 problems (Part 1: 223 coding; Part 2: 125 output Qs; Part 3: 15
+  debugging) + landing page with 40-item Must Master + coverage map.
+- `finalize.sh` SUMMARY rewire also dropped the ~55 deep `output-questions/part-*`
+  lesson entries from SUMMARY. Those files still exist on disk but are unbuilt and
+  unlinked (verified: zero internal links) — external bookmarks to them will 404.
+  Top-level legacy pages are redirect stubs. Optional cleanup: delete the orphaned
+  part-* files in a follow-up commit, or leave as reference.
+- Late subagent passes (13-serialization trim, 26-debugging expansion) were
+  re-validated, reassembled, rebuilt, and amended into the phase commits.
+- Commits (unpushed): `5e6bd9b` handoff+landing, `f459be3` Part 1, `47438f1` Parts 2+3.
+  `mdbook build` clean, `git diff --check` clean, working tree clean.
+- `GUESS-BRIEF.md` written (Part 2 + Part 3 templates, event-loop trace mandate, 2 exemplars).
+- 13 headers written (`16-guess-scope-hoisting` … `26-debugging`).
+- 13 fragment subagents dispatched (background). Landed so far: 17, 18, 19, 20,
+  21b, 22, 23. Still in flight: 16, 21a, 24, 25a, 25b, 26.
+- `assemble.sh` extended with pages 16–26. `finalize.sh` SUMMARY tree extended.
+  Landing page Part 2/Part 3 sections rewritten with real index tables.
+- Known validation caveat: `23-guess-promises` contains 2 intentional excerpt
+  fences inside How-to-Rewrite sections (bare-`await` fragments) — exclude from
+  `node --check`, same as the 2 Phase-1 excerpts.
+- Remaining after fragments land: assemble → build → verify (counts + fences +
+  node --check with excerpt allowlist) → update landing coverage map → commit
+  locally (NO PUSH until user says).
 
 ### Fragments dispatched (expected files in `docs/superpowers/handoff-js-coding/parts/`)
 

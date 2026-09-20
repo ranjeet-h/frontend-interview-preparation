@@ -133,11 +133,34 @@ If time is short, master these first. Each links to the page that teaches it.
 
 ## Part 2: Guess the Output
 
-Predict the exact output, explain the rule, and rewrite the surprising cases. See [Guess the Output](coding-questions.md#part-2-guess-the-output) pages `16`–`25`.
+Predict the exact output, explain the rule mechanically, and rewrite the surprising
+cases. Every question follows the same rhythm: **The Code → Output → Explanation →
+The Rule → How to Rewrite It Safely → Takeaway**. Event-loop questions always carry
+the full seven-step trace (sync → call stack → microtasks → macrotasks → drain order →
+next macrotask → final output).
+
+| # | Page | Questions |
+|---|---|---|
+| 16 | [Scope & Hoisting](coding-questions/16-guess-scope-hoisting.md) | `var`/`let`/`const` reads · shadowing · block scope · function hoisting |
+| 17 | [Closures](coding-questions/17-guess-closures.md) | Factory counters · `var` loop · `let` loop · IIFE fix |
+| 18 | [`this`](coding-questions/18-guess-this.md) | Method · nested function · arrow · extraction · `bind` · call/apply · bind+`new` |
+| 19 | [Equality & Coercion](coding-questions/19-guess-coercion.md) | Copy vs reference · `==`/`===` · `ToPrimitive` · `+` both ways |
+| 20 | [Types & Keys](coding-questions/20-guess-types.md) | `typeof` · `NaN` · floats · unary `+` · object keys vs `Map` |
+| 21a | [Objects & References](coding-questions/21a-guess-objects-arrays.md) | Key order · destructuring · defaults · spread · `delete` · push/splice/slice |
+| 21b | [Array Methods & Sort](coding-questions/21b-guess-objects-arrays.md) | map/filter/reduce traps · `map(parseInt)` · sort · `Set`/`Map` |
+| 22 | [Prototypes & Classes](coding-questions/22-guess-prototypes-classes.md) | Lookup chain · `__proto__` · shadowing · `super` · static vs instance |
+| 23 | [async/await & Chains](coding-questions/23-guess-promises.md) | Async return · missing `return` · throw/recover · `finally` · sync executor |
+| 24 | [Event Loop](coding-questions/24-guess-event-loop.md) | Timers vs microtasks · nesting · `queueMicrotask` · combined challenges |
+| 25a | [Operators & Functions](coding-questions/25a-guess-misc.md) | Short-circuit · `?.` · increments · args · `arguments` · named expressions |
+| 25b | [Descriptors & Misc](coding-questions/25b-guess-misc.md) | Descriptors · freeze/seal · holes · `for-in/of` · `const` · cycles · Date · modules |
 
 ## Part 3: Debugging Challenges
 
-Broken JavaScript to find and fix. See the [Debugging Challenges](coding-questions/26-debugging.md) page.
+Broken JavaScript to find and fix — each challenge names the bug, fixes it, and tells
+you how you would have caught it. See the [Debugging Challenges](coding-questions/26-debugging.md)
+page: stale closures · lost `this` · shallow copies · `forEach(async)` · sequential
+awaits · swallowed rejections · search races · leaks · mutation · bad sorts ·
+`map(parseInt)` · float money · missing `return`/`await` · unhandled rejections.
 
 ## Coverage map
 
@@ -160,3 +183,16 @@ Use this to find a concept when revising. Each category maps to the pages that t
 | Serialization: JSON, query strings, CSV, cycles, URLs | 13 |
 | Browser: events, observers, storage, cross-tab, clipboard, drag, shortcuts | 14 |
 | Utilities: lodash-style helpers | 15 |
+| Output: scope, hoisting, TDZ, function vs expression | 16 |
+| Output: closures, loop bindings, IIFE | 17 |
+| Output: `this` rules, bind, call/apply, bind+`new` | 18 |
+| Output: equality, coercion, reference vs copy | 19 |
+| Output: `typeof`, `NaN`, numbers, key collision | 20 |
+| Output: ordering, destructuring, spread, `delete`, mutation | 21a |
+| Output: map/filter/reduce, `parseInt`, sort, Set/Map | 21b |
+| Output: prototypes, inheritance, classes, static | 22 |
+| Output: async return, chaining, `finally`, executor, errors | 23 |
+| Output: event loop, microtasks, `queueMicrotask`, combined traces | 24 |
+| Output: operators, `?.`, arguments, function forms | 25a |
+| Output: descriptors, freeze/seal, holes, loops, `const`, cycles, Date, modules | 25b |
+| Debugging: closures, `this`, mutation, async, races, leaks, coercion, sort | 26 |

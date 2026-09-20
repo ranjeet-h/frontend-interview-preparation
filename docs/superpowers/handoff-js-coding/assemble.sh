@@ -58,6 +58,19 @@ assemble 12-iterators-generators.md    12-iterators-generators.md
 assemble 13-serialization-parsing.md   13-serialization-parsing.md
 assemble 14-browser-javascript.md      14-browser-javascript.a.md 14-browser-javascript.b.md
 assemble 15-utility-library.md         15-utility-library.md
+assemble 16-guess-scope-hoisting.md      16-guess-scope-hoisting.md
+assemble 17-guess-closures.md            17-guess-closures.md
+assemble 18-guess-this.md                18-guess-this.md
+assemble 19-guess-coercion.md            19-guess-coercion.md
+assemble 20-guess-types.md               20-guess-types.md
+assemble 21a-guess-objects-arrays.md     21a-guess-objects-arrays.md
+assemble 21b-guess-objects-arrays.md     21b-guess-objects-arrays.md
+assemble 22-guess-prototypes-classes.md  22-guess-prototypes-classes.md
+assemble 23-guess-promises.md            23-guess-promises.md
+assemble 24-guess-event-loop.md          24-guess-event-loop.md
+assemble 25a-guess-misc.md               25a-guess-misc.md
+assemble 25b-guess-misc.md               25b-guess-misc.md
+assemble 26-debugging.md                 26-debugging.md
 
 if [[ "$fail" -ne 0 ]]; then
   echo "One or more fragments are missing. Re-dispatch them (see handoff §4.3) and re-run." >&2
