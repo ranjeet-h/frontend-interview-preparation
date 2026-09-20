@@ -132,11 +132,12 @@
 </script>
 
 <script>
-// React Machine Coding pages: tag <html> for scoped styles and build a
-// "problems on this page" jump list so long pages are easy to scan.
+// Problem-bank pages (React machine coding + JavaScript coding questions):
+// tag <html> for scoped styles and build a "problems on this page" jump list
+// so long pages are easy to scan.
 (function () {
   function initMachineCoding() {
-    if (!/\/react\/machine-coding\//.test(window.location.pathname)) return;
+    if (!/\/(react\/machine-coding|javascript\/coding-questions)\//.test(window.location.pathname)) return;
     document.documentElement.classList.add("machine-coding");
 
     var main = document.querySelector("main");

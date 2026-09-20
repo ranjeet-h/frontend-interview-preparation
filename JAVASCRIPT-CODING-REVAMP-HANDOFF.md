@@ -10,6 +10,125 @@
 
 ---
 
+## 0. PROGRESS LOG
+
+> Update this section as work completes. Status values: `DONE`, `IN FLIGHT`, `TODO`, `FAILED`.
+> **Last updated:** after launching all 26 fragment subagents. Subagents write their
+> files **incrementally**, so a `parts/*.md` file may exist while only partially written
+> (e.g. 1 problem instead of 11). Do **not** assemble until the subagents finish and each
+> fragment passes the count check in `## 0. PROGRESS LOG` below.
+
+### Phase 1 — Coding Questions
+
+| Item | Status | Notes |
+|---|---|---|
+| Landing page `src/javascript/coding-questions.md` | DONE | Written; not yet in SUMMARY. |
+| Brief `docs/superpowers/handoff-js-coding/BRIEF.md` | DONE | Canonical style guide. |
+| Pilot fragment `parts/07-this-call-bind-new.md` | DONE | 1,115 lines, 8 problems. |
+| 15 page header files | DONE | `docs/superpowers/handoff-js-coding/headers/*.md`. |
+| Fragments 01–15 (all except 07) | **DONE** | All 27 fragments complete, every problem has all 10 subsections (verified by grep). |
+| Assemble final pages into `src/javascript/coding-questions/` | **DONE** | `assemble.sh` — 15 pages, 223 problems total. |
+| Theme regex in `theme/head.hbs` | **DONE** | Matches `/javascript/coding-questions/` too; verified live in rendered HTML. |
+| SUMMARY.md wiring + legacy stubs | **DONE** | `finalize.sh` — new tree + 5 legacy stubs; stubs render. |
+| Build + verify | **DONE** | `mdbook build` passes; 308 JS fences `node --check` clean (2 apparent failures are intentional excerpt fragments); fences are only javascript/text/html; `language-tsx` = 0. |
+| Commit + push | TODO | Phase 1 ready for user review; commit on approval. |
+
+**PHASE 1 COMPLETION RECORD (what actually happened):**
+- First 26 subagents: 6 finished, 20 died with "Go usage limit exceeded". Main agent
+  reconstructed `02-arrays.a` from `_tmp_*` shards, then hand-wrote ~15 missing problems.
+- Second wave of 7 subagents (after limits reset): 6 finished; the 14a one went silent.
+  Main agent wrote scroll-throttle + resize-debounce for 14a by hand.
+- The silent 14a subagent then reappeared: it had edited the hand-written problems
+  in place and fixed 3 real bugs (scroll handler received the Event instead of
+  `window.scrollY`; false "observer never fires on attach" bullet; `text`-tagged JS
+  fences). Its separately-appended duplicate problems were deleted
+  (`parts/14-browser-javascript.a.md` lines 1622+). Lesson: when a subagent goes
+  silent, check the file for in-place edits before assuming it died.
+- Final: 15 pages / 223 problems / ~35k lines; build clean; `git diff --check` clean.
+
+### Fragments dispatched (expected files in `docs/superpowers/handoff-js-coding/parts/`)
+
+- `01-strings.a.md`, `01-strings.b.md`
+- `02-arrays.a.md`, `02-arrays.b.md`, `02-arrays.c.md`
+- `03-array-polyfills.a.md`, `03-array-polyfills.b.md`
+- `04-objects.a.md`, `04-objects.b.md`
+- `05-functions.a.md`, `05-functions.b.md`
+- `06-debounce-throttle.a.md`, `06-debounce-throttle.b.md`
+- `07-this-call-bind-new.md` (DONE)
+- `08-promises.a.md`, `08-promises.b.md`, `08-promises.c.md`
+- `09-async-await.a.md`, `09-async-await.b.md`
+- `10-event-emitter-pubsub.md`
+- `11-data-structures.a.md`, `11-data-structures.b.md`
+- `12-iterators-generators.md`
+- `13-serialization-parsing.md`
+- `14-browser-javascript.a.md`, `14-browser-javascript.b.md`
+- `15-utility-library.md`
+
+**Expected problem count per fragment** (validate with the one-liner below):
+
+| Fragment | N | Fragment | N | Fragment | N |
+|---|---|---|---|---|---|
+| 01-strings.a | 12 | 06-debounce-throttle.a | 7 | 11-data-structures.b | 6 |
+| 01-strings.b | 12 | 06-debounce-throttle.b | 6 | 12-iterators-generators | 7 |
+| 02-arrays.a | 11 | 07-this-call-bind-new | 8 | 13-serialization-parsing | 8 |
+| 02-arrays.b | 11 | 08-promises.a | 8 | 14-browser-javascript.a | 8 |
+| 02-arrays.c | 10 | 08-promises.b | 8 | 14-browser-javascript.b | 8 |
+| 03-array-polyfills.a | 7 | 08-promises.c | 7 | 15-utility-library | 12 |
+| 03-array-polyfills.b | 4 | 09-async-await.a | 6 | | |
+| 04-objects.a | 10 | 09-async-await.b | 6 | | |
+| 04-objects.b | 10 | 10-event-emitter-pubsub | 8 | | |
+| 05-functions.a | 8 | 11-data-structures.a | 7 | | |
+| 05-functions.b | 8 | | | | |
+
+One-command checker (run from the repo root):
+
+```bash
+cd docs/superpowers/handoff-js-coding
+for spec in 01-strings.a:12 01-strings.b:12 02-arrays.a:11 02-arrays.b:11 02-arrays.c:10 \
+  03-array-polyfills.a:7 03-array-polyfills.b:4 04-objects.a:10 04-objects.b:10 \
+  05-functions.a:8 05-functions.b:8 06-debounce-throttle.a:7 06-debounce-throttle.b:6 \
+  07-this-call-bind-new:8 08-promises.a:8 08-promises.b:8 08-promises.c:7 \
+  09-async-await.a:6 09-async-await.b:6 10-event-emitter-pubsub:8 \
+  11-data-structures.a:7 11-data-structures.b:6 12-iterators-generators:7 \
+  13-serialization-parsing:8 14-browser-javascript.a:8 14-browser-javascript.b:8 \
+  15-utility-library:12; do n=${spec%%:*}; w=${spec##*:}; h=$(grep -c '^## ' "parts/$n.md" 2>/dev/null || echo 0);
+  [ "$h" = "$w" ] || echo "INCOMPLETE $n: $h/$w"; done
+```
+
+Also check `grep -c '^### Takeaway' parts/<file>` equals the problem count. **A `_tmp_*.md`
+file in `parts/` is a subagent's scratch; ignore it, and only delete it after all subagents
+finish.** Repair or re-dispatch any fragment that is missing or under-count (use the §4.3
+prompt). Note: subagents write their file **incrementally**, so a low count can simply mean
+"still running" — wait for the completion notification first.
+
+### Next actions for the continuing agent (in order)
+
+**UPDATE — main session continued after subagents hit "Go usage limit exceeded":**
+all 26 subagents are dead (6 fragments finished, the rest died mid-write). The main
+agent is now completing the work directly. Completed since:
+
+- `02-arrays.a` — DONE (11/11). Reconstructed problems 1–8 from `_tmp_*` shards,
+  appended `_tmp_09a`, wrote kth-largest completion + move-zeros + rotate-left.
+- `02-arrays.b` — DONE (11/11). Wrote the naive-shuffle bias problem.
+- `02-arrays.c` — DONE (10/10). Finished the truncated `sample` problem.
+- `15-utility-library.md` — removed stray `<!-- SENTINEL -->`.
+
+Still to write (main agent, in this order): finish-truncations first
+(`11-data-structures.a` doubly-linked tail, `11-data-structures.b` trie tail + heap,
+`05-functions.b` tail), then missing wholes (`04-objects.a` ×6, `05-functions.a` ×1,
+`05-functions.b` ×2, `09-async-await.a` ×2, `09-async-await.b` ×1, `10-event-emitter` ×5,
+`13-serialization` ×4, `14-browser.a` ×2, `14-browser.b` ×6).
+`_tmp_*` files are fully consumed into `02-arrays.a` — safe to delete after validation.
+
+1. Wait for / collect the background fragments; verify counts as above.
+2. Run `bash docs/superpowers/handoff-js-coding/assemble.sh` to build the 15 pages.
+3. Apply the `theme/head.hbs` regex change (§4.4).
+4. Wire `SUMMARY.md` and create legacy redirect stubs (§4.5).
+5. `mdbook build` + verification (§4.6).
+6. Present to the user for review; commit only on approval.
+
+---
+
 ## 1. End goal
 
 The book (`frontend-interview-preparation`, mdBook) has a good **theory** JavaScript
