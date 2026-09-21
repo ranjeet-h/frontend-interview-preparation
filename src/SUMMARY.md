@@ -278,6 +278,29 @@
 
 ---
 
+# Rust
+
+- [Rust](rust/index.md)
+  - [Ownership & Borrowing](rust/ownership-borrowing.md)
+  - [Lifetimes](rust/lifetimes.md)
+  - [Strings & Collections](rust/strings-collections.md)
+  - [Option / Result / Pattern Matching](rust/option-result-matching.md)
+  - [Structs, Enums & Traits](rust/structs-enums-traits.md)
+  - [Generics & Associated Types](rust/generics-associated-types.md)
+  - [Smart Pointers](rust/smart-pointers.md)
+  - [Iterators & Closures](rust/iterators-closures.md)
+  - [Modules & Cargo](rust/modules-cargo.md)
+  - [Concurrency](rust/concurrency.md)
+  - [Async Rust / Tokio](rust/async-tokio.md)
+  - [Unsafe Rust & Memory](rust/unsafe-memory.md)
+  - [Macros](rust/macros.md)
+  - [Testing & Tooling](rust/testing-tooling.md)
+  - [Code Reasoning](rust/code-reasoning.md)
+  - [Coding Practice](rust/coding-practice.md)
+  - [Interview Question Bank](rust/interview-question-bank.md)
+
+---
+
 # Full Stack Expansion
 
 - [Full Stack Expansion](full-stack/index.md)
