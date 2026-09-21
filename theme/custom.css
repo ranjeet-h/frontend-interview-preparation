@@ -14,6 +14,20 @@ pre code {
   white-space: pre;
 }
 
+/* Mermaid replaces these code fences at page load. Keep diagrams readable
+   beside the wide system-design explanations and on narrow screens. */
+.mermaid-diagram {
+  margin: 1.5rem 0;
+  overflow-x: auto;
+  padding: 1rem;
+  text-align: center;
+}
+
+.mermaid-diagram svg {
+  height: auto;
+  max-width: 100%;
+}
+
 table {
   display: block;
   overflow-x: auto;

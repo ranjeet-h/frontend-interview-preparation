@@ -5,8 +5,8 @@ language = "en"
 src = "src"
 
 [output.html]
-additional-js = ["theme/mermaid.min.js", "theme/excalidraw.js"]
-additional-css = ["theme/excalidraw.css", "theme/custom.css", "theme/navigation.css"]
+additional-js = ["theme/mermaid.min.js", "theme/mermaid-init.js", "theme/excalidraw.js", "src/system-design/visualizers/shared/viewport.js", "src/system-design/visualizers/easy/1-design-url-shortener-tinyurl/url-shortener.js", "src/system-design/visualizers/lld/elevator/elevator.js"]
+additional-css = ["theme/excalidraw.css", "theme/custom.css", "theme/navigation.css", "src/system-design/visualizers/easy/1-design-url-shortener-tinyurl/url-shortener.css", "src/system-design/visualizers/shared/viewport.css", "src/system-design/visualizers/lld/elevator/elevator.css"]
 no-section-label = true
 sidebar-header-nav = false
 

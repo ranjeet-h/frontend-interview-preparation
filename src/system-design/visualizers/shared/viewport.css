@@ -1,0 +1,81 @@
+/* Shared diagram viewport styles. Prefix: sdv-. Works across mdBook themes. */
+
+.sdv-wrap {
+  position: relative;
+  overflow: hidden;
+}
+
+.sdv-wrap > svg.sdv-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sdv-wrap.is-panning > svg.sdv-svg {
+  cursor: grabbing;
+}
+
+.sdv-ctl {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.sdv-btn {
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  color: var(--fg, #18212b);
+  background: var(--bg, #ffffff);
+  border: 1px solid var(--table-border-color, #d0d7de);
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0.92;
+}
+
+.sdv-btn:hover {
+  opacity: 1;
+  border-color: var(--sidebar-active, var(--links, #2563eb));
+}
+
+.sdv-btn:focus-visible {
+  outline: 2px solid var(--sidebar-active, var(--links, #2563eb));
+  outline-offset: 2px;
+}
+
+.sdv-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  z-index: 3;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: var(--sidebar-non-existant, #6b7280);
+  background: var(--bg, #ffffff);
+  border: 1px solid var(--table-border-color, #d0d7de);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.sdv-wrap:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  padding: 12px;
+  border-radius: 0;
+  background: var(--bg, #ffffff);
+}
+
+.sdv-wrap:fullscreen .sdv-hint {
+  bottom: 16px;
+  left: 16px;
+}

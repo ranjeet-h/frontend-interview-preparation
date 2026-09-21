@@ -217,7 +217,7 @@ dense.
 - [Backend Testing Pages](backend/testing/index.md)
 - [Deployment and DevOps Pages](backend/deployment/index.md)
 - [Logging Monitoring Debugging Pages](backend/observability/index.md)
-- [Backend System Design Pages](backend/system-design/index.md)
+- [Backend System Design Deep Dives](../../system-design/backend-designs/index.md)
 - [Full-Stack Integration Pages](backend/full-stack-integration/index.md)
 - [Backend Coding Practice Pages](backend/coding-practice/index.md)
 - [Senior Backend Scenario Pages](backend/senior-scenarios/index.md)

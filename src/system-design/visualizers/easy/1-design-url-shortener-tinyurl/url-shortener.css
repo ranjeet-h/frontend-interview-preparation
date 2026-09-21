@@ -1,0 +1,499 @@
+/* URL Shortener load & scale visualizer.
+   Prefix: usv- (url shortener visualizer). Works across all mdBook themes. */
+
+.usv {
+  --usv-bg: var(--bg, #ffffff);
+  --usv-panel: var(--quote-bg, #f6f8fa);
+  --usv-text: var(--fg, #18212b);
+  --usv-muted: var(--sidebar-non-existant, #6b7280);
+  --usv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --usv-border: var(--table-border-color, #d0d7de);
+  --usv-ok: #16a34a;
+  --usv-warn: #d97706;
+  --usv-danger: #dc2626;
+  --usv-read: #2563eb;
+  --usv-write: #d97706;
+  --usv-cache: #0891b2;
+  --usv-queue: #7c3aed;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--usv-border);
+  border-radius: 12px;
+  background: var(--usv-panel);
+  color: var(--usv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.usv *,
+.usv *::before,
+.usv *::after {
+  box-sizing: border-box;
+}
+
+/* ---------- toolbar ---------- */
+.usv-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.usv-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+}
+
+.usv-field-label {
+  color: var(--usv-muted);
+  font-weight: 600;
+}
+
+.usv-select {
+  font: inherit;
+  font-size: 0.95rem;
+  color: var(--usv-text);
+  background: var(--usv-bg);
+  border: 1px solid var(--usv-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.usv-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.usv-btn {
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--usv-text);
+  background: var(--usv-bg);
+  border: 1px solid var(--usv-border);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+}
+
+.usv-btn:hover {
+  border-color: var(--usv-accent);
+}
+
+.usv-btn:active {
+  transform: translateY(1px);
+}
+
+.usv-btn.usv-primary {
+  color: #fff;
+  background: var(--usv-accent);
+  border-color: var(--usv-accent);
+}
+
+.usv-btn.usv-fix {
+  border-color: var(--usv-warn);
+  color: var(--usv-warn);
+}
+
+.usv-btn.usv-fix.is-urgent {
+  color: #fff;
+  background: var(--usv-danger);
+  border-color: var(--usv-danger);
+}
+
+.usv-btn:focus-visible,
+.usv-select:focus-visible {
+  outline: 2px solid var(--usv-accent);
+  outline-offset: 2px;
+}
+
+.usv-inc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--usv-border);
+  border-radius: 10px;
+  background: var(--usv-bg);
+}
+
+.usv-inc-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.usv-inc-count {
+  font-size: 0.82rem;
+  color: var(--usv-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.usv-inc-count.is-short {
+  color: var(--usv-warn);
+  font-weight: 700;
+}
+
+.usv-inc-count.is-critical {
+  color: var(--usv-danger);
+  font-weight: 700;
+}
+
+/* ---------- stage ---------- */
+.usv-stage {
+  margin-top: 12px;
+  height: min(62vh, 560px);
+  background: var(--usv-bg);
+  border: 1px solid var(--usv-border);
+  border-radius: 10px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.usv-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.usv-edge {
+  stroke: var(--usv-border);
+  stroke-width: 2.5;
+  fill: none;
+}
+
+.usv-edge.is-read { stroke: color-mix(in srgb, var(--usv-read) 45%, var(--usv-border)); }
+.usv-edge.is-write { stroke: color-mix(in srgb, var(--usv-write) 45%, var(--usv-border)); }
+.usv-edge.is-cache { stroke: color-mix(in srgb, var(--usv-cache) 45%, var(--usv-border)); }
+.usv-edge.is-queue { stroke: color-mix(in srgb, var(--usv-queue) 45%, var(--usv-border)); }
+.usv-edge.is-danger { stroke: var(--usv-danger); }
+.usv-edge.is-dashed { stroke-dasharray: 6 5; }
+
+.usv-dot {
+  stroke: none;
+}
+
+.usv-node .usv-box {
+  fill: var(--usv-panel);
+  stroke: var(--usv-border);
+  stroke-width: 2;
+  transition: stroke 0.25s ease, fill 0.25s ease;
+}
+
+.usv-node.is-warn .usv-box { stroke: var(--usv-warn); }
+.usv-node.is-danger .usv-box {
+  stroke: var(--usv-danger);
+  animation: usv-pulse 1.1s ease-in-out infinite;
+}
+
+.usv-node.is-new .usv-box {
+  animation: usv-pop 0.7s ease-out;
+}
+
+.usv-node-title {
+  fill: var(--usv-text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.usv-node-sub {
+  fill: var(--usv-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.usv-bar-bg {
+  fill: var(--usv-border);
+  opacity: 0.55;
+}
+
+.usv-bar-fill {
+  fill: var(--usv-ok);
+  transition: width 0.35s ease, fill 0.25s ease;
+}
+
+.usv-node.is-warn .usv-bar-fill { fill: var(--usv-warn); }
+.usv-node.is-danger .usv-bar-fill { fill: var(--usv-danger); }
+
+.usv-badge {
+  fill: var(--usv-accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.usv-plus {
+  fill: var(--usv-ok);
+  font-size: 14px;
+  font-weight: 800;
+  opacity: 0;
+}
+
+.usv-plus.is-show {
+  animation: usv-float 1.1s ease-out;
+}
+
+/* ---------- metrics ---------- */
+.usv-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.usv-metric {
+  background: var(--usv-bg);
+  border: 1px solid var(--usv-border);
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+
+.usv-metric-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--usv-muted);
+}
+
+.usv-metric-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 1.08rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.usv-metric.is-warn .usv-metric-value { color: var(--usv-warn); }
+.usv-metric.is-danger .usv-metric-value { color: var(--usv-danger); }
+
+.usv-narration {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border-left: 4px solid var(--usv-ok);
+  background: var(--usv-bg);
+  font-size: 0.95rem;
+}
+
+.usv-narration.is-warn { border-left-color: var(--usv-warn); }
+.usv-narration.is-danger { border-left-color: var(--usv-danger); }
+
+.usv-narration strong { font-weight: 700; }
+
+.usv-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--usv-muted);
+}
+
+.usv-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usv-swatch {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.usv-swatch.is-read { background: var(--usv-read); }
+.usv-swatch.is-cache { background: var(--usv-cache); }
+.usv-swatch.is-write { background: var(--usv-write); }
+.usv-swatch.is-queue { background: var(--usv-queue); }
+
+.usv-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--usv-muted);
+}
+
+@keyframes usv-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes usv-pop {
+  0% { transform: scale(0.86); }
+  60% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+
+@keyframes usv-float {
+  0% { opacity: 0; transform: translateY(6px); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-16px); }
+}
+
+@media (max-width: 560px) {
+  .usv { padding: 10px; }
+  .usv-toolbar { gap: 8px; }
+  .usv-metric-value { font-size: 1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usv-node.is-danger .usv-box,
+  .usv-node.is-new .usv-box,
+  .usv-plus.is-show {
+    animation: none;
+  }
+  .usv-dot { display: none; }
+}
+
+/* ---------- single action + explanation ---------- */
+.usv-scale {
+  padding: 9px 20px;
+  font-size: 0.95rem;
+}
+
+.usv-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.usv-scale-hint {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--usv-muted);
+}
+
+.usv-scale-hint.is-warn { color: var(--usv-warn); }
+.usv-scale-hint.is-danger { color: var(--usv-danger); }
+.usv-scale-hint.is-ok { color: var(--usv-ok); }
+
+.usv-explain {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  background: var(--usv-bg);
+  border: 1px solid var(--usv-border);
+  border-radius: 9px;
+}
+
+.usv-row {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--usv-border);
+}
+
+.usv-row:first-child {
+  border-top: 0;
+}
+
+.usv-row dt {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--usv-muted);
+}
+
+.usv-row dd {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 560px) {
+  .usv-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .usv-row dt {
+    margin-top: 4px;
+  }
+}
+
+/* ---------- edge labels + request tracing ---------- */
+.usv-edge-label {
+  fill: var(--usv-muted);
+  stroke: var(--usv-bg);
+  stroke-width: 4px;
+  paint-order: stroke;
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.usv-tracebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+
+.usv-tracebar-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--usv-muted);
+}
+
+.usv-seg {
+  display: inline-flex;
+  border: 1px solid var(--usv-border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.usv-seg-btn {
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--usv-text);
+  background: var(--usv-bg);
+  border: 0;
+  border-right: 1px solid var(--usv-border);
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.usv-seg-btn:last-child { border-right: 0; }
+.usv-seg-btn.is-active { background: var(--usv-accent); color: #fff; }
+.usv-seg-btn:focus-visible { outline: 2px solid var(--usv-accent); outline-offset: -2px; }
+
+.usv-trace-caption {
+  margin-top: 8px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: var(--usv-bg);
+  border: 1px dashed var(--usv-border);
+  font-size: 0.92rem;
+}
+
+.usv-trace-caption.is-active {
+  border-style: solid;
+  border-color: var(--usv-accent);
+}
+
+.usv-trace-step {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--usv-accent);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.usv-node.is-trace .usv-box { stroke: var(--usv-accent); stroke-width: 3; }
+.usv-node.is-trace .usv-node-title { fill: var(--usv-accent); }
+.usv-edge.is-trace { stroke: var(--usv-accent); stroke-width: 4; }

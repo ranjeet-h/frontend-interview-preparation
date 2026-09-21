@@ -22,8 +22,8 @@ Every page opens with the **problem or pain**, not a definition. Plain language 
 |---|---|---|
 | [Study System](../study-system.md) | Done | Points to Type A–E spec |
 | [Frontend fundamentals](../frontend/index.md) | Done | 18 topic pages + 2 question banks (in place, not split) |
-| [System design guide](../full-stack/system-design/index.md) | Done | 15 foundations + 4 problem banks + prep |
-| [Backend system design](../full-stack/backend/system-design/index.md) | Done | 30 Type D pages |
+| [System design guide](../system-design/index.md) | Done | 15 foundations + 4 problem banks + prep |
+| [Backend system design](../system-design/backend-designs/index.md) | Done | 30 Type D pages |
 | [Node.js concepts](../full-stack/backend/nodejs/index.md) | Done | 30 Type A pages |
 | JavaScript concepts | In progress | 27 / 55 Type A (`src/javascript/concepts/`) |
 | React concepts | In progress | 45 / 66 Type A — core + refs done; 7 hooks done; 21 hook-advanced pages queued |

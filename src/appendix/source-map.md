@@ -73,12 +73,12 @@ Maps archived root files and CSV imports to their **canonical book chapters**. A
 
 | Source section | Lines | Book chapter |
 |---|---|---|
-| Introduction & Framework + Concept-Based Questions (Q1–Q15) | L22–141 | [Foundations & Framework](../full-stack/system-design/concepts.md) |
-| Easy System Design Problems (Q16–Q35) | L143–483 | [Easy System Design Problems](../full-stack/system-design/easy.md) |
-| Medium System Design Problems (Q36–Q70) | L485–1220 | [Medium System Design Problems](../full-stack/system-design/medium.md) |
-| Hard System Design Problems (Q71–Q95) | L1222–1879 | [Hard System Design Problems](../full-stack/system-design/hard.md) |
-| Advanced & Specialist Areas (Q96–Q100) | L1881–2209 | [Advanced & Specialist Areas](../full-stack/system-design/specialist.md) |
-| Preparation Strategy | L2211–2390 | [Preparation Strategy](../full-stack/system-design/preparation.md) |
+| Introduction & Framework + Concept-Based Questions (Q1–Q15) | L22–141 | [Foundations & Framework](../system-design/concepts.md) |
+| Easy System Design Problems (1–20) | L143–483 | [Easy examples](../system-design/examples/easy/index.md) |
+| Medium System Design Problems (21–55) | L485–1220 | [Medium examples](../system-design/examples/medium/index.md) |
+| Hard System Design Problems (56–80) | L1222–1879 | [Hard examples](../system-design/examples/hard/index.md) |
+| Very Hard Areas (81–85) | L1881–2209 | [Very hard examples](../system-design/examples/very-hard/index.md) |
+| Preparation Strategy | L2211–2390 | [Preparation Strategy](../system-design/preparation.md) |
 
 ## Question-bank CSV imports
 
@@ -114,5 +114,5 @@ tracks are placeholders for future content.
 | [Backend & APIs](../full-stack/backend/index.md) | Node, Python, FastAPI, auth, backend design | Planned |
 | [Databases & Storage](../full-stack/databases/index.md) | MongoDB, MySQL, PostgreSQL, modeling | Planned |
 | [Cloud & DevOps](../full-stack/cloud/index.md) | AWS, Azure, Google Cloud, delivery, ops | Planned |
-| [System Design](../full-stack/system-design/index.md) | 100 system design questions and patterns | Ready |
+| [System Design](../system-design/index.md) | 100 system design questions and patterns | Ready |
 | [AI & Agents](../full-stack/ai/index.md) | Agentic workflows, prompting, RAG, evaluation | Planned |
