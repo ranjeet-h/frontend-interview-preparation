@@ -54,10 +54,16 @@ Maps archived root files and CSV imports to their **canonical book chapters**. A
 
 ## Curated chapters (direct authoring in `src/`)
 
+These tracks are written directly in `src/` from a user-provided bank, a framework, or original authoring — they do not map line-for-line to an archived root file.
+
 | Book chapter | Canonical source | Notes |
 |---|---|---|
 | [Practical Questions (50 Interview Builds)](../react/practical-questions.md) | `src/react/practical-questions.md` | Curated beginner/intermediate/advanced React practical builds |
 | [Next.js interview track](../nextjs/index.md) | User-provided 180-question Next.js bank | Curated App Router-first track; version-sensitive claims defer to official Next.js documentation |
+| [TypeScript interview track](../typescript/index.md) | User-provided TypeScript interview bank | Curated interview-first track; the official TypeScript handbook is the semantic authority. Spec: `docs/superpowers/specs/2026-08-28-typescript-interview-track-design.md` |
+| [Rust interview track](../rust/index.md) | Direct authoring in `src/rust/` | Ownership-first Rust track; no external source file |
+| [HLD & LLD Interview Designs](../system-design/interview-designs/index.md) | User-provided 17-point HLD loop and 8-phase LLD path | Curated; complements the 100-question track — see [System design tracks at a glance](#system-design-tracks-at-a-glance) |
+| [Backend System Design Deep Dives](../system-design/backend-designs/index.md) | Direct authoring in `src/system-design/backend-designs/` | 30 Type D whiteboard deep dives of selected backends |
 
 ## `06-javascript-coding-DSA-problems.md` → DSA
 
@@ -79,6 +85,23 @@ Maps archived root files and CSV imports to their **canonical book chapters**. A
 | Hard System Design Problems (56–80) | L1222–1879 | [Hard examples](../system-design/examples/hard/index.md) |
 | Very Hard Areas (81–85) | L1881–2209 | [Very hard examples](../system-design/examples/very-hard/index.md) |
 | Preparation Strategy | L2211–2390 | [Preparation Strategy](../system-design/preparation.md) |
+
+## System design tracks at a glance
+
+System design is split into three tracks that do not overlap in purpose:
+
+| Track | Book chapters | Purpose |
+|---|---|---|
+| 100-question guide | [System Design guide](../system-design/index.md), [Foundations](../system-design/concepts.md), [Examples 1–85](../system-design/examples/index.md), [Preparation Strategy](../system-design/preparation.md) | Breadth across 100 prompts; mapped from `100_System_Design_Interview_Questions_Complete_Guide.md` above |
+| Backend deep dives | [Backend System Design Deep Dives](../system-design/backend-designs/index.md) | 30 Type D whiteboard walkthroughs of selected backends |
+| Interview designs (HLD & LLD) | [HLD & LLD Interview Designs](../system-design/interview-designs/index.md) | One repeatable answer loop per level: the 17-point HLD loop and the 8-phase LLD path |
+
+The HLD and LLD designs are curated in `src/system-design/interview-designs/` from two user-provided frameworks, with the design spec and plan in `docs/superpowers/` (`2026-08-28-hld-lld-interview-designs*`). Ten chapters follow each framework:
+
+- **HLD** — [HLD Interview Designs](../system-design/interview-designs/hld/index.md): URL Shortener, Rate Limiter, Notification System, WhatsApp, Twitter Feed, BookMyShow, Uber, YouTube, Google Drive, Payment System.
+- **LLD** — [LLD Interview Designs](../system-design/interview-designs/lld/index.md): Parking Lot, Elevator, Vending Machine, Splitwise, BookMyShow, ATM, Car Rental, Logger, Notification System, Cache.
+
+Each chapter also mounts an interactive visualizer built from the shared engines in `src/system-design/visualizers/` (`viewport`, `lld-lens`, `hld-sim`), registered in `book.toml`.
 
 ## Question-bank CSV imports
 
