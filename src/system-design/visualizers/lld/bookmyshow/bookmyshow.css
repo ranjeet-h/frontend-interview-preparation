@@ -1,0 +1,74 @@
+/* BookMyShow LLD visualizer. Prefix: bmv-. Works across mdBook themes. */
+
+.bmv {
+  --bmv-bg: var(--bg, #ffffff);
+  --bmv-panel: var(--quote-bg, #f6f8fa);
+  --bmv-text: var(--fg, #18212b);
+  --bmv-muted: var(--sidebar-non-existant, #6b7280);
+  --bmv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --bmv-border: var(--table-border-color, #d0d7de);
+  --bmv-seat: #e5e7eb;
+  --bmv-userA: #2563eb;
+  --bmv-userB: #16a34a;
+  --bmv-held: #f59e0b;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--bmv-border);
+  border-radius: 12px;
+  background: var(--bmv-panel);
+  color: var(--bmv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.bmv *, .bmv *::before, .bmv *::after { box-sizing: border-box; }
+
+.bmv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.bmv-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--bmv-text); background: var(--bmv-bg);
+  border: 1px solid var(--bmv-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.bmv-btn:hover { border-color: var(--bmv-accent); }
+.bmv-btn.bmv-primary { color: #fff; background: var(--bmv-accent); border-color: var(--bmv-accent); }
+.bmv-btn:focus-visible { outline: 2px solid var(--bmv-accent); outline-offset: 2px; }
+.bmv-sep { width: 1px; height: 22px; background: var(--bmv-border); }
+.bmv-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--bmv-muted); }
+.bmv-select { font: inherit; font-size: 0.88rem; color: var(--bmv-text); background: var(--bmv-bg); border: 1px solid var(--bmv-border); border-radius: 8px; padding: 6px 8px; }
+
+.bmv-stage { margin-top: 12px; padding: 4px; background: var(--bmv-bg); border: 1px solid var(--bmv-border); border-radius: 10px; }
+.bmv-svg { display: block; width: 100%; height: min(52vh, 380px); }
+
+.bmv-screen { fill: var(--bmv-muted); opacity: .25; }
+.bmv-screen-text { fill: var(--bmv-muted); font-size: 12px; font-weight: 700; letter-spacing: .2em; }
+.bmv-rowlabel { fill: var(--bmv-muted); font-size: 12px; font-weight: 700; }
+.bmv-seat { cursor: pointer; }
+.bmv-seatrect { stroke: var(--bmv-border); stroke-width: 1.5; transition: fill .2s, stroke .2s; }
+.bmv-seat:hover .bmv-seatrect { stroke: var(--bmv-accent); }
+.bmv-seat.is-selected .bmv-seatrect { stroke: var(--bmv-accent); stroke-width: 3; fill: color-mix(in srgb, var(--bmv-accent) 30%, var(--bmv-bg)); }
+.bmv-seat.is-held .bmv-seatrect { stroke: var(--bmv-held); stroke-width: 2.5; stroke-dasharray: 4 3; }
+.bmv-seat.is-booked { cursor: default; }
+.bmv-seat.is-booked .bmv-seatrect { stroke: color-mix(in srgb, #000 20%, var(--bmv-border)); }
+.bmv-seattext { font-size: 11px; font-weight: 700; fill: var(--bmv-muted); pointer-events: none; }
+.bmv-seattext.is-on { fill: #fff; }
+
+.bmv-readout { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 10px; font-size: 0.9rem; }
+.bmv-readout b { font-variant-numeric: tabular-nums; }
+.bmv-userchip { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.bmv-dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+.bmv-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--bmv-bg); border-left: 4px solid var(--bmv-accent); font-size: 0.92rem; }
+.bmv-caption.is-bad { border-left-color: var(--bmv-held); }
+
+.bmv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+.bmv-metric { background: var(--bmv-bg); border: 1px solid var(--bmv-border); border-radius: 9px; padding: 8px 10px; }
+.bmv-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--bmv-muted); }
+.bmv-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.bmv-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 0.8rem; color: var(--bmv-muted); }
+.bmv-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.bmv-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--bmv-muted); }
+
+@media (max-width: 560px) { .bmv { padding: 10px; } }

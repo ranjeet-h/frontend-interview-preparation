@@ -1,0 +1,75 @@
+/* Notification System LLD visualizer. Prefix: ntv-. Works across mdBook themes. */
+
+.ntv {
+  --ntv-bg: var(--bg, #ffffff);
+  --ntv-panel: var(--quote-bg, #f6f8fa);
+  --ntv-text: var(--fg, #18212b);
+  --ntv-muted: var(--sidebar-non-existant, #6b7280);
+  --ntv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --ntv-border: var(--table-border-color, #d0d7de);
+  --ntv-ok: #16a34a;
+  --ntv-warn: #d97706;
+  --ntv-bad: #dc2626;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--ntv-border);
+  border-radius: 12px;
+  background: var(--ntv-panel);
+  color: var(--ntv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.ntv *, .ntv *::before, .ntv *::after { box-sizing: border-box; }
+
+.ntv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.ntv-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--ntv-text); background: var(--ntv-bg);
+  border: 1px solid var(--ntv-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.ntv-btn:hover { border-color: var(--ntv-accent); }
+.ntv-btn.ntv-primary { color: #fff; background: var(--ntv-accent); border-color: var(--ntv-accent); }
+.ntv-btn:focus-visible { outline: 2px solid var(--ntv-accent); outline-offset: 2px; }
+.ntv-sep { width: 1px; height: 22px; background: var(--ntv-border); }
+.ntv-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--ntv-muted); }
+.ntv-select { font: inherit; font-size: 0.88rem; color: var(--ntv-text); background: var(--ntv-bg); border: 1px solid var(--ntv-border); border-radius: 8px; padding: 6px 8px; }
+
+.ntv-stage { margin-top: 12px; padding: 4px; background: var(--ntv-bg); border: 1px solid var(--ntv-border); border-radius: 10px; }
+.ntv-svg { display: block; width: 100%; height: min(34vh, 240px); }
+.ntv-node .ntv-box { fill: var(--ntv-panel); stroke: var(--ntv-border); stroke-width: 2; transition: stroke .2s, fill .2s; }
+.ntv-node.is-active .ntv-box { stroke: var(--ntv-accent); stroke-width: 3; fill: color-mix(in srgb, var(--ntv-accent) 12%, var(--ntv-bg)); }
+.ntv-label { fill: var(--ntv-text); font-size: 13px; font-weight: 700; }
+.ntv-sub { fill: var(--ntv-muted); font-size: 10px; font-weight: 600; }
+.ntv-edge { stroke: var(--ntv-muted); stroke-width: 2; fill: none; }
+.ntv-arrow { fill: var(--ntv-muted); }
+
+.ntv-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 10px; }
+.ntv-card { background: var(--ntv-bg); border: 1px solid var(--ntv-border); border-radius: 9px; padding: 8px 10px; }
+.ntv-card-head { font-size: 0.82rem; font-weight: 800; margin-bottom: 3px; }
+.ntv-status { font-size: 0.8rem; font-weight: 700; }
+.ntv-status.is-sent { color: var(--ntv-ok); }
+.ntv-status.is-failed { color: var(--ntv-bad); }
+.ntv-status.is-skipped { color: var(--ntv-muted); }
+.ntv-status.is-retry { color: var(--ntv-warn); }
+.ntv-card-sub { font-size: 0.74rem; color: var(--ntv-muted); margin-top: 3px; }
+
+.ntv-prefs { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 10px; font-size: 0.82rem; color: var(--ntv-muted); }
+.ntv-prefs b { color: var(--ntv-text); }
+.ntv-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--ntv-border); font-weight: 700; }
+.ntv-pill.on { color: var(--ntv-ok); border-color: var(--ntv-ok); }
+.ntv-pill.off { color: var(--ntv-muted); text-decoration: line-through; }
+
+.ntv-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--ntv-bg); border-left: 4px solid var(--ntv-accent); font-size: 0.92rem; }
+.ntv-caption.is-bad { border-left-color: var(--ntv-bad); }
+
+.ntv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-top: 10px; }
+.ntv-metric { background: var(--ntv-bg); border: 1px solid var(--ntv-border); border-radius: 9px; padding: 8px 10px; }
+.ntv-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--ntv-muted); }
+.ntv-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.ntv-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--ntv-muted); }
+
+@media (max-width: 560px) { .ntv { padding: 10px; } }

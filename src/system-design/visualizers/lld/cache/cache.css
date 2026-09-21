@@ -1,0 +1,78 @@
+/* Cache LLD visualizer. Prefix: cav-. Works across mdBook themes. */
+
+.cav {
+  --cav-bg: var(--bg, #ffffff);
+  --cav-panel: var(--quote-bg, #f6f8fa);
+  --cav-text: var(--fg, #18212b);
+  --cav-muted: var(--sidebar-non-existant, #6b7280);
+  --cav-accent: var(--sidebar-active, var(--links, #2563eb));
+  --cav-border: var(--table-border-color, #d0d7de);
+  --cav-hit: #16a34a;
+  --cav-miss: #dc2626;
+  --cav-evict: #f59e0b;
+  --cav-empty: var(--quote-bg, #f6f8fa);
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--cav-border);
+  border-radius: 12px;
+  background: var(--cav-panel);
+  color: var(--cav-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.cav *, .cav *::before, .cav *::after { box-sizing: border-box; }
+
+.cav-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.cav-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--cav-text); background: var(--cav-bg);
+  border: 1px solid var(--cav-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.cav-btn:hover { border-color: var(--cav-accent); }
+.cav-btn.cav-primary { color: #fff; background: var(--cav-accent); border-color: var(--cav-accent); }
+.cav-btn:focus-visible { outline: 2px solid var(--cav-accent); outline-offset: 2px; }
+.cav-sep { width: 1px; height: 22px; background: var(--cav-border); }
+.cav-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--cav-muted); }
+.cav-select { font: inherit; font-size: 0.88rem; color: var(--cav-text); background: var(--cav-bg); border: 1px solid var(--cav-border); border-radius: 8px; padding: 6px 8px; }
+
+.cav-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 12px; }
+.cav-slot {
+  min-height: 104px;
+  background: var(--cav-bg);
+  border: 1px solid var(--cav-border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  transition: border-color .25s, box-shadow .25s, background .25s;
+}
+.cav-slot.is-empty { border-style: dashed; opacity: .55; }
+.cav-slot.is-hit { border-color: var(--cav-hit); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cav-hit) 35%, transparent); }
+.cav-slot.is-evicted { border-color: var(--cav-evict); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cav-evict) 45%, transparent); }
+.cav-slot.is-expired { border-color: var(--cav-miss); opacity: .6; }
+.cav-key { font-size: 1.1rem; font-weight: 800; }
+.cav-val { font-size: 0.85rem; color: var(--cav-muted); margin-top: 2px; }
+.cav-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.cav-badge { font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--cav-border); color: var(--cav-muted); }
+.cav-badge.freq { color: var(--cav-accent); border-color: var(--cav-accent); }
+.cav-badge.ttl { color: var(--cav-evict); border-color: var(--cav-evict); }
+.cav-empty-label { color: var(--cav-muted); font-size: 0.85rem; font-weight: 600; }
+
+.cav-log { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+.cav-log:empty { display: none; }
+.cav-logitem { font-size: 0.76rem; font-weight: 600; background: var(--cav-bg); border: 1px solid var(--cav-border); border-radius: 999px; padding: 3px 10px; }
+.cav-logitem.hit { color: var(--cav-hit); border-color: var(--cav-hit); }
+.cav-logitem.miss { color: var(--cav-miss); border-color: var(--cav-miss); }
+.cav-logitem.evict { color: var(--cav-evict); border-color: var(--cav-evict); }
+
+.cav-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--cav-bg); border-left: 4px solid var(--cav-accent); font-size: 0.92rem; }
+
+.cav-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-top: 10px; }
+.cav-metric { background: var(--cav-bg); border: 1px solid var(--cav-border); border-radius: 9px; padding: 8px 10px; }
+.cav-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--cav-muted); }
+.cav-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.cav-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--cav-muted); }
+
+@media (max-width: 560px) { .cav { padding: 10px; } }

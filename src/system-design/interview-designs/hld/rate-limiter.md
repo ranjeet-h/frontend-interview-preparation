@@ -180,6 +180,15 @@ Add adaptive policies based on verified abuse signals, signed quota leases for a
 
 For globally exact quotas, investigate token allocation leases with explicit reconciliation and bounded overshoot, or accept the latency of a globally coordinated authority for only the few endpoints that truly need it. Extend the policy language to support concurrency limits, bandwidth budgets, and request-cost models while retaining one atomic decision boundary.
 
+## Interactive Visualizer
+
+Raise the incoming request rate and watch the limiter tier and the shared counter absorb checks. Requests over the policy are rejected with **429** while the backend stays protected. When a component turns red, press **Scale up** to add limiter or Redis nodes and see what failed, what changed, and what improved.
+
+<div
+  id="rate-limiter-hld"
+  class="hld rate-limiter-hld-visualizer"
+></div>
+
 ## Interview recap
 
 The interview answer is: “keep policy configuration separate from mutable bucket state, use token buckets for burst-tolerant sustained limits, and make every distributed consumption decision atomic so only one gateway can take the last token.”

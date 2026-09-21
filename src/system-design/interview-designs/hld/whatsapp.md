@@ -204,6 +204,15 @@ Future work also includes voice/video call signaling and media relays, as well a
 - How would you prevent a 100,000-member group from delaying one-to-one messages?
 - What does the server know and not know when the message body is end-to-end encrypted?
 
+## Interactive Visualizer
+
+Raise the message rate and watch sends move through the WebSocket gateways, the connection directory, the message API, the conversation-partitioned store, and the delivery fan-out. Press **Scale up** to add gateways, API nodes, store partitions, or delivery workers and see what failed, what changed, and what improved.
+
+<div
+  id="whatsapp-hld"
+  class="hld whatsapp-hld-visualizer"
+></div>
+
 ## Interview recap
 
 The answer is: **persist once, assign an ordering position, then deliver at least once and deduplicate on clients.** A durable conversation-partitioned message and outbox establish the truth; live gateways, offline queues, receipts, and reconnect cursors make that truth reach every linked device despite disconnections and retries.

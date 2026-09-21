@@ -1,0 +1,75 @@
+/* Vending Machine LLD visualizer. Prefix: vmv-. Works across mdBook themes. */
+
+.vmv {
+  --vmv-bg: var(--bg, #ffffff);
+  --vmv-panel: var(--quote-bg, #f6f8fa);
+  --vmv-text: var(--fg, #18212b);
+  --vmv-muted: var(--sidebar-non-existant, #6b7280);
+  --vmv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --vmv-border: var(--table-border-color, #d0d7de);
+  --vmv-ok: #16a34a;
+  --vmv-warn: #d97706;
+  --vmv-bad: #dc2626;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--vmv-border);
+  border-radius: 12px;
+  background: var(--vmv-panel);
+  color: var(--vmv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.vmv *, .vmv *::before, .vmv *::after { box-sizing: border-box; }
+
+.vmv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.vmv-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--vmv-text); background: var(--vmv-bg);
+  border: 1px solid var(--vmv-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.vmv-btn:hover { border-color: var(--vmv-accent); }
+.vmv-btn.vmv-primary { color: #fff; background: var(--vmv-accent); border-color: var(--vmv-accent); }
+.vmv-btn:disabled { opacity: .5; cursor: not-allowed; }
+.vmv-btn:focus-visible { outline: 2px solid var(--vmv-accent); outline-offset: 2px; }
+.vmv-sep { width: 1px; height: 22px; background: var(--vmv-border); }
+.vmv-money { font-weight: 800; }
+
+.vmv-stage { margin-top: 12px; padding: 4px; background: var(--vmv-bg); border: 1px solid var(--vmv-border); border-radius: 10px; }
+.vmv-svg { display: block; width: 100%; height: min(52vh, 380px); }
+
+.vmv-slot { cursor: pointer; }
+.vmv-slotrect { stroke: var(--vmv-border); stroke-width: 2; transition: stroke .2s, fill .2s; }
+.vmv-slot:hover .vmv-slotrect { stroke: var(--vmv-accent); }
+.vmv-slot.is-selected .vmv-slotrect { stroke: var(--vmv-accent); stroke-width: 3.5; }
+.vmv-slot.is-empty .vmv-slotrect { stroke-dasharray: 5 4; opacity: .7; }
+.vmv-slot.is-dispensing .vmv-slotrect { stroke: var(--vmv-ok); stroke-width: 3.5; }
+.vmv-id { fill: var(--vmv-muted); font-size: 12px; font-weight: 800; }
+.vmv-name { fill: var(--vmv-text); font-size: 15px; font-weight: 700; }
+.vmv-price { fill: var(--vmv-accent); font-size: 13px; font-weight: 800; }
+.vmv-stock { fill: var(--vmv-muted); font-size: 12px; font-weight: 700; }
+.vmv-stock.is-out { fill: var(--vmv-bad); }
+.vmv-tray { fill: var(--vmv-panel); stroke: var(--vmv-border); stroke-width: 1.5; }
+.vmv-tray-text { fill: var(--vmv-muted); font-size: 13px; font-weight: 700; }
+.vmv-tray-text.is-on { fill: var(--vmv-ok); }
+
+.vmv-readout { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-top: 10px; font-size: 0.9rem; }
+.vmv-readout b { font-variant-numeric: tabular-nums; }
+.vmv-states { display: flex; flex-wrap: wrap; gap: 5px; }
+.vmv-chip { font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--vmv-border); color: var(--vmv-muted); }
+.vmv-chip.is-on { background: var(--vmv-accent); border-color: var(--vmv-accent); color: #fff; }
+.vmv-chip.is-disp.is-on { background: var(--vmv-ok); border-color: var(--vmv-ok); }
+
+.vmv-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--vmv-bg); border-left: 4px solid var(--vmv-accent); font-size: 0.92rem; }
+.vmv-caption.is-bad { border-left-color: var(--vmv-bad); }
+
+.vmv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+.vmv-metric { background: var(--vmv-bg); border: 1px solid var(--vmv-border); border-radius: 9px; padding: 8px 10px; }
+.vmv-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--vmv-muted); }
+.vmv-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.vmv-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--vmv-muted); }
+
+@media (max-width: 560px) { .vmv { padding: 10px; } }

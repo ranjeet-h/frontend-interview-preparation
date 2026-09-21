@@ -205,6 +205,15 @@ Add venue-specific cancellation windows and partial refunds, waitlists that are 
 - How would you handle a show cancelled by the theatre after thousands of bookings exist?
 - Why is a seat-map cache acceptable but a cache-based hold unsafe?
 
+## Interactive Visualizer
+
+Raise the browse rate and watch the read-heavy path (discovery cache) diverge from the rare but atomic booking path (hold → inventory → payment), with the sweeper releasing expired holds. Press **Scale up** to add cache nodes, booking nodes, inventory partitions, payment connections, or sweepers and see what failed, what changed, and what improved.
+
+<div
+  id="bookmyshow-hld"
+  class="hld bookmyshow-hld-visualizer"
+></div>
+
 ## Interview recap
 
 The answer is: **cache movie and show discovery, but make `ShowSeat` the strongly consistent source of truth; acquire an expiring hold atomically, hand payment off idempotently, and conditionally confirm only while that hold still owns every seat.** Search and analytics may lag, while no oversell is allowed.

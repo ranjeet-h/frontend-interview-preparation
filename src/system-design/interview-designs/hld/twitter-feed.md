@@ -191,6 +191,15 @@ Further work includes richer moderation and abuse controls, deletion/retention w
 - When would you push a celebrity post to a small subset of highly engaged followers instead of pulling for everyone?
 - How would you rebuild one corrupted viewer inbox without replaying all historical posts?
 
+## Interactive Visualizer
+
+Raise the tweet rate and watch the write amplification: each tweet fans out to follower timelines, the timeline cache absorbs both fan-out writes and feed reads, and reads outnumber writes. Press **Scale up** to add service nodes, store partitions, fanout workers, cache nodes, or feed nodes and see what failed, what changed, and what improved.
+
+<div
+  id="twitter-feed-hld"
+  class="hld twitter-feed-hld-visualizer"
+></div>
+
 ## Interview recap
 
 The answer is: **fan out ordinary authors on write, pull celebrity posts on read, and assemble both sources in a bounded ranked home query.** Keep posts, follow edges, and privacy rules authoritative; let inboxes, caches, ranking, and engagement counts be eventual, rebuildable projections.

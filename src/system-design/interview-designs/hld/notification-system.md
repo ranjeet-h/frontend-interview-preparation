@@ -221,6 +221,15 @@ Add multi-region active delivery with recipient-home-region routing and tested d
 - How would you prove whether a timeout after a provider call created a duplicate delivery?
 - When should a payment confirmation bypass quiet hours, and which fallback channels may it use?
 
+## Interactive Visualizer
+
+Raise the event rate and watch the notification service fan out to email, SMS, and push. Workers process the fan-out while each provider enforces its own send rate — SMS usually saturates first. Press **Scale up** to add service nodes, workers, or provider accounts and see what failed, what changed, and what improved.
+
+<div
+  id="notification-system-hld"
+  class="hld notification-system-hld-visualizer"
+></div>
+
 ## Interview recap
 
 The answer is: **persist notification intent first, then deliver through independently throttled channel workers.** The durable intent and transactional outbox make acceptance recoverable; preferences, templates, adapters, delivery attempts, retries, dead-letter handling, and explicit fallback policies make multi-channel delivery safe to operate.

@@ -1,0 +1,73 @@
+/* Car Rental LLD visualizer. Prefix: crv-. Works across mdBook themes. */
+
+.crv {
+  --crv-bg: var(--bg, #ffffff);
+  --crv-panel: var(--quote-bg, #f6f8fa);
+  --crv-text: var(--fg, #18212b);
+  --crv-muted: var(--sidebar-non-existant, #6b7280);
+  --crv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --crv-border: var(--table-border-color, #d0d7de);
+  --crv-reserved: #2563eb;
+  --crv-picked: #f59e0b;
+  --crv-returned: #16a34a;
+  --crv-free: #e5e7eb;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--crv-border);
+  border-radius: 12px;
+  background: var(--crv-panel);
+  color: var(--crv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.crv *, .crv *::before, .crv *::after { box-sizing: border-box; }
+
+.crv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.crv-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--crv-text); background: var(--crv-bg);
+  border: 1px solid var(--crv-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.crv-btn:hover { border-color: var(--crv-accent); }
+.crv-btn.crv-primary { color: #fff; background: var(--crv-accent); border-color: var(--crv-accent); }
+.crv-btn:focus-visible { outline: 2px solid var(--crv-accent); outline-offset: 2px; }
+.crv-sep { width: 1px; height: 22px; background: var(--crv-border); }
+.crv-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--crv-muted); }
+.crv-select { font: inherit; font-size: 0.88rem; color: var(--crv-text); background: var(--crv-bg); border: 1px solid var(--crv-border); border-radius: 8px; padding: 6px 8px; }
+
+.crv-stage { margin-top: 12px; padding: 4px; background: var(--crv-bg); border: 1px solid var(--crv-border); border-radius: 10px; }
+.crv-svg { display: block; width: 100%; height: min(46vh, 320px); }
+
+.crv-day { fill: var(--crv-muted); font-size: 11px; font-weight: 700; }
+.crv-vlabel { fill: var(--crv-text); font-size: 12px; font-weight: 700; }
+.crv-vtype { fill: var(--crv-muted); font-size: 10px; font-weight: 600; }
+.crv-gridline { stroke: var(--crv-border); stroke-width: 1; opacity: .6; }
+.crv-rowbg { fill: var(--crv-panel); }
+.crv-free { fill: var(--crv-free); opacity: .5; }
+
+.crv-bar { cursor: pointer; transition: opacity .2s; }
+.crv-barrect { stroke: color-mix(in srgb, #000 18%, var(--crv-border)); stroke-width: 1; }
+.crv-bar.is-reserved .crv-barrect { fill: var(--crv-reserved); }
+.crv-bar.is-picked .crv-barrect { fill: var(--crv-picked); }
+.crv-bar.is-returned .crv-barrect { fill: var(--crv-returned); }
+.crv-bar.is-selected .crv-barrect { stroke: var(--crv-text); stroke-width: 3; }
+.crv-bartext { fill: #fff; font-size: 10px; font-weight: 700; pointer-events: none; }
+
+.crv-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--crv-bg); border-left: 4px solid var(--crv-accent); font-size: 0.92rem; }
+.crv-caption.is-bad { border-left-color: #dc2626; }
+
+.crv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 10px; }
+.crv-metric { background: var(--crv-bg); border: 1px solid var(--crv-border); border-radius: 9px; padding: 8px 10px; }
+.crv-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--crv-muted); }
+.crv-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.crv-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 0.8rem; color: var(--crv-muted); }
+.crv-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.crv-dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+.crv-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--crv-muted); }
+
+@media (max-width: 560px) { .crv { padding: 10px; } }

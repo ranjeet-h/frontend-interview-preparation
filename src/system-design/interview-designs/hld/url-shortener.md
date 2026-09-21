@@ -164,6 +164,15 @@ Preallocated sequential IDs are simple and collision-free but may be enumerable;
 
 Add custom aliases with reserved-word checks, branded domains, QR-code generation, regional data residency, scheduled link activation, richer abuse review, and an owner analytics dashboard. Add idempotency keys to `POST /short-links` when clients may retry creates, and introduce multi-region write routing if the interview scope requires globally low create latency.
 
+## Interactive Visualizer
+
+Put the design under load: raise the user count and watch the read path, the durable mapping store, and the click-event queue absorb traffic. When a component turns red, press **Scale up** to add the right capacity and see what failed, what changed, and what improved.
+
+<div
+  id="url-shortener-hld"
+  class="hld url-shortener-hld-visualizer"
+></div>
+
 ## Interview recap
 
 The interview answer is: “generate a unique immutable key once, make redirects cache-first, keep the mapping durable, and move analytics off the hot path.”

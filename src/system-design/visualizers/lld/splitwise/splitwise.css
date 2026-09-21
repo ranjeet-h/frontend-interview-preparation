@@ -1,0 +1,78 @@
+/* Splitwise LLD visualizer. Prefix: swv-. Works across mdBook themes. */
+
+.swv {
+  --swv-bg: var(--bg, #ffffff);
+  --swv-panel: var(--quote-bg, #f6f8fa);
+  --swv-text: var(--fg, #18212b);
+  --swv-muted: var(--sidebar-non-existant, #6b7280);
+  --swv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --swv-border: var(--table-border-color, #d0d7de);
+  --swv-credit: #16a34a;
+  --swv-debit: #dc2626;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--swv-border);
+  border-radius: 12px;
+  background: var(--swv-panel);
+  color: var(--swv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.swv *, .swv *::before, .swv *::after { box-sizing: border-box; }
+
+.swv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.swv-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--swv-text); background: var(--swv-bg);
+  border: 1px solid var(--swv-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.swv-btn:hover { border-color: var(--swv-accent); }
+.swv-btn.swv-primary { color: #fff; background: var(--swv-accent); border-color: var(--swv-accent); }
+.swv-btn:focus-visible { outline: 2px solid var(--swv-accent); outline-offset: 2px; }
+.swv-sep { width: 1px; height: 22px; background: var(--swv-border); }
+.swv-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--swv-muted); }
+.swv-select { font: inherit; font-size: 0.88rem; color: var(--swv-text); background: var(--swv-bg); border: 1px solid var(--swv-border); border-radius: 8px; padding: 6px 8px; }
+
+.swv-stage { margin-top: 12px; padding: 4px; background: var(--swv-bg); border: 1px solid var(--swv-border); border-radius: 10px; }
+.swv-svg { display: block; width: 100%; height: min(50vh, 380px); }
+
+.swv-nodecircle { stroke: var(--swv-border); stroke-width: 2; }
+.swv-nodecircle.is-credit { fill: color-mix(in srgb, var(--swv-credit) 22%, var(--swv-bg)); stroke: var(--swv-credit); }
+.swv-nodecircle.is-debit { fill: color-mix(in srgb, var(--swv-debit) 20%, var(--swv-bg)); stroke: var(--swv-debit); }
+.swv-nodecircle.is-zero { fill: var(--swv-panel); }
+.swv-nodename { fill: var(--swv-text); font-size: 14px; font-weight: 800; }
+.swv-nodenet { font-size: 12px; font-weight: 700; }
+.swv-nodenet.is-credit { fill: var(--swv-credit); }
+.swv-nodenet.is-debit { fill: var(--swv-debit); }
+.swv-nodenet.is-zero { fill: var(--swv-muted); }
+
+.swv-edge { fill: none; stroke: var(--swv-muted); stroke-width: 2; }
+.swv-edge.is-greedy { stroke: var(--swv-accent); }
+.swv-arrow { fill: var(--swv-muted); }
+.swv-arrow.is-greedy { fill: var(--swv-accent); }
+.swv-elabel { fill: var(--swv-text); font-size: 12px; font-weight: 700; }
+
+.swv-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
+.swv-card { background: var(--swv-bg); border: 1px solid var(--swv-border); border-radius: 9px; padding: 8px 10px; }
+.swv-card-name { font-size: 0.82rem; font-weight: 700; }
+.swv-card-net { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.swv-card-net.is-credit { color: var(--swv-credit); }
+.swv-card-net.is-debit { color: var(--swv-debit); }
+.swv-card-net.is-zero { color: var(--swv-muted); }
+
+.swv-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--swv-bg); border-left: 4px solid var(--swv-accent); font-size: 0.92rem; }
+.swv-log { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.swv-log:empty { display: none; }
+.swv-logitem { font-size: 0.78rem; font-weight: 600; background: var(--swv-bg); border: 1px solid var(--swv-border); border-radius: 999px; padding: 3px 10px; }
+
+.swv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 10px; }
+.swv-metric { background: var(--swv-bg); border: 1px solid var(--swv-border); border-radius: 9px; padding: 8px 10px; }
+.swv-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--swv-muted); }
+.swv-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.swv-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--swv-muted); }
+
+@media (max-width: 560px) { .swv { padding: 10px; } }
