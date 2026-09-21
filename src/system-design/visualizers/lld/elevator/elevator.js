@@ -124,9 +124,16 @@
     inst.cars.forEach(function (car) {
       var dist = Math.abs(car.floor - call.floor);
       var score;
-      if (car.dir === "idle") score = dist + 2;
-      else if (car.dir === call.dir && ((call.dir === "up" && car.floor <= call.floor) || (call.dir === "down" && car.floor >= call.floor))) score = dist - 2;
-      else score = dist * 3 + car.hallCalls.length * 2 + Object.keys(car.carCalls).length;
+      if (inst.strategy === "nearest") {
+        // Naive policy: closest car answers, regardless of where it is heading.
+        score = dist + Object.keys(car.carCalls).length * 0.5;
+      } else if (car.dir === "idle") {
+        score = dist + 2;
+      } else if (car.dir === call.dir && ((call.dir === "up" && car.floor <= call.floor) || (call.dir === "down" && car.floor >= call.floor))) {
+        score = dist - 2;
+      } else {
+        score = dist * 3 + car.hallCalls.length * 2 + Object.keys(car.carCalls).length;
+      }
       if (score < bestScore) { bestScore = score; best = car; }
     });
     return best;
@@ -142,6 +149,7 @@
     inst.lastDecision =
       "Car " + car.id + " ← floor " + floor + " " + (dir === "up" ? "▲" : "▼") + " (" + why + ").";
     render(inst);
+    setAssignmentTrace(inst, car.id, floor, dir);
   }
 
   function callDirWord(car, floor, dir) {
@@ -171,6 +179,8 @@
       lastDecision: "Press a floor's ▲/▼ button to raise a hall call, then Play or Step.",
       speed: 1,
       timer: null,
+      strategy: "look",
+      lens: null,
       reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     };
     for (var i = 0; i < CARS; i++) inst.cars.push(makeCar(i));
@@ -239,6 +249,7 @@
       "</div>" +
       '<div class="elv-stage"><svg class="elv-svg" viewBox="0 0 ' + VIEW_W + " " + VIEW_H + '" role="img" aria-label="Elevator building with cars and hall calls">' +
       floorsSvg + carsSvg + "</svg></div>" +
+      '<div class="elv-lens" data-lens></div>' +
       '<div class="elv-panels">' + panels + "</div>" +
       '<div class="elv-caption" role="status" aria-live="polite"></div>' +
       '<div class="elv-metrics">' +
@@ -274,6 +285,9 @@
       btn.addEventListener("click", function () { scenario(inst, btn.getAttribute("data-scenario")); });
     });
 
+    if (window.SDLLDLens) {
+      inst.lens = window.SDLLDLens.attach(container.querySelector("[data-lens]"), lensConfig(inst));
+    }
     render(inst);
   }
   build.count = 0;
@@ -364,11 +378,137 @@
     setMetric(c, "served", inst.served);
     setMetric(c, "pending", pending);
     setMetric(c, "wait", inst.waitCount ? (inst.waitSum / inst.waitCount).toFixed(1) + " ticks" : "–");
+    if (inst.lens) updateLens(inst);
   }
 
   function setMetric(c, key, value) {
     var el = c.querySelector('[data-metric="' + key + '"]');
     if (el) el.textContent = value;
+  }
+
+  function lensConfig(inst) {
+    return {
+      classes: [
+        { id: "Building", label: "Building", stereotype: "class", x: 120, y: 80,
+          owns: "Composition root: owns the floors and the cars.",
+          fields: ["floors: Floor[]", "cars: ElevatorCar[]"] },
+        { id: "Floor", label: "Floor", stereotype: "class", x: 120, y: 240,
+          owns: "Only its own hall buttons; it never knows which car answers.",
+          fields: ["number: int", "upButton", "downButton"],
+          methods: ["raiseHallCall(dir)"] },
+        { id: "ElevatorCar", label: "ElevatorCar", stereotype: "class", x: 380, y: 160,
+          owns: "Its own floor, direction, doors, and assigned stops.",
+          invariant: "Never moves while doors are open.",
+          fields: ["id", "currentFloor", "direction", "state", "carCalls", "hallCalls"],
+          methods: ["step()", "shouldStop()", "serveFloor()", "openDoors()"] },
+        { id: "Dispatcher", label: "Dispatcher", stereotype: "class", x: 380, y: 360,
+          owns: "Assignment and fairness across cars.",
+          fields: ["cars", "scheduler", "pending"],
+          methods: ["raiseHallCall()", "tick()", "assign()"] },
+        { id: "Motor", label: "Motor", stereotype: "interface", x: 620, y: 70,
+          owns: "Hardware abstraction for motion (testable, swappable).",
+          methods: ["moveUp()", "moveDown()", "stop()"] },
+        { id: "DoorDrive", label: "DoorDrive", stereotype: "interface", x: 620, y: 200,
+          owns: "Hardware abstraction for the doors.",
+          methods: ["open()", "close()"] },
+        { id: "Direction", label: "Direction", stereotype: "enum", x: 620, y: 330,
+          owns: "Value object.", fields: ["UP", "DOWN", "IDLE"] },
+        { id: "CarState", label: "CarState", stereotype: "enum", x: 620, y: 460,
+          owns: "Drives behaviour through the State pattern.",
+          fields: ["IDLE", "MOVING_UP", "MOVING_DOWN", "DOORS_OPEN"] },
+        { id: "Scheduler", label: "Scheduler", stereotype: "interface", x: 860, y: 250,
+          owns: "Policy only — holds no car state.",
+          methods: ["chooseCar(call, cars)", "nextStop(car)"] },
+        { id: "LookScheduler", label: "LookScheduler", stereotype: "class", x: 860, y: 400,
+          owns: "Concrete LOOK policy.", methods: ["chooseCar()"] },
+        { id: "NearestCarScheduler", label: "NearestCarScheduler", stereotype: "class", x: 860, y: 520,
+          owns: "Baseline nearest-car policy.", methods: ["chooseCar()"] },
+      ],
+      edges: [
+        { from: "Building", to: "Floor", kind: "composition" },
+        { from: "Building", to: "ElevatorCar", kind: "composition" },
+        { from: "ElevatorCar", to: "Motor", kind: "composition" },
+        { from: "ElevatorCar", to: "DoorDrive", kind: "composition" },
+        { from: "ElevatorCar", to: "Direction", kind: "association" },
+        { from: "ElevatorCar", to: "CarState", kind: "association" },
+        { from: "Dispatcher", to: "ElevatorCar", kind: "aggregation" },
+        { from: "Dispatcher", to: "Scheduler", kind: "depends" },
+        { from: "LookScheduler", to: "Scheduler", kind: "implements" },
+        { from: "NearestCarScheduler", to: "Scheduler", kind: "implements" },
+      ],
+      patterns: [
+        { id: "state", label: "State", classes: ["ElevatorCar", "CarState"],
+          note: "CarState drives per-state behaviour; \u201cmove while doors open\u201d becomes an unreachable transition guard, not a runtime hope." },
+        { id: "strategy", label: "Strategy", classes: ["Dispatcher", "Scheduler", "LookScheduler", "NearestCarScheduler"],
+          note: "Assignment policy is an interface, so LOOK and nearest-car swap without editing ElevatorCar. Use the Scheduler buttons and compare avg wait." },
+      ],
+      strategies: [
+        { id: "look", label: "LOOK", note: "Serve every stop in the current direction, then reverse. Fewer reversals; usually lower average wait under load." },
+        { id: "nearest", label: "Nearest-car", note: "Answer each call with the closest car. Simple, but more reversals and worse under heavy load." },
+      ],
+      strategyClasses: { look: "LookScheduler", nearest: "NearestCarScheduler" },
+      defaultStrategy: inst.strategy,
+      onStrategyChange: function (id) {
+        inst.strategy = id;
+        inst.served = 0;
+        inst.waitSum = 0;
+        inst.waitCount = 0;
+        inst.lastDecision = "Scheduler = " + (id === "nearest" ? "nearest-car" : "LOOK") + ". Metrics reset — raise calls and compare avg wait.";
+        render(inst);
+      },
+      interviewLabel: "8-phase path",
+      interview: [
+        { n: 1, label: "Requirements / Use Cases", classes: ["Building", "Floor"], note: "State the use cases, then scope: N floors, M cars, hall + car calls, low wait, no starvation." },
+        { n: 2, label: "Core Entities", classes: ["ElevatorCar", "Floor", "Dispatcher"], note: "Objects with identity vs value objects (Direction, CarState, HallCall)." },
+        { n: 3, label: "Responsibilities", classes: ["ElevatorCar", "Dispatcher"], note: "Car owns its own safe state; Dispatcher owns assignment and fairness; Scheduler owns policy only." },
+        { n: 4, label: "Relationships + Interfaces", classes: ["Building", "Scheduler", "Motor", "DoorDrive"], note: "Composition for ownership; interfaces at the points that change (policy, hardware)." },
+        { n: 5, label: "Class Diagram", classes: ["ElevatorCar", "Dispatcher", "Scheduler"], note: "Assemble classes, interfaces, enums, relationships; show key methods, not getters." },
+        { n: 6, label: "Core Flows", classes: ["Dispatcher", "ElevatorCar", "Motor", "DoorDrive"], note: "Walk a hall call from button press to arrival, including the reversal." },
+        { n: 7, label: "Critical Code", classes: ["ElevatorCar"], note: "step(), shouldStop(), serveFloor(), and LookScheduler.chooseCar() carry the design decisions." },
+        { n: 8, label: "Edge Cases + Extensibility", classes: ["Scheduler", "ElevatorCar"], note: "Dedupe, car full, reversal, obstruction; a new policy is a new Scheduler, not a car rewrite." },
+      ],
+    };
+  }
+
+  function updateLens(inst) {
+    if (!inst.lens) return;
+    var anyDoors = false, anyMove = false;
+    inst.cars.forEach(function (car) {
+      if (car.state === "doors") anyDoors = true;
+      else if (car.state === "up" || car.state === "down") anyMove = true;
+    });
+    var stratCls = inst.strategy === "nearest" ? "NearestCarScheduler" : "LookScheduler";
+    if (anyDoors) {
+      inst.lens.setActive(["Dispatcher", "ElevatorCar", "DoorDrive"]);
+      inst.lens.setTrace([
+        { cls: "Dispatcher", method: "tick" },
+        { cls: "ElevatorCar", method: "step" },
+        { cls: "ElevatorCar", method: "shouldStop" },
+        { cls: "DoorDrive", method: "open" },
+      ]);
+    } else if (anyMove) {
+      inst.lens.setActive(["Dispatcher", "ElevatorCar", "Motor", stratCls]);
+      inst.lens.setTrace([
+        { cls: "Dispatcher", method: "tick" },
+        { cls: "ElevatorCar", method: "step" },
+        { cls: stratCls, method: "nextStop" },
+        { cls: "Motor", method: "move" },
+      ]);
+    } else {
+      inst.lens.setActive(["Dispatcher", "ElevatorCar"]);
+      inst.lens.setTrace([{ cls: "Dispatcher", method: "tick" }, { cls: "ElevatorCar", method: "step" }]);
+    }
+  }
+
+  function setAssignmentTrace(inst) {
+    if (!inst.lens) return;
+    var stratCls = inst.strategy === "nearest" ? "NearestCarScheduler" : "LookScheduler";
+    inst.lens.setActive(["Dispatcher", "Scheduler", stratCls, "ElevatorCar"]);
+    inst.lens.setTrace([
+      { cls: "Dispatcher", method: "raiseHallCall" },
+      { cls: stratCls, method: "chooseCar" },
+      { cls: "ElevatorCar", method: "addHallCall" },
+    ]);
   }
 
   function initialize() {

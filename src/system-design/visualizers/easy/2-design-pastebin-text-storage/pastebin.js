@@ -1,6 +1,6 @@
-/* URL Shortener (Easy #1) load & scale visualizer.
-   Prefix: usv-. Plain browser JS, no dependencies. Scopes everything to
-   .url-shortener-visualizer containers and never touches page code. */
+/* Pastebin (Easy #2) load & scale visualizer.
+   Prefix: pbv-. Plain browser JS, no dependencies. Scopes everything to
+   .pastebin-visualizer containers and never touches page code. */
 (function () {
   "use strict";
 
@@ -8,13 +8,14 @@
 
   // ---- traffic + capacity assumptions (shown to the learner) -----------------
   var RPS_PER_USER = 0.02; // 2% of DAU active per second
-  var READ_SHARE = 0.99; // 100:1 read:write
-  var API_CAP = 2000; // redirects+creates per second per API server
-  var CACHE_CAP = 50000; // ops/s per Redis node
-  var BASE_HIT = 0.95; // cache hit rate when Redis is not overloaded
-  var PRIMARY_CAP = 4000; // qps the primary DB sustains
-  var REPLICA_CAP = 8000; // read qps per read replica
-  var WORKER_CAP = 10000; // click events/s per analytics worker
+  var READ_SHARE = 0.91; // ~10:1 read:write (pastebin, not 100:1 like shortener)
+  var BIG_SHARE = 0.10; // 10% of pastes are big (>64KB) and touch S3
+  var API_CAP = 800; // creates+reads per second per API server (10KB payloads are heavier)
+  var CACHE_CAP = 20000; // ops/s per Redis node (10KB values are fatter than short codes)
+  var BASE_HIT = 0.90; // cache hit rate when Redis is not overloaded
+  var PRIMARY_CAP = 2000; // qps the primary DB sustains
+  var REPLICA_CAP = 4000; // read qps per read replica
+  var S3_CAP = 50000; // ops/s S3 effectively sustains (managed, almost never the bottleneck)
   var TARGET = 0.7; // keep every component under 70% utilization
 
   var USERS = [
@@ -26,16 +27,15 @@
     { label: "100M users", value: 100000000 },
   ];
 
-  var DEFAULTS = { users: 0, api: 2, redis: 1, replicas: 0, workers: 1, shards: 1 };
+  var DEFAULTS = { users: 0, api: 2, redis: 1, replicas: 0, shards: 1 };
 
   var NODES = {
     clients: { x: 80, y: 340, label: "👥 Clients" },
     api: { x: 280, y: 340, label: "⚙️ API" },
     redis: { x: 560, y: 130, label: "⚡ Redis" },
     replicas: { x: 850, y: 210, label: "📚 Replicas" },
-    queue: { x: 560, y: 340, label: "📥 Queue" },
-    workers: { x: 810, y: 340, label: "🛠️ Workers" },
-    analytics: { x: 1010, y: 340, label: "📊 Analytics" },
+    s3: { x: 560, y: 340, label: "🪣 S3 Store" },
+    cleaner: { x: 810, y: 340, label: "🧹 Cleaner" },
     idgen: { x: 560, y: 550, label: "🔑 ID gen" },
     primary: { x: 850, y: 550, label: "🗄️ Primary DB" },
   };
@@ -49,41 +49,41 @@
     { id: "api-primary", from: "api", to: "primary", kind: "write", hidesWhenReplicas: true },
     { id: "api-idgen", from: "api", to: "idgen", kind: "write" },
     { id: "idgen-primary", from: "idgen", to: "primary", kind: "write" },
-    { id: "api-q", from: "api", to: "queue", kind: "queue" },
-    { id: "q-w", from: "queue", to: "workers", kind: "queue" },
-    { id: "w-a", from: "workers", to: "analytics", kind: "queue" },
-    { id: "primary-replicas", from: "primary", to: "replicas", kind: "read", needsReplicas: true, dashed: true, control: { x: 995, y: 380 } },
+    { id: "api-s3", from: "api", to: "s3", kind: "write" },
+    { id: "primary-s3", from: "primary", to: "s3", kind: "read", dashed: true, control: { x: 830, y: 445 } },
+    { id: "primary-cleaner", from: "primary", to: "cleaner", kind: "queue" },
+    { id: "cleaner-s3", from: "cleaner", to: "s3", kind: "queue", dashed: true },
   ];
 
   var DOT_COLOR = { read: "#2563eb", cache: "#0891b2", write: "#d97706", queue: "#7c3aed" };
 
   var TRACES = {
-    redirect: {
-      label: "Redirect",
+    read: {
+      label: "Read",
       steps: [
-        { edge: "c-api", nodes: ["clients", "api"], text: "User opens a short link → GET /{code} hits the API." },
-        { edge: "api-redis", nodes: ["api", "redis"], text: "The API looks the code up in Redis — the hot path (≈95% hit)." },
-        { nodes: ["redis"], text: "Redis returns the long URL in a few milliseconds." },
-        { edge: "c-api", nodes: ["clients", "api"], text: "The API replies 301/302 and the browser follows the redirect." },
-        { edge: "api-primary", altEdge: "api-replicas", nodes: ["api", "primary"], text: "On the ~5% cache miss, the DB is read to resolve the code." },
+        { edge: "c-api", nodes: ["clients", "api"], text: "User opens paste.bin/aZ89kL2 → GET /pastes/{id} hits the API." },
+        { edge: "api-redis", nodes: ["api", "redis"], text: "The API checks Redis first — hot pastes (≈90% hit) return in ~5ms." },
+        { nodes: ["redis"], text: "Redis returns the text. Expiry is checked: expired → 404 even if found." },
+        { edge: "c-api", nodes: ["clients", "api"], text: "The API replies 200 with text + syntax for highlighting." },
+        { edge: "api-primary", altEdge: "api-replicas", nodes: ["api", "primary"], text: "On the ~10% cache miss, the DB is read (inline text or S3 pointer)." },
       ],
     },
     create: {
       label: "Create",
       steps: [
-        { edge: "c-api", nodes: ["clients", "api"], text: "User submits a long URL → POST /shorten." },
-        { edge: "api-idgen", nodes: ["api", "idgen"], text: "The API asks the ID generator for a unique code (counter + Base62)." },
-        { edge: "idgen-primary", nodes: ["idgen", "primary"], text: "The code → URL mapping is written durably to the primary DB." },
-        { edge: "api-redis", nodes: ["api", "redis"], text: "The new mapping is cached in Redis for fast future redirects." },
+        { edge: "c-api", nodes: ["clients", "api"], text: "User pastes 5KB code → POST /pastes (size checked at edge, max 1MB)." },
+        { edge: "api-idgen", nodes: ["api", "idgen"], text: "The API makes a random 8-char ID — unguessable, so unlisted stays private." },
+        { edge: "idgen-primary", nodes: ["idgen", "primary"], text: "Small paste (<64KB) is saved inline in the primary DB." },
+        { edge: "api-redis", nodes: ["api", "redis"], text: "A copy is cached in Redis with TTL = time left till expiry." },
       ],
     },
-    click: {
-      label: "Click",
+    big: {
+      label: "Big paste",
       steps: [
-        { edge: "c-api", nodes: ["clients", "api"], text: "Every redirect also emits one click event." },
-        { edge: "api-q", nodes: ["api", "queue"], text: "The event goes to the queue — off the redirect path, so it never adds latency." },
-        { edge: "q-w", nodes: ["queue", "workers"], text: "Analytics workers drain the queue." },
-        { edge: "w-a", nodes: ["workers", "analytics"], text: "Counts are batched into the analytics store." },
+        { edge: "c-api", nodes: ["clients", "api"], text: "User pastes a 500KB log → POST /pastes. Same door, bigger bag." },
+        { edge: "api-s3", nodes: ["api", "s3"], text: "Big body (>64KB) goes to the S3 godown — never fattens DB rows." },
+        { edge: "idgen-primary", nodes: ["idgen", "primary"], text: "Only the pointer (s3_key) + metadata is saved in the DB." },
+        { edge: "primary-cleaner", nodes: ["primary", "cleaner"], text: "Cleaner sweeps expired rows + S3 files in batches. Reads already return 404 via the expiry gate, so lag is safe." },
       ],
     },
   };
@@ -93,17 +93,17 @@
     redis: "Redis cache",
     primary: "Primary DB",
     replicas: "Read replicas",
-    workers: "Analytics workers",
-    queue: "Analytics queue",
+    s3: "S3 object store",
+    cleaner: "Cleanup worker",
     shards: "Primary shards",
   };
-  var UNIT = { api: "API server", redis: "Redis node", replicas: "read replica", workers: "analytics worker", shards: "primary shard" };
+  var UNIT = { api: "API server", redis: "Redis node", replicas: "read replica", s3: "S3 shard", shards: "primary shard" };
   var WHY = {
-    api: "API servers are stateless, so N more servers split the same requests evenly.",
-    redis: "Redis serves hot short codes; more nodes raise the hit rate and keep misses off the DB.",
+    api: "API servers are stateless, so N more servers split the same requests evenly. Big 1MB uploads fill API memory first.",
+    redis: "Redis serves hot pastes; more nodes raise the hit rate and keep misses off the DB.",
     replicas: "Read replicas absorb cache misses, so the primary DB is left to handle writes.",
-    workers: "Workers drain the click-event queue; more workers clear the backlog faster.",
-    shards: "Sharding by hash(short_code) spreads writes across N primaries — each holds 1/N of keys, so write load divides by N.",
+    s3: "S3 is managed and scales itself — if S3 ever looks hot, the real fix is usually more API/Redis, not S3.",
+    shards: "Sharding by hash(paste_id) spreads writes across N primaries — each holds 1/N of keys, so write load divides by N.",
   };
 
   // ---- helpers ---------------------------------------------------------------
@@ -154,27 +154,26 @@
     var readsOnReplicas = Math.min(missReads, replicaCap);
     var readsOnPrimary = missReads - readsOnReplicas;
 
+    var bigWrites = writes * BIG_SHARE;
+    var bigMissReads = missReads * BIG_SHARE;
+    var s3Load = bigWrites + bigMissReads;
+    var s3Util = s3Load / S3_CAP;
+
     var primaryLoad = writes + readsOnPrimary;
     var shards = Math.max(1, s.shards || 1);
     var primaryUtil = primaryLoad / shards / PRIMARY_CAP;
     var replicaUtil = s.replicas ? readsOnReplicas / replicaCap : null;
 
-    var ingest = reads; // every redirect emits a click event
-    var workerCap = s.workers * WORKER_CAP;
-    var workerUtil = workerCap ? ingest / workerCap : Infinity;
-    var queueUtil = workerUtil;
-
     var apiLat = 12 * (1 + Math.max(0, apiUtil - TARGET) * 4);
     var cacheLat = 2 * (1 + Math.max(0, cacheUtil - TARGET) * 3);
     var dbLat = 6 * (1 + Math.max(0, primaryUtil - TARGET) * 6);
-    var queueLat = workerUtil > 0.8 ? (workerUtil - 0.8) * 180 : 0;
-    var p99 = 8 + apiLat + cacheLat + dbLat + queueLat;
+    var s3Penalty = (bigMissReads / Math.max(1, rps)) * 40;
+    var p99 = 10 + apiLat + cacheLat + dbLat + s3Penalty;
 
     var over =
       Math.max(0, apiUtil - 1) +
       Math.max(0, primaryUtil - 1) +
-      Math.max(0, cacheUtil - 1) * 0.6 +
-      Math.max(0, workerUtil - 1) * 0.3;
+      Math.max(0, cacheUtil - 1) * 0.6;
     var errorRate = clamp(over * 30, 0, 100);
     p99 *= 1 + (errorRate / 100) * 1.6;
 
@@ -183,9 +182,8 @@
       api: apiUtil,
       redis: cacheUtil,
       replicas: replicaUtil,
-      queue: queueUtil,
-      workers: workerUtil,
-      analytics: null,
+      s3: s3Util,
+      cleaner: null,
       idgen: null,
       primary: primaryUtil,
       shards: primaryUtil,
@@ -195,13 +193,12 @@
       api: Math.max(1, Math.ceil(rps / (API_CAP * TARGET))),
       redis: Math.max(1, Math.ceil(reads / (CACHE_CAP * TARGET))),
       replicas: Math.max(0, Math.ceil((reads * (1 - BASE_HIT)) / (REPLICA_CAP * TARGET))),
-      workers: Math.max(1, Math.ceil(ingest / (WORKER_CAP * TARGET))),
       shards: Math.max(1, Math.ceil(primaryLoad / (PRIMARY_CAP * TARGET))),
     };
 
     var bottleneck = null;
     var worst = 0;
-    ["api", "redis", "primary", "replicas", "workers"].forEach(function (k) {
+    ["api", "redis", "primary", "replicas"].forEach(function (k) {
       var u = utils[k];
       if (u != null && u > worst) {
         worst = u;
@@ -215,6 +212,9 @@
       rps: rps,
       reads: reads,
       writes: writes,
+      bigWrites: bigWrites,
+      bigMissReads: bigMissReads,
+      s3Load: s3Load,
       cachedReads: cachedReads,
       missReads: missReads,
       readsOnPrimary: readsOnPrimary,
@@ -222,12 +222,10 @@
       hit: hit,
       apiUtil: apiUtil,
       cacheUtil: cacheUtil,
+      s3Util: s3Util,
       primaryLoad: primaryLoad,
       primaryUtil: primaryUtil,
       replicaUtil: replicaUtil,
-      workerUtil: workerUtil,
-      queueUtil: queueUtil,
-      ingest: ingest,
       p99: p99,
       errorRate: errorRate,
       utils: utils,
@@ -249,7 +247,7 @@
     if (readDriven && at("primary") && at("redis")) return "redis";
     var best = null;
     var bestU = 0;
-    ["api", "redis", "replicas", "workers"].forEach(function (k) {
+    ["api", "redis", "replicas"].forEach(function (k) {
       if (at(k) && u[k] > bestU) {
         bestU = u[k];
         best = k;
@@ -283,9 +281,9 @@
   }
 
   function nodeTemplate(uid, key, n) {
-    var hasBar = key !== "clients" && key !== "analytics" && key !== "idgen";
+    var hasBar = key !== "clients" && key !== "cleaner" && key !== "idgen";
     return (
-      '<g class="usv-node" id="' +
+      '<g class="pbv-node" id="' +
       uid +
       "-node-" +
       key +
@@ -296,7 +294,7 @@
       "," +
       n.y +
       ')">' +
-      '<rect class="usv-box" x="' +
+      '<rect class="pbv-box" x="' +
       -W / 2 +
       '" y="' +
       -H / 2 +
@@ -305,33 +303,33 @@
       '" height="' +
       H +
       '" rx="12"></rect>' +
-      '<text class="usv-node-title" x="0" y="-11" text-anchor="middle">' +
+      '<text class="pbv-node-title" x="0" y="-11" text-anchor="middle">' +
       n.label +
       "</text>" +
-      '<text class="usv-node-sub" x="0" y="8" text-anchor="middle" data-sub></text>' +
+      '<text class="pbv-node-sub" x="0" y="8" text-anchor="middle" data-sub></text>' +
       (hasBar
-        ? '<rect class="usv-bar-bg" x="-47" y="19" width="94" height="6" rx="3"></rect>' +
-          '<rect class="usv-bar-fill" x="-47" y="19" width="0" height="6" rx="3" data-bar></rect>'
+        ? '<rect class="pbv-bar-bg" x="-47" y="19" width="94" height="6" rx="3"></rect>' +
+          '<rect class="pbv-bar-fill" x="-47" y="19" width="0" height="6" rx="3" data-bar></rect>'
         : "") +
-      '<text class="usv-plus" x="0" y="-38" text-anchor="middle" data-plus>+1</text>' +
+      '<text class="pbv-plus" x="0" y="-38" text-anchor="middle" data-plus>+1</text>' +
       "</g>"
     );
   }
 
   function metric(label, key) {
     return (
-      '<div class="usv-metric" data-metric="' +
+      '<div class="pbv-metric" data-metric="' +
       key +
-      '"><span class="usv-metric-label">' +
+      '"><span class="pbv-metric-label">' +
       label +
-      '</span><span class="usv-metric-value">–</span></div>'
+      '</span><span class="pbv-metric-value">–</span></div>'
     );
   }
 
   function build(container) {
-    var uid = "usv" + build.count;
+    var uid = "pbv" + build.count;
     build.count += 1;
-    container.classList.add("usv"); // activates the --usv-* theme variables
+    container.classList.add("pbv"); // activates the --pbv-* theme variables
 
     var usersOpts = USERS.map(function (u, i) {
       return '<option value="' + i + '"' + (i === DEFAULTS.users ? " selected" : "") + ">" + u.label + "</option>";
@@ -340,7 +338,7 @@
     var edgesSvg = EDGES.map(function (e) {
       var g = edgeGeo(e);
       return (
-        '<path class="usv-edge is-' +
+        '<path class="pbv-edge is-' +
         e.kind +
         (e.dashed ? " is-dashed" : "") +
         '" id="' +
@@ -350,7 +348,7 @@
         '" d="' +
         pathD(g) +
         '"></path>' +
-        '<text class="usv-edge-label" id="' +
+        '<text class="pbv-edge-label" id="' +
         uid +
         "-elabel-" +
         e.id +
@@ -372,53 +370,53 @@
 
     var segs = Object.keys(TRACES)
       .map(function (k) {
-        return '<button type="button" class="usv-seg-btn" data-trace="' + k + '">' + TRACES[k].label + "</button>";
+        return '<button type="button" class="pbv-seg-btn" data-trace="' + k + '">' + TRACES[k].label + "</button>";
       })
       .join("");
 
     container.innerHTML =
-      '<div class="usv-toolbar">' +
-      '<label class="usv-field"><span class="usv-field-label">Traffic</span>' +
-      '<select class="usv-select usv-users" aria-label="Choose a user-count scenario">' +
+      '<div class="pbv-toolbar">' +
+      '<label class="pbv-field"><span class="pbv-field-label">Traffic</span>' +
+      '<select class="pbv-select pbv-users" aria-label="Choose a user-count scenario">' +
       usersOpts +
       "</select></label>" +
-      '<button type="button" class="usv-btn usv-primary usv-scale">Scale up</button>' +
-      '<span class="usv-scale-hint" aria-live="polite"></span>' +
-      '<button type="button" class="usv-btn usv-reset">Reset</button>' +
+      '<button type="button" class="pbv-btn pbv-primary pbv-scale">Scale up</button>' +
+      '<span class="pbv-scale-hint" aria-live="polite"></span>' +
+      '<button type="button" class="pbv-btn pbv-reset">Reset</button>' +
       "</div>" +
-      '<div class="usv-tracebar"><span class="usv-tracebar-label">Follow a request</span>' +
-      '<div class="usv-seg" role="group" aria-label="Follow a request path">' +
+      '<div class="pbv-tracebar"><span class="pbv-tracebar-label">Follow a request</span>' +
+      '<div class="pbv-seg" role="group" aria-label="Follow a request path">' +
       segs +
       "</div></div>" +
-      '<div class="usv-stage sdv-wrap" data-viewport>' +
-      '<svg class="usv-svg" viewBox="0 0 1120 660" role="img" aria-label="URL shortener architecture under load">' +
-      '<g class="usv-edges">' +
+      '<div class="pbv-stage sdv-wrap" data-viewport>' +
+      '<svg class="pbv-svg" viewBox="0 0 1120 660" role="img" aria-label="Pastebin architecture under load">' +
+      '<g class="pbv-edges">' +
       edgesSvg +
       "</g>" +
-      '<g class="usv-dots"></g>' +
-      '<g class="usv-nodes">' +
+      '<g class="pbv-dots"></g>' +
+      '<g class="pbv-nodes">' +
       nodesSvg +
       "</g>" +
       "</svg>" +
       "</div>" +
-      '<div class="usv-trace-caption" role="status" aria-live="polite"></div>' +
-      '<div class="usv-metrics">' +
+      '<div class="pbv-trace-caption" role="status" aria-live="polite"></div>' +
+      '<div class="pbv-metrics">' +
       metric("Peak RPS", "rps") +
       metric("p99 latency", "p99") +
       metric("Errors", "err") +
       metric("Cache hit", "hit") +
       metric("Primary qps", "db") +
-      metric("Click msg/s", "queue") +
+      metric("S3 ops/s", "s3") +
       "</div>" +
-      '<div class="usv-narration" role="status" aria-live="polite"></div>' +
-      '<dl class="usv-explain" aria-live="polite"></dl>' +
-      '<div class="usv-legend">' +
-      '<span><i class="usv-swatch is-read"></i>redirect / DB read</span>' +
-      '<span><i class="usv-swatch is-cache"></i>cache hit</span>' +
-      '<span><i class="usv-swatch is-write"></i>create / write</span>' +
-      '<span><i class="usv-swatch is-queue"></i>click analytics</span>' +
+      '<div class="pbv-narration" role="status" aria-live="polite"></div>' +
+      '<dl class="pbv-explain" aria-live="polite"></dl>' +
+      '<div class="pbv-legend">' +
+      '<span><i class="pbv-swatch is-read"></i>read / DB lookup</span>' +
+      '<span><i class="pbv-swatch is-cache"></i>cache hit</span>' +
+      '<span><i class="pbv-swatch is-write"></i>create / S3 write</span>' +
+      '<span><i class="pbv-swatch is-queue"></i>expiry sweep</span>' +
       "</div>" +
-      '<p class="usv-hint">Traffic assumes peak RPS ≈ DAU × 2% (100:1 read:write). Every redirect emits one click event. Green = under 70% load, amber = 70–100%, red = overloaded and failing.</p>';
+      '<p class="pbv-hint">Traffic assumes peak RPS ≈ DAU × 2% (10:1 read:write, 10% big pastes). Small pastes live inline in DB, big pastes live in S3. Green = under 70% load, amber = 70–100%, red = overloaded and failing.</p>';
 
     var inst = {
       uid: uid,
@@ -426,7 +424,7 @@
       state: Object.assign({}, DEFAULTS),
       model: null,
       lastFix: null,
-      trace: "redirect",
+      trace: "read",
       step: 0,
       timer: null,
       dots: [],
@@ -434,13 +432,13 @@
       reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     };
 
-    container.querySelector(".usv-users").addEventListener("change", function (ev) {
+    container.querySelector(".pbv-users").addEventListener("change", function (ev) {
       inst.state.users = parseInt(ev.target.value, 10);
       inst.lastFix = null;
       render(inst, {});
     });
 
-    container.querySelector(".usv-scale").addEventListener("click", function () {
+    container.querySelector(".pbv-scale").addEventListener("click", function () {
       var m = compute(inst.state);
       var key = pickFix(m);
       if (!key) return;
@@ -453,14 +451,14 @@
       render(inst, bump(key === "shards" ? "primary" : key));
     });
 
-    container.querySelector(".usv-reset").addEventListener("click", function () {
+    container.querySelector(".pbv-reset").addEventListener("click", function () {
       inst.state = Object.assign({}, DEFAULTS);
       inst.lastFix = null;
-      container.querySelector(".usv-users").value = String(DEFAULTS.users);
+      container.querySelector(".pbv-users").value = String(DEFAULTS.users);
       render(inst, {});
     });
 
-    container.querySelectorAll(".usv-seg-btn").forEach(function (btn) {
+    container.querySelectorAll(".pbv-seg-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var k = btn.getAttribute("data-trace");
         inst.trace = inst.trace === k ? null : k;
@@ -471,7 +469,7 @@
     });
 
     render(inst, {});
-    if (window.SDViewport) window.SDViewport.attach(container.querySelector(".usv-stage"));
+    if (window.SDViewport) window.SDViewport.attach(container.querySelector(".pbv-stage"));
     restartTrace(inst);
     applyTrace(inst);
 
@@ -520,20 +518,20 @@
 
   function applyTrace(inst) {
     var c = inst.container;
-    c.querySelectorAll(".usv-node.is-trace").forEach(function (n) {
+    c.querySelectorAll(".pbv-node.is-trace").forEach(function (n) {
       n.classList.remove("is-trace");
     });
-    c.querySelectorAll(".usv-edge.is-trace").forEach(function (e) {
+    c.querySelectorAll(".pbv-edge.is-trace").forEach(function (e) {
       e.classList.remove("is-trace");
     });
-    c.querySelectorAll(".usv-seg-btn").forEach(function (b) {
+    c.querySelectorAll(".pbv-seg-btn").forEach(function (b) {
       b.classList.toggle("is-active", b.getAttribute("data-trace") === inst.trace);
     });
 
-    var cap = c.querySelector(".usv-trace-caption");
+    var cap = c.querySelector(".pbv-trace-caption");
     if (!inst.trace) {
-      cap.className = "usv-trace-caption";
-      cap.innerHTML = "<strong>Follow a request:</strong> pick <em>Redirect</em>, <em>Create</em>, or <em>Click</em> to trace how a call moves through the system.";
+      cap.className = "pbv-trace-caption";
+      cap.innerHTML = "<strong>Follow a request:</strong> pick <em>Read</em>, <em>Create</em>, or <em>Big paste</em> to trace how a call moves through the system.";
       return;
     }
     var trace = TRACES[inst.trace];
@@ -547,9 +545,9 @@
       var g = c.querySelector("#" + inst.uid + "-node-" + n);
       if (g) g.classList.add("is-trace");
     });
-    cap.className = "usv-trace-caption is-active";
+    cap.className = "pbv-trace-caption is-active";
     cap.innerHTML =
-      '<span class="usv-trace-step">' + trace.label + " " + (inst.step + 1) + "/" + trace.steps.length + "</span> " + step.text;
+      '<span class="pbv-trace-step">' + trace.label + " " + (inst.step + 1) + "/" + trace.steps.length + "</span> " + step.text;
   }
 
   function setNode(inst, key, util, sub, showBar) {
@@ -571,10 +569,10 @@
       case "api-primary": return "miss " + fmt(m.readsOnPrimary) + "/s";
       case "api-idgen": return "create " + fmt(m.writes) + "/s";
       case "idgen-primary": return "write";
-      case "api-q": return "click " + fmt(m.ingest) + "/s";
-      case "q-w": return "drain";
-      case "w-a": return "batch";
-      case "primary-replicas": return "replicate";
+      case "api-s3": return "big " + fmt(m.bigWrites + m.bigMissReads) + "/s";
+      case "primary-s3": return "fetch";
+      case "primary-cleaner": return "sweep";
+      case "cleaner-s3": return "delete";
       default: return "";
     }
   }
@@ -589,10 +587,9 @@
     setNode(inst, "clients", null, fmt(m.rps) + " req/s", false);
     setNode(inst, "api", m.apiUtil, "×" + inst.state.api + " · " + pct(m.apiUtil), true);
     setNode(inst, "redis", m.cacheUtil, "×" + inst.state.redis + " · " + pct(m.cacheUtil), true);
-    setNode(inst, "queue", m.queueUtil, fmt(m.ingest) + " msg/s", true);
-    setNode(inst, "workers", m.workerUtil, "×" + inst.state.workers + " · " + pct(m.workerUtil), true);
-    setNode(inst, "analytics", null, "click store", false);
-    setNode(inst, "idgen", null, "counter → Base62", false);
+    setNode(inst, "s3", m.s3Util, fmt(m.s3Load) + " ops · " + pct(m.s3Util), true);
+    setNode(inst, "cleaner", null, "TTL sweep", false);
+    setNode(inst, "idgen", null, "random 8-char", false);
     setNode(inst, "primary", m.primaryUtil, "×" + inst.state.shards + " · " + fmt(m.primaryLoad) + " qps · " + pct(m.primaryUtil), true);
     var repNode = c.querySelector("#" + inst.uid + "-node-replicas");
     repNode.style.display = replicas ? "" : "none";
@@ -616,35 +613,35 @@
     });
 
     setMetric(c, "rps", fmt(m.rps), level(m.apiUtil));
-    setMetric(c, "p99", Math.round(m.p99) + " ms", m.errorRate >= 1 ? "danger" : m.p99 > 250 ? "warn" : "ok");
+    setMetric(c, "p99", Math.round(m.p99) + " ms", m.errorRate >= 1 ? "danger" : m.p99 > 200 ? "warn" : "ok");
     setMetric(c, "err", m.errorRate.toFixed(0) + "%", m.errorRate >= 5 ? "danger" : m.errorRate >= 0.5 ? "warn" : "ok");
     setMetric(c, "hit", Math.round(m.hit * 100) + "%", level(m.cacheUtil));
     setMetric(c, "db", fmt(m.primaryLoad) + " qps", level(m.primaryUtil));
-    setMetric(c, "queue", fmt(m.ingest) + " /s", level(m.workerUtil));
+    setMetric(c, "s3", fmt(m.s3Load) + " /s", level(m.s3Util));
 
     var n = narrate(m);
-    var narration = c.querySelector(".usv-narration");
-    narration.className = "usv-narration is-" + n.cls;
+    var narration = c.querySelector(".pbv-narration");
+    narration.className = "pbv-narration is-" + n.cls;
     narration.innerHTML = n.text;
 
     var fix = pickFix(m);
-    var scaleBtn = c.querySelector(".usv-scale");
-    var hint = c.querySelector(".usv-scale-hint");
+    var scaleBtn = c.querySelector(".pbv-scale");
+    var hint = c.querySelector(".pbv-scale-hint");
     if (fix) {
       var need = Math.max(1, m.required[fix] - inst.state[fix]);
       var fixUtil = fix === "shards" ? m.utils.primary : m.utils[fix];
       scaleBtn.disabled = false;
       scaleBtn.textContent = fix === "shards" ? "Add shard" : "Scale up";
       hint.textContent = "→ " + plural(need, UNIT[fix]);
-      hint.className = "usv-scale-hint is-" + level(fixUtil);
+      hint.className = "pbv-scale-hint is-" + level(fixUtil);
     } else {
       scaleBtn.disabled = true;
       scaleBtn.textContent = "System healthy";
       hint.textContent = "increase traffic to stress it";
-      hint.className = "usv-scale-hint is-ok";
+      hint.className = "pbv-scale-hint is-ok";
     }
 
-    c.querySelector(".usv-explain").innerHTML = explain(inst, m, fix);
+    c.querySelector(".pbv-explain").innerHTML = explain(inst, m, fix);
 
     var prevCounts = inst.prev || {};
     Object.keys(bumpKeys || {}).forEach(function (k) {
@@ -675,7 +672,7 @@
   function setMetric(c, key, value, lvl) {
     var el = c.querySelector('[data-metric="' + key + '"]');
     if (!el) return;
-    el.querySelector(".usv-metric-value").textContent = value;
+    el.querySelector(".pbv-metric-value").textContent = value;
     el.classList.toggle("is-warn", lvl === "warn");
     el.classList.toggle("is-danger", lvl === "danger");
   }
@@ -727,7 +724,7 @@
   }
 
   function row(term, desc) {
-    return '<div class="usv-row"><dt>' + term + "</dt><dd>" + desc + "</dd></div>";
+    return '<div class="pbv-row"><dt>' + term + "</dt><dd>" + desc + "</dd></div>";
   }
 
   function flowFor(e, m) {
@@ -735,19 +732,19 @@
       case "c-api": return m.rps;
       case "api-redis": return m.cachedReads;
       case "api-replicas": return m.readsOnReplicas;
-      case "api-primary": return Math.max(1, m.readsOnPrimary);
+      case "api-primary": return Math.max(1, m.readsOnPrimary + m.writes * 0.9);
       case "api-idgen": return Math.max(1, m.writes);
       case "idgen-primary": return Math.max(1, m.writes);
-      case "api-q":
-      case "q-w":
-      case "w-a": return m.ingest;
-      case "primary-replicas": return m.readsOnReplicas;
+      case "api-s3": return Math.max(1, m.bigWrites + m.bigMissReads);
+      case "primary-s3": return Math.max(1, m.bigMissReads);
+      case "primary-cleaner": return Math.max(1, m.writes);
+      case "cleaner-s3": return Math.max(1, m.writes * 0.2);
       default: return 0;
     }
   }
 
   function rebuildDots(inst, m) {
-    var layer = inst.container.querySelector(".usv-dots");
+    var layer = inst.container.querySelector(".pbv-dots");
     inst.dots = [];
     if (inst.reduced) {
       layer.innerHTML = "";
@@ -774,7 +771,7 @@
         var circle = document.createElementNS(NS, "circle");
         circle.setAttribute("r", "4");
         circle.setAttribute("fill", color);
-        circle.setAttribute("class", "usv-dot");
+        circle.setAttribute("class", "pbv-dot");
         layer.appendChild(circle);
         inst.dots.push({ el: circle, geo: g, t: Math.random(), speed: 0.18 + 0.9 * (flow / maxFlow) });
       }
@@ -797,12 +794,12 @@
       cls: "ok",
       text:
         "🟢 Healthy. " + fmt(m.rps) + " rps rides the cache (" + Math.round(m.hit * 100) + "% hit); the primary DB only sees " +
-        fmt(m.primaryLoad) + " qps.",
+        fmt(m.primaryLoad) + " qps, S3 sees " + fmt(m.s3Load) + " ops.",
     };
   }
 
   function initialize() {
-    document.querySelectorAll(".url-shortener-visualizer").forEach(function (container) {
+    document.querySelectorAll(".pastebin-visualizer").forEach(function (container) {
       if (container.dataset.initialized === "true") return;
       container.dataset.initialized = "true";
       build(container);

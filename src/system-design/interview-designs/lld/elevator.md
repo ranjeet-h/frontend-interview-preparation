@@ -2,34 +2,47 @@
 
 An elevator is a small set of cars sharing one building, and the whole design funnels into two decisions: **which car answers a call**, and **in what order a car visits floors**. It is the classic low-level design because it forces you to separate policy (scheduling) from state (the car), protect a safety invariant, and reason about concurrency — all without any distributed-systems vocabulary.
 
-This is an interview scope, not a product claim. It covers one building with N floors and M cars, hall calls, car calls, safe movement, and a schedulable order of stops. Door hardware, emergency protocols, and destination-dispatch input devices are extensions.
+This follows the [8-phase LLD path](index.md): requirements → entities → responsibilities → relationships/interfaces → class diagram → core flows → critical code → edge cases/extensibility.
 
-## 1. Clarify requirements
+## 1. Requirements / Use Cases
 
-Functional requirements:
+Clarify, then scope explicitly.
 
-- A passenger on a floor presses **Up** or **Down**; the request joins a shared hall-call queue.
-- A passenger inside a car presses a **destination floor**; the request joins that car's car-call set.
-- Each car moves one floor at a time, stops only at floors it must serve, opens doors, exchanges passengers, and continues.
-- Buttons light while their request is pending and clear when served.
-- The system favors lower wait time and no starvation, but safety always wins.
+Questions worth asking:
 
-Non-functional requirements (interview assumptions):
+- How many floors and how many cars?
+- Hall buttons (floor + direction) and in-car destination buttons?
+- Should the system minimize wait time, travel distance, or both?
+- Is fairness (no starvation) required?
+- Any VIP/freight priority, or emergency service?
+
+In scope for this design:
+
+1. A building with **N floors and M cars**.
+2. A passenger raises a **hall call** (floor + direction) at a landing.
+3. A passenger raises a **car call** (destination floor) inside a car.
+4. Cars move one floor at a time, stop only where needed, open doors, exchange passengers, continue.
+5. Buttons light while pending and clear when served.
+6. The scheduler favors low wait time and no starvation.
+
+Non-functional assumptions:
 
 - **Safety invariant:** a car never moves with its doors open, and never opens doors while moving.
 - **No starvation:** every hall call is eventually served, even under continuous demand.
-- **Determinism for review:** given the same calls, the same schedule can be reproduced.
-- Scale assumptions: one building, 8–64 floors, 2–8 cars, tens of calls per minute. No cross-building dispatch.
+- **Determinism:** the same calls produce the same schedule, which makes review and testing possible.
+- Scale: one building, 8–64 floors, 2–8 cars, tens of calls per minute.
 
-Explicitly out of scope: motor/brake control, door-obstruction sensors, fire-service mode, and destination-dispatch kiosks (kept as extensions).
+Out of scope: motor/brake control, door-obstruction sensors, fire-service mode, and destination-dispatch kiosks (kept as extensions).
 
-## 2. Identify entities
+## 2. Core Entities
+
+Look for the nouns, and separate objects with identity from value objects.
 
 Objects with identity:
 
-- `ElevatorCar` — a physical car with its own floor, direction, door state, and outstanding stops.
+- `ElevatorCar` — a physical car with its own floor, direction, door state, and stops.
 - `Floor` — a landing with a number and hall buttons.
-- `Building` — owns floors and cars; bounds the simulation.
+- `Building` — owns the floors and cars; bounds the simulation.
 - `Dispatcher` — assigns hall calls to cars and drives the tick loop.
 
 Value objects and enums:
@@ -38,30 +51,77 @@ Value objects and enums:
 - `CarState` = `IDLE | MOVING_UP | MOVING_DOWN | DOORS_OPEN`.
 - `HallCall(floor, direction)` — a request raised at a landing.
 - `CarCall(destinationFloor)` — a request raised inside a car.
-- `Stop` — a scheduled floor visit that may satisfy hall and/or car calls.
 
-Hardware/infrastructure abstractions (so the model is not welded to a motor):
+Hardware abstractions (so the model is not welded to a motor):
 
-- `Motor` (move up/down/stop), `DoorDrive` (open/close), `PanelButtons`, `Display`.
+- `Motor` (move up / move down / stop), `DoorDrive` (open / close), and button/display panels.
 
-## 3. Define relationships
+Do not invent 25 classes up front — start with the domain objects the requirements actually need.
 
-- A `Building` **composes** many `Floor`s and `ElevatorCar`s.
-- An `ElevatorCar` **composes** one `Motor` and one `DoorDrive`, and **holds** a set of `CarCall`s and the `HallCall`s assigned to it.
-- A `Floor` **owns** its up/down button state and raises `HallCall`s.
-- A `Dispatcher` **references** all cars and the shared pending hall calls; it depends on a `Scheduler` abstraction, not on a concrete policy.
-- `Scheduler` **associates** with cars to rank them; it does not own car state.
+## 3. Responsibilities
+
+Ask *"who should own this behavior?"* for each action. Assign behavior to the class that already owns the state it needs.
+
+| Class | Owns / is responsible for |
+|---|---|
+| `ElevatorCar` | Its own floor, direction, door state, and the stops assigned to it. It is the only object allowed to change them. |
+| `Dispatcher` | Assignment and fairness: which car takes a hall call, so no car is overloaded and no call starves. |
+| `Scheduler` | Policy only: given cars and calls, it ranks cars and orders stops. It holds no mutable car state. |
+| `Floor` | Only its own buttons. It never knows which car will answer. |
+
+Deliberately *not* placed:
+
+- Scheduling inside `ElevatorCar` — that welds policy to state and makes "try a new policy" a risky edit.
+- A single `ElevatorSystem` God class that reaches into every car's fields — it centralizes coupling and hides the invariant.
+- Door timing inside `Motor` — motion and door interlocks are separate safety concerns that must be cross-checked.
+
+This is the phase most candidates skip; it is where the design is actually won.
+
+## 4. Relationships + Interfaces
+
+Decide is-a / has-a / uses-a, then introduce interfaces at the points likely to change.
+
+Relationships:
+
+- `Building` **has many** `Floor`s and `ElevatorCar`s (composition).
+- `ElevatorCar` **has** a `Motor` and a `DoorDrive` (composition).
+- `Dispatcher` **uses** many `ElevatorCar`s (aggregation) and **depends on** a `Scheduler`.
+- `Floor` **raises** `HallCall`s.
+
+Interfaces — discovered from the requirements, not announced:
+
+- Different assignment policies are possible → fee-like replaceability for scheduling → **`Scheduler`**.
+- Real hardware must be swappable and testable → **`Motor`**, **`DoorDrive`**.
+- Car behavior differs per state, and "moving with doors open" must be unreachable → **`CarState`** as a State.
+
+```txt
+interface Scheduler
+  chooseCar(call: HallCall, cars: List<ElevatorCar>) -> ElevatorCar
+  nextStop(car: ElevatorCar) -> Optional<Stop>
+
+interface Motor
+  moveUp(); moveDown(); stop()
+
+interface DoorDrive
+  open(); close()
+```
+
+`LookScheduler` implements the `LOOK` policy (serve everything in the current direction, then reverse); `NearestCarScheduler` is a simpler baseline used to compare wait time. Both are Strategy implementations of `Scheduler`.
+
+## 5. Class Diagram
+
+With responsibilities and interfaces decided, the diagram is mostly assembly.
 
 ```mermaid
 classDiagram
   class Direction { <<enumeration>> UP DOWN IDLE }
   class CarState { <<enumeration>> IDLE MOVING_UP MOVING_DOWN DOORS_OPEN }
   class Building { +floors: Floor[] +cars: ElevatorCar[] }
-  class Floor { +number: int +upButton +downButton +raiseHallCall(dir) }
-  class ElevatorCar { +id +currentFloor +direction +state +carCalls: Set +stops: Set +addCarCall(f) +step() +openDoors() }
-  class Motor { +moveUp() +moveDown() +stop() }
-  class DoorDrive { +open() +close() }
-  class Dispatcher { +pending: HallCall[] +assign(call) +tick() }
+  class Floor { +number: int +raiseHallCall(dir) }
+  class ElevatorCar { +id +currentFloor +direction +state +carCalls +hallCalls +step() +openDoors() }
+  class Motor { <<interface>> +moveUp() +moveDown() +stop() }
+  class DoorDrive { <<interface>> +open() +close() }
+  class Dispatcher { +cars +scheduler +pending +raiseHallCall(f,dir) +tick() }
   class Scheduler { <<interface>> +chooseCar(call, cars) +nextStop(car) }
   class LookScheduler
   class NearestCarScheduler
@@ -77,85 +137,22 @@ classDiagram
   ElevatorCar --> CarState
 ```
 
-## 4. Define interfaces and abstractions
+Important methods (not every getter/setter):
 
-The two things most likely to change are **which car answers** and **how a car orders its stops**. Both become interfaces:
+- `ElevatorCar`: `step()`, `shouldStop()`, `serveFloor()`, `openDoors()`.
+- `Dispatcher`: `raiseHallCall(f, dir)`, `assign()`, `tick()`.
+- `Scheduler`: `chooseCar(call, cars)`, `nextStop(car)`.
 
-```txt
-interface Scheduler
-  chooseCar(call: HallCall, cars: List<ElevatorCar>) -> ElevatorCar
-  nextStop(car: ElevatorCar) -> Optional<Stop>      // policy for ordering visits
+## 6. Core Flows
 
-interface Motor
-  moveUp(); moveDown(); stop()
+Execute a requirement through the objects; this exposes bad designs fast.
 
-interface DoorDrive
-  open(); close()
-```
-
-- `LookScheduler` implements the elevator `LOOK` policy: serve every request in the current direction, then reverse.
-- `NearestCarScheduler` is a simpler baseline used to compare wait time.
-- `Motor` and `DoorDrive` keep the car testable with fakes and let a real building swap hardware.
-
-## 5. Design classes
-
-Core state and operations:
-
-```txt
-class ElevatorCar
-  id: string
-  currentFloor: int
-  direction: Direction = IDLE
-  state: CarState = IDLE
-  carCalls: Set<int>            // destinations entered inside the car
-  hallCalls: List<HallCall>     // hall calls assigned to this car
-  doorOpenTicks: int            // > 0 while dwelling
-
-  addCarCall(floor)
-  addHallCall(call)
-  shouldStopHere() -> bool
-  step()                        // advance exactly one tick of the simulation
-  floorsToServe() -> Set<int>
-
-class Dispatcher
-  cars: List<ElevatorCar>
-  scheduler: Scheduler
-  pending: Set<HallCall>
-
-  raiseHallCall(floor, direction)
-  tick()                        // assigns pending calls, then steps every car
-```
-
-## 6. Decide responsibilities
-
-- The **`ElevatorCar` owns its own safety**: it is the only object allowed to change `currentFloor`, `state`, and door state, and it must never move while doors are open.
-- The **`Dispatcher` owns assignment and fairness**: it decides which car takes a hall call so that no car is overloaded and no call starves.
-- The **`Scheduler` owns policy only**: given cars and calls, it ranks cars and orders stops. It holds no mutable car state.
-- A **`Floor` owns only its buttons**; it does not know which car will answer.
-
-Deliberately *not* placed:
-
-- Scheduling inside `ElevatorCar` — that welds policy to state and makes "try a new policy" a risky edit.
-- A single `ElevatorSystem` God class that reaches into every car's fields — it centralizes coupling and hides the invariant.
-- Door timing inside `Motor` — motion and door interlocks are separate safety concerns that must be cross-checked.
-
-## 7. Apply design patterns where useful
-
-- **State** for `CarState`. Behavior differs per state: `IDLE` waits for a stop, `MOVING_UP/DOWN` advance one floor, `DOORS_OPEN` counts down and exchanges passengers. This removes long `if/else` chains and makes the "never move with doors open" rule a transition guard.
-- **Strategy** for `Scheduler`. Swapping `LOOK`, nearest-car, or destination-dispatch becomes a constructor argument, not a rewrite.
-- **Observer** for lamps and displays. Button lamps and floor indicators subscribe to request and arrival events instead of the car hard-coding UI updates.
-- **Command** (optional) for button presses. Treating `HallCall`/`CarCall` as small command objects makes deduplication, logging, and replay straightforward.
-
-Cost: each pattern adds indirection. Use State and Strategy because they clearly pay off; skip Command unless replay or audit is a stated requirement.
-
-## 8. Handle important workflows
-
-Main path — a hall call above a car moving up:
+Main flow — a hall call above a car moving up:
 
 | # | Actor | Action | State change |
 |---|---|---|---|
 | 1 | Passenger (floor 5) | presses Up | `HallCall(5, UP)` raised |
-| 2 | Dispatcher | `chooseCar` | picks the car moving up that is below floor 5, or the nearest idle car |
+| 2 | Dispatcher | `chooseCar` | picks the car moving up below 5, or the nearest idle car |
 | 3 | Car | accepts call | `hallCalls += (5, UP)`; direction stays `UP` |
 | 4 | Car | `step()` repeatedly | `MOVING_UP`, floor advances one at a time |
 | 5 | Car | arrives at 5 | `DOORS_OPEN`; hall call cleared; lamp off |
@@ -163,7 +160,7 @@ Main path — a hall call above a car moving up:
 | 7 | Car | arrives at 9 | `DOORS_OPEN`; car call cleared |
 | 8 | Car | no stops above | reverses to `DOWN`, or becomes `IDLE` at the top |
 
-Alternative path: a new `HallCall(7, UP)` arrives while the car is between 5 and 9. Because `7` is still in the current `UP` direction, `LOOK` inserts it and the car serves it on the way up — no detour, no extra reversal.
+Alternative path: a new `HallCall(7, UP)` arrives while the car is between 5 and 9. Because 7 is still in the current `UP` direction, `LOOK` inserts it and the car serves it on the way up — no detour, no extra reversal.
 
 State transition table:
 
@@ -175,34 +172,11 @@ State transition table:
 | `MOVING_UP` | no stops above, stops below | `MOVING_DOWN` | doors closed |
 | any moving | door sensor trip | `DOORS_OPEN` | emergency stop first |
 
-## 9. Handle edge cases
+If you cannot say which object calls which collaborator, the class design is not finished.
 
-- **Duplicate press:** the same `HallCall(floor, dir)` is raised twice — the pending set dedupes it, so the lamp stays on once.
-- **Invalid transition:** a request to move while `DOORS_OPEN` is refused by the transition guard; this is the safety invariant, not a nicety.
-- **Car full:** at a stop the car skips boarding but still clears the hall call only if it can actually take passengers; otherwise it re-queues so the call is not lost.
-- **Top/bottom reversal:** at the highest floor an `UP`-only car must not oscillate; with no stops above it reverses or idles.
-- **No available car:** every car busy — the call stays pending and is assigned to the first car that becomes eligible; fairness prevents starvation.
-- **Door obstruction:** the dwell timer restarts and the door reopens; the car keeps the same intended direction.
-- **Emergency/priority:** a fire-service or manual override transitions to a safe state independently of the normal schedule.
+## 7. Implement Critical Code
 
-## 10. Discuss extensibility
-
-- **New scheduling policy:** implement `Scheduler` (`DestinationDispatchScheduler`, `EnergySaverScheduler`) and pass it to the `Dispatcher`. No car code changes.
-- **New car type:** a freight car with different capacity and door timing is another `ElevatorCar` configuration; the `Building` composes it the same way.
-- **More floors or cars:** both are data in `Building`; the schedule and the visualization scale without a redesign.
-- **Different hardware:** a new `Motor`/`DoorDrive` adapter is swapped in behind the same interfaces, so the simulation and tests keep working.
-- **Priority handling:** VIP or service modes add an eligibility rule to the scheduler rather than branching inside the car.
-
-## 11. Discuss concurrency where relevant
-
-The shared mutable state is the **pending hall-call set**, each car's **floor/direction/state**, and the **door interlock**.
-
-- The simplest correct model is a **single-threaded control loop**: one `Dispatcher.tick()` that assigns calls and advances every car. No locks are needed because there is one writer.
-- In a real system with per-car controllers, each car has a lock; the interlock that checks "doors closed before move" must be atomic with the move command. Lock ordering is fixed (car state before shared queue) to avoid deadlock.
-- Button events are the concurrent producers; the queue is the single synchronization point. Treating a press as an idempotent `HallCall` command makes double-delivery harmless.
-- The invariant that must never be violated: **a non-zero velocity implies doors closed**, for every car, under every interleaving.
-
-## 12. Write the core class/pseudocode design
+Implement only the parts that contain real design decisions: the state transition, the policy boundary, and the assignment heuristic.
 
 ```txt
 class ElevatorCar
@@ -243,19 +217,41 @@ class LookScheduler implements Scheduler
     return best
 ```
 
-## 13. Discuss trade-offs
+The interviewer cares far more about these abstractions, responsibilities, dependencies, and invariants than about boilerplate.
+
+## 8. Edge Cases + Extensibility + Wrap-Up
+
+Attack your own design first:
+
+- **Duplicate press:** the same `HallCall(floor, dir)` arrives twice — the pending set dedupes it; the lamp stays on once.
+- **Invalid transition:** a move while `DOORS_OPEN` is refused by the transition guard — the safety invariant, not a nicety.
+- **Car full:** at a stop the car may skip boarding but must re-queue the call so it is not lost.
+- **Top/bottom reversal:** an `UP`-only car must not oscillate at the top; it reverses or idles.
+- **No available car:** every car busy — the call stays pending and is assigned to the first eligible car; fairness prevents starvation.
+- **Door obstruction:** the dwell restarts and the door reopens, keeping the intended direction.
+- **Emergency/priority:** fire-service or manual override transitions to a safe state independently of the schedule.
+
+Then say how change is absorbed — the answer the interviewer is listening for:
+
+- **New scheduling policy** → add a `Scheduler` implementation; pass it to the `Dispatcher`. No car changes.
+- **New car type** (freight, VIP) → another `ElevatorCar` configuration; `Building` composes it the same way.
+- **More floors or cars** → data in `Building`; the schedule and the class model scale unchanged.
+- **Different hardware** → new `Motor`/`DoorDrive` adapters behind the same interfaces; tests keep working.
+
+Concurrency, stated as part of the wrap-up: the shared mutable state is the pending hall-call set, each car's floor/direction/state, and the door interlock. The simplest correct model is a **single-threaded control loop** — one `Dispatcher.tick()` that assigns calls and advances every car, so no locks are needed. With per-car controllers, each car has a lock and the door/motor interlock must be atomic with the move; lock ordering is fixed to avoid deadlock. The invariant that must hold under every interleaving: **a non-zero velocity implies doors closed**.
+
+Trade-offs:
 
 | Choice | Why | Alternative | Trade-off |
 |---|---|---|---|
-| `LOOK` scheduling | Serves all traffic in one direction before reversing — few reversals, low average travel | Nearest-car per call | Lower average trip but more direction reversals and worse high-load behavior |
-| Dispatcher owns assignment | Keeps fairness and load balancing in one place | Each car grabs calls | Contention and duplicated work; harder to guarantee no starvation |
-| State pattern for the car | Makes the safety invariant a transition guard | Free-form flags | Simpler at first, but the "moving with doors open" bug becomes reachable |
-| Single-threaded tick | Trivially correct, reproducible, easy to test | Per-car threads with locks | Higher throughput, but lock ordering and interlock bugs |
-| Scheduler as strategy | Policy changes are isolated | Hard-coded policy | One more abstraction for very small systems |
+| `LOOK` scheduling | Serves all traffic in one direction before reversing — few reversals, low average travel | Nearest-car per call | Lower single-trip time but more reversals and worse under load |
+| Dispatcher owns assignment | Keeps fairness and load balancing in one place | Each car grabs calls | Contention and duplicated work; starvation becomes possible |
+| State pattern for the car | Makes the safety invariant a transition guard | Free-form boolean flags | Simpler initially, but "moving with doors open" becomes reachable |
+| Single-threaded tick | Trivially correct, reproducible, testable | Per-car threads with locks | Higher throughput, but lock-ordering and interlock bugs |
 
 ## Interactive Visualizer
 
-Watch the scheduler work: press a floor's **▲/▼** button to raise a hall call, then step or play. Each car shows its state machine and direction; the caption explains *why* a car was chosen and where it will stop next.
+Watch the scheduler work, then flip the design: press a floor's **▲/▼** to raise a hall call, step or play, and use the **design lens** below the building. The lens shows the class model, who owns what, the live call trace, and — the point of the whole design — a **Scheduler swap (LOOK ↔ nearest-car)** you can run to see the metric change. The **1–8** chips map each phase of the LLD path to the classes that are your evidence.
 
 <div
   id="elevator-visualizer"

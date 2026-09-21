@@ -1,0 +1,75 @@
+/* Parking Lot LLD visualizer. Prefix: plv-. Works across mdBook themes. */
+
+.plv {
+  --plv-bg: var(--bg, #ffffff);
+  --plv-panel: var(--quote-bg, #f6f8fa);
+  --plv-text: var(--fg, #18212b);
+  --plv-muted: var(--sidebar-non-existant, #6b7280);
+  --plv-accent: var(--sidebar-active, var(--links, #2563eb));
+  --plv-border: var(--table-border-color, #d0d7de);
+  --plv-car: #2563eb;
+  --plv-bike: #16a34a;
+  --plv-truck: #d97706;
+
+  box-sizing: border-box;
+  margin: 1.25rem 0;
+  padding: 14px;
+  border: 1px solid var(--plv-border);
+  border-radius: 12px;
+  background: var(--plv-panel);
+  color: var(--plv-text);
+  font-size: 16px;
+  line-height: 1.4;
+}
+.plv *, .plv *::before, .plv *::after { box-sizing: border-box; }
+
+.plv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.plv-btn {
+  font: inherit; font-size: 0.88rem; font-weight: 600;
+  color: var(--plv-text); background: var(--plv-bg);
+  border: 1px solid var(--plv-border); border-radius: 8px;
+  padding: 7px 12px; cursor: pointer;
+}
+.plv-btn:hover { border-color: var(--plv-accent); }
+.plv-btn.plv-primary { color: #fff; background: var(--plv-accent); border-color: var(--plv-accent); }
+.plv-btn:focus-visible { outline: 2px solid var(--plv-accent); outline-offset: 2px; }
+.plv-sep { width: 1px; height: 22px; background: var(--plv-border); }
+
+.plv-stage { margin-top: 12px; padding: 4px; background: var(--plv-bg); border: 1px solid var(--plv-border); border-radius: 10px; }
+.plv-svg { display: block; width: 100%; height: min(46vh, 340px); }
+
+.plv-floor-label { fill: var(--plv-muted); font-size: 13px; font-weight: 700; }
+.plv-spot { stroke: var(--plv-border); stroke-width: 1.5; transition: fill .25s, stroke .25s; }
+.plv-spot-text { font-size: 14px; font-weight: 800; pointer-events: none; }
+.plv-spot.is-occupied { cursor: pointer; }
+.plv-spot.is-occupied:hover { stroke: var(--plv-accent); stroke-width: 2.5; }
+
+.plv-parked { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.plv-parked:empty { display: none; }
+.plv-ticket {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 0.8rem; font-weight: 600;
+  background: var(--plv-bg); border: 1px solid var(--plv-border);
+  border-radius: 999px; padding: 4px 6px 4px 12px;
+}
+.plv-ticket b { font-weight: 800; }
+.plv-exit { font: inherit; font-size: 0.78rem; font-weight: 700; color: #fff; background: var(--plv-muted); border: 0; border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.plv-exit:hover { background: var(--plv-accent); }
+
+.plv-caption { margin-top: 10px; padding: 9px 12px; border-radius: 9px; background: var(--plv-bg); border-left: 4px solid var(--plv-accent); font-size: 0.92rem; }
+
+.plv-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-top: 10px; }
+.plv-metric { background: var(--plv-bg); border: 1px solid var(--plv-border); border-radius: 9px; padding: 8px 10px; }
+.plv-metric-label { display: block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--plv-muted); }
+.plv-metric-value { display: block; margin-top: 2px; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.plv-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; font-size: 0.8rem; color: var(--plv-muted); }
+.plv-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.plv-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+.plv-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--plv-muted); }
+
+@media (max-width: 560px) { .plv { padding: 10px; } }
+
+.plv-field { display: inline-flex; align-items: center; gap: 6px; font-size: 0.88rem; color: var(--plv-muted); }
+.plv-select { font: inherit; font-size: 0.88rem; color: var(--plv-text); background: var(--plv-bg); border: 1px solid var(--plv-border); border-radius: 8px; padding: 6px 8px; }

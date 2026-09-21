@@ -2,6 +2,8 @@
 
 **Status:** Approved for implementation on 2026-08-28
 
+> **Update (2026-09-21):** The LLD section now uses an 8-phase path: Requirements / Use Cases → Core Entities → Responsibilities → Relationships + Interfaces → Class Diagram → Core Flows → Critical Code → Edge Cases + Extensibility + Wrap-Up. The 13-point LLD loop later in this document is **superseded**; the authoritative framework and the per-problem template live in `src/system-design/interview-designs/lld/index.md`.
+
 ## Goal
 
 Add a standalone, interview-focused system-design section containing ten High-Level Design (HLD) problems and ten Low-Level Design (LLD) problems. Every HLD problem must follow the user's 17-point HLD interview structure, and every LLD problem must follow the user's 13-point LLD structure. The existing 100-question system-design curriculum and existing backend deep-dive pages remain unchanged.
